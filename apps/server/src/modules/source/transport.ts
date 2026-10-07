@@ -9,11 +9,13 @@ import { PAGE_ENCODINGS, nodeRequest } from './node-http';
  *   - « browser » : la bibliothèque `impit`, qui imite aussi l'empreinte réseau de Chrome
  *     (poignée de main TLS, HTTP/2, ordre des en-têtes), invisible au niveau des en-têtes ;
  *   - « real-browser » : le navigateur de l'utilisateur passe la vérification Cloudflare
- *     (« Just a moment… »), puis Lumière réutilise ce passage (voir browser/).
+ *     (« Just a moment… »), puis Lumière réutilise ce passage (voir browser/) ;
+ *   - « zenrows » : service en ligne qui passe la vérification pour les pages de listing ;
+ *   - « cdn » : point d'accès de lecture de 111477 (p.111477.xyz), pour les fichiers.
  * En mode automatique, le client de la source passe au suivant quand l'un est bloqué.
  */
 
-export type TransportName = 'standard' | 'browser' | 'real-browser';
+export type TransportName = 'standard' | 'browser' | 'real-browser' | 'zenrows' | 'cdn';
 
 export interface SourceRequest {
   /** Page de listing (navigation) ou fichier (téléchargement, lecture). */

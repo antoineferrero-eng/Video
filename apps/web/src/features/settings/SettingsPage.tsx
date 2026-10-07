@@ -53,7 +53,7 @@ const CONNECTIONS: Array<{ value: SourceConnection; label: string; description: 
     value: 'auto',
     label: 'Automatique (recommandé)',
     description:
-      'Connexion standard, puis imitation de Chrome, puis votre navigateur si Cloudflare exige une vérification (« Just a moment… »).',
+      'Connexion standard, puis imitation de Chrome ; si Cloudflare exige une vérification (« Just a moment… »), ZenRows si une clé est configurée, sinon votre navigateur.',
   },
   {
     value: 'standard',
@@ -72,6 +72,12 @@ const CONNECTIONS: Array<{ value: SourceConnection; label: string; description: 
     description:
       'Votre navigateur passe la vérification Cloudflare dans une petite fenêtre (cochez la case si elle apparaît), puis Lumière réutilise ce passage.',
   },
+  {
+    value: 'zenrows',
+    label: 'ZenRows (service en ligne)',
+    description:
+      'Les pages de listing passent par ZenRows, qui franchit la vérification Cloudflare ; les fichiers sont téléchargés directement. Le navigateur n’est jamais ouvert.',
+  },
 ];
 
 export function SettingsPage() {
@@ -87,6 +93,7 @@ function SettingsForm({ response }: { response: SettingsResponse }) {
   const update = useUpdateSettings();
   const [draft, setDraft] = useState<AppSettings>(response.settings);
   const [tmdbKey, setTmdbKey] = useState('');
+  const [zenrowsKey, setZenrowsKey] = useState('');
 
   const changes = useMemo(() => {
     const patch: SettingsUpdate = {};
@@ -95,8 +102,9 @@ function SettingsForm({ response }: { response: SettingsResponse }) {
         (patch as Record<string, unknown>)[key] = draft[key];
     }
     if (tmdbKey.trim()) patch.tmdbApiKey = tmdbKey.trim();
+    if (zenrowsKey.trim()) patch.zenrowsApiKey = zenrowsKey.trim();
     return patch;
-  }, [draft, response.settings, tmdbKey]);
+  }, [draft, response.settings, tmdbKey, zenrowsKey]);
   const dirty = Object.keys(changes).length > 0;
 
   const set = <K extends keyof AppSettings>(key: K, value: AppSettings[K]) =>
@@ -173,6 +181,12 @@ function SettingsForm({ response }: { response: SettingsResponse }) {
             />
           </Field>
         </div>
+        <ZenRowsField
+          configured={response.zenrowsApiKeyConfigured}
+          fromEnv={response.zenrowsApiKeyFromEnv}
+          value={zenrowsKey}
+          onChange={setZenrowsKey}
+        />
         <SourceTester />
       </Section>
 
@@ -372,6 +386,7 @@ function SettingsForm({ response }: { response: SettingsResponse }) {
             onClick={() => {
               setDraft(response.settings);
               setTmdbKey('');
+              setZenrowsKey('');
             }}
           >
             Annuler
@@ -517,7 +532,70 @@ const TRANSPORT_LABELS = {
   standard: '',
   browser: ' · via l’imitation de Chrome',
   'real-browser': ' · via votre navigateur (vérification Cloudflare)',
+  zenrows: ' · via ZenRows',
+  cdn: ' · via p.111477.xyz',
 } as const;
+
+/** Clé ZenRows : service en ligne payant qui franchit les vérifications anti-robot. */
+function ZenRowsField({
+  configured,
+  fromEnv,
+  value,
+  onChange,
+}: {
+  configured: boolean;
+  fromEnv: boolean;
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  const usage = useSystemInfo().data?.zenrows;
+  return (
+    <div className="flex flex-col gap-3 rounded-[1rem] bg-white/[0.05] p-4">
+      <div className="flex flex-wrap items-center gap-2 text-sm">
+        <span className="font-semibold">ZenRows</span>
+        {configured ? (
+          <Badge tone="success" icon={<CheckCircle2 className="size-3" />}>
+            Clé configurée{fromEnv ? ' (variable d’environnement)' : ''}
+          </Badge>
+        ) : (
+          <Badge tone="neutral">Facultatif</Badge>
+        )}
+        {usage && (
+          <span className="text-xs text-zinc-400">
+            Depuis le démarrage : {usage.pages} page(s), {usage.credits} crédit(s)
+          </span>
+        )}
+      </div>
+      <Field
+        label={configured ? 'Remplacer la clé API ZenRows' : 'Clé API ZenRows'}
+        description={
+          <>
+            Service en ligne payant au crédit qui franchit la vérification Cloudflare pour les pages
+            de listing (jusqu’à 25 crédits par page, échecs non facturés) ; les fichiers restent
+            téléchargés directement. Clé sur{' '}
+            <a
+              href="https://app.zenrows.com/builder"
+              target="_blank"
+              rel="noreferrer"
+              className="font-medium text-brand-300 underline underline-offset-2"
+            >
+              app.zenrows.com
+            </a>
+            .
+          </>
+        }
+      >
+        <Input
+          type="password"
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+          placeholder="••••••••••••"
+          autoComplete="off"
+        />
+      </Field>
+    </div>
+  );
+}
 
 function SourceTester() {
   const test = useTestSource();

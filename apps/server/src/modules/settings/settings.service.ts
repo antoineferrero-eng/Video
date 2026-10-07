@@ -10,6 +10,7 @@ export const DEFAULT_USER_AGENT =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36';
 
 const TMDB_KEY = 'tmdbApiKey';
+const ZENROWS_KEY = 'zenrowsApiKey';
 
 export function defaultSettings(config: AppConfig): AppSettings {
   return {
@@ -37,6 +38,7 @@ export type SettingsListener = (next: AppSettings, previous: AppSettings) => voi
 export class SettingsService {
   private current: AppSettings;
   private storedTmdbKey: string | null;
+  private storedZenrowsKey: string | null;
   private readonly listeners = new Set<SettingsListener>();
 
   constructor(
@@ -51,6 +53,8 @@ export class SettingsService {
     }
     this.current = merged as unknown as AppSettings;
     this.storedTmdbKey = typeof stored[TMDB_KEY] === 'string' ? (stored[TMDB_KEY] as string) : null;
+    this.storedZenrowsKey =
+      typeof stored[ZENROWS_KEY] === 'string' ? (stored[ZENROWS_KEY] as string) : null;
   }
 
   get(): AppSettings {
@@ -62,11 +66,20 @@ export class SettingsService {
     return key && key.trim() ? key.trim() : null;
   }
 
+  /** Clé ZenRows (service payant qui passe les vérifications anti-robot), si configurée. */
+  getZenrowsApiKey(): string | null {
+    const key = this.storedZenrowsKey ?? this.config.zenrows.envApiKey;
+    return key && key.trim() ? key.trim() : null;
+  }
+
   toResponse(): SettingsResponse {
     return {
       settings: this.current,
       tmdbApiKeyConfigured: this.getTmdbApiKey() !== null,
       tmdbApiKeyFromEnv: this.storedTmdbKey === null && this.config.tmdb.envApiKey !== null,
+      zenrowsApiKeyConfigured: this.getZenrowsApiKey() !== null,
+      zenrowsApiKeyFromEnv:
+        this.storedZenrowsKey === null && this.config.zenrows.envApiKey !== null,
     };
   }
 
@@ -118,18 +131,22 @@ export class SettingsService {
     );
     const now = new Date().toISOString();
     const tmdbChanged = patch.tmdbApiKey !== undefined;
+    const zenrowsChanged = patch.zenrowsApiKey !== undefined;
+    const writeSecret = (name: string, raw: string | undefined) => {
+      const value = raw?.trim() ?? '';
+      if (value) write.run(name, JSON.stringify(value), now);
+      else this.db.prepare('DELETE FROM settings WHERE key = ?').run(name);
+    };
     transaction(this.db, () => {
       for (const key of Object.keys(next) as Array<keyof AppSettings>) {
         if (next[key] !== previous[key]) write.run(key, JSON.stringify(next[key]), now);
       }
-      if (tmdbChanged) {
-        const value = patch.tmdbApiKey?.trim() ?? '';
-        if (value) write.run(TMDB_KEY, JSON.stringify(value), now);
-        else this.db.prepare('DELETE FROM settings WHERE key = ?').run(TMDB_KEY);
-      }
+      if (tmdbChanged) writeSecret(TMDB_KEY, patch.tmdbApiKey);
+      if (zenrowsChanged) writeSecret(ZENROWS_KEY, patch.zenrowsApiKey);
     });
 
     if (tmdbChanged) this.storedTmdbKey = patch.tmdbApiKey?.trim() || null;
+    if (zenrowsChanged) this.storedZenrowsKey = patch.zenrowsApiKey?.trim() || null;
     this.current = next;
     for (const listener of this.listeners) listener(next, previous);
     return next;

@@ -25,6 +25,7 @@ import { locateBrowser } from './modules/source/browser/locate-browser';
 import { RealBrowserTransport } from './modules/source/browser/real-browser-transport';
 import { SourceClient } from './modules/source/source-client';
 import { SourceRelay } from './modules/source/source-relay';
+import { ZenRowsTransport } from './modules/source/zenrows-transport';
 
 /** Racine de composition : instancie et relie tous les services (injection manuelle). */
 export interface Container {
@@ -34,6 +35,7 @@ export interface Container {
   events: EventBus;
   settings: SettingsService;
   browser: BrowserSession;
+  zenrows: ZenRowsTransport;
   source: SourceClient;
   relay: SourceRelay;
   titles: TitlesRepository;
@@ -61,8 +63,14 @@ export function createContainer(config: AppConfig, logger: Logger): Container {
     logger: sourceLogger,
     onEvent: (event) => events.publish({ type: 'source.verification', ...event }),
   });
+  const zenrows = new ZenRowsTransport(
+    () => settings.getZenrowsApiKey(),
+    config.zenrows.apiUrl,
+    sourceLogger,
+  );
   const source = new SourceClient(settings, sourceLogger, {
     realBrowser: (cookies) => new RealBrowserTransport(browser, cookies, sourceLogger),
+    zenrows,
   });
   const relay = new SourceRelay(config);
   const titles = new TitlesRepository(db);
@@ -137,6 +145,7 @@ export function createContainer(config: AppConfig, logger: Logger): Container {
     events,
     settings,
     browser,
+    zenrows,
     source,
     relay,
     titles,

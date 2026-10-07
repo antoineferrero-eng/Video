@@ -24,6 +24,8 @@ const EnvSchema = z.object({
   TMDB_API_KEY: optionalString,
   TMDB_API_BASE_URL: z.url().default('https://api.themoviedb.org/3'),
   TMDB_IMAGE_BASE_URL: z.url().default('https://image.tmdb.org/t/p'),
+  ZENROWS_API_KEY: optionalString,
+  ZENROWS_API_URL: z.url().default('https://api.zenrows.com/v1/'),
   FFMPEG_PATH: z.string().default('ffmpeg'),
   FFPROBE_PATH: z.string().default('ffprobe'),
   BROWSER_PATH: optionalString,
@@ -49,6 +51,10 @@ export interface AppConfig {
     envApiKey: string | null;
     apiBaseUrl: string;
     imageBaseUrl: string;
+  };
+  zenrows: {
+    envApiKey: string | null;
+    apiUrl: string;
   };
   ffmpegPath: string;
   ffprobePath: string;
@@ -116,6 +122,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
       envApiKey: e.TMDB_API_KEY ?? null,
       apiBaseUrl: e.TMDB_API_BASE_URL.replace(/\/+$/, ''),
       imageBaseUrl: e.TMDB_IMAGE_BASE_URL.replace(/\/+$/, ''),
+    },
+    zenrows: {
+      envApiKey: e.ZENROWS_API_KEY ?? null,
+      apiUrl: e.ZENROWS_API_URL,
     },
     ffmpegPath: e.FFMPEG_PATH,
     ffprobePath: e.FFPROBE_PATH,

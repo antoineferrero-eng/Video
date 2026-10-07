@@ -15,7 +15,7 @@ const SettingsUpdateSchema = z
     moviesPath: z.string().min(1).max(500),
     seriesPath: z.string().min(1).max(500),
     userAgent: z.string().max(500),
-    sourceConnection: z.enum(['auto', 'standard', 'browser', 'real-browser']),
+    sourceConnection: z.enum(['auto', 'standard', 'browser', 'real-browser', 'zenrows']),
     downloadDir: z.string().min(1).max(1000),
     maxConcurrentDownloads: z.number().int().min(1).max(10),
     maxDownloadSpeedKbps: z.number().int().min(0).max(10_000_000),
@@ -33,6 +33,7 @@ const SettingsUpdateSchema = z
       z.literal(480),
     ]),
     tmdbApiKey: z.string().max(500),
+    zenrowsApiKey: z.string().max(500),
   })
   .partial()
   .strict();

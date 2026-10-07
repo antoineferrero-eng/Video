@@ -215,14 +215,23 @@ export class BrowserSession {
   async close(): Promise<void> {
     this.cancelClose();
     const cdp = this.cdp;
+    const child = this.child;
     this.cdp = null;
+    this.child = null;
     this.pages.clear();
+    const running = child !== null && child.exitCode === null && child.signalCode === null;
+    const exited = running
+      ? new Promise<void>((resolve) => child.once('exit', () => resolve()))
+      : null;
+    const disconnected =
+      cdp && !cdp.closed ? new Promise<void>((resolve) => cdp.onClose(resolve)) : null;
     if (cdp && !cdp.closed) {
       await cdp.send('Browser.close', {}, { timeoutMs: 5_000 }).catch(() => undefined);
-      cdp.close();
     }
-    if (this.child && this.child.exitCode === null) this.child.kill();
-    this.child = null;
+    // Le navigateur écrit encore dans son profil en se fermant : on attend qu'il ait fini.
+    await Promise.race([Promise.all([exited, disconnected]), sleep(5_000)]);
+    cdp?.close();
+    if (child && child.exitCode === null && child.signalCode === null) child.kill();
   }
 
   /**

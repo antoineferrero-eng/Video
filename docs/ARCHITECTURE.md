@@ -64,6 +64,8 @@ modules/
                      relais local pour ffmpeg, analyseur générique de listings
     browser/         vérification Cloudflare dans le navigateur de l'utilisateur (protocole
                      DevTools), transport « navigateur réel »
+    zenrows-transport.ts, cdn-transport.ts
+                     pages de listing via ZenRows ; fichiers via p.111477.xyz en secours
   catalog/           synchronisation films/séries, recherche, fiches, structure saisons/épisodes
   metadata/          client TMDB, rapprochement des titres, cache des images
   downloads/         file d'attente, moteur de transfert, rangement des fichiers
@@ -90,8 +92,11 @@ serveurs HTTP).
    de Chrome avec **impit**, puis, si Cloudflare exige une vérification JavaScript, le
    **navigateur de l'utilisateur** (`browser/`) : il passe la vérification, puis Lumière
    réutilise le passage (cookies, identité, empreinte de la même version) ou fait ses
-   requêtes depuis la page. Choix mémorisé par origine ; chaque étape de la vérification est
-   diffusée à l'interface (`source.verification`).
+   requêtes depuis la page. Si une clé ZenRows est configurée, les pages passent plutôt par
+   **ZenRows** (et le navigateur n'est jamais ouvert) ; les fichiers restent téléchargés
+   directement, ou via `p.111477.xyz` si le lien direct est refusé. Choix mémorisé par origine
+   et par type de requête ; chaque étape de la vérification est diffusée à l'interface
+   (`source.verification`).
 2. Chaque entrée devient un titre (`title-parser.ts` : « Titre (Année) », nom de release…),
    inséré/actualisé en une transaction ; les titres disparus sont retirés.
 3. `MetadataService` enrichit progressivement les titres (TMDB) en arrière-plan, et à la

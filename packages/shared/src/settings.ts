@@ -1,10 +1,11 @@
 export type PreferredQuality = '2160p' | '1080p' | '720p' | 'smallest';
 /**
- * Connexion à la source : automatique (requête standard, puis imitation de Chrome, puis
- * vérification dans le navigateur de l'utilisateur si Cloudflare l'exige), standard
- * uniquement, imitation de navigateur systématique, ou navigateur réel systématique.
+ * Connexion à la source : automatique (requête standard, imitation de Chrome, puis ZenRows
+ * si une clé est configurée, sinon vérification dans le navigateur de l'utilisateur),
+ * standard uniquement, imitation de navigateur, navigateur réel, ou ZenRows pour les pages
+ * de listing (les fichiers restent téléchargés directement).
  */
-export type SourceConnection = 'auto' | 'standard' | 'browser' | 'real-browser';
+export type SourceConnection = 'auto' | 'standard' | 'browser' | 'real-browser' | 'zenrows';
 export type TranscodePreset = 'quality' | 'balanced' | 'fast';
 
 export interface AppSettings {
@@ -37,9 +38,13 @@ export interface SettingsResponse {
   settings: AppSettings;
   tmdbApiKeyConfigured: boolean;
   tmdbApiKeyFromEnv: boolean;
+  zenrowsApiKeyConfigured: boolean;
+  zenrowsApiKeyFromEnv: boolean;
 }
 
 export type SettingsUpdate = Partial<AppSettings> & {
   /** Nouvelle clé TMDB (chaîne vide pour la supprimer). */
   tmdbApiKey?: string;
+  /** Nouvelle clé ZenRows (chaîne vide pour la supprimer). */
+  zenrowsApiKey?: string;
 };

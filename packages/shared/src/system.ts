@@ -13,7 +13,12 @@ export interface SystemInfo {
   catalog: CatalogSectionStatus[];
   /** Navigateur utilisé pour les vérifications Cloudflare (null si aucun n'est installé). */
   browser: { name: string; path: string } | null;
+  /** Consommation ZenRows depuis le démarrage du serveur (null sans clé). */
+  zenrows: { pages: number; credits: number } | null;
 }
+
+/** Façon dont une requête a joint la source. */
+export type SourceTransportName = 'standard' | 'browser' | 'real-browser' | 'zenrows' | 'cdn';
 
 export interface SourceTestResult {
   ok: boolean;
@@ -25,11 +30,8 @@ export interface SourceTestResult {
   files: number;
   sample: ExplorerEntry[];
   error: string | null;
-  /**
-   * Transport utilisé : requête standard, imitation de navigateur ou navigateur réel
-   * (null en cas d'échec).
-   */
-  transport: 'standard' | 'browser' | 'real-browser' | null;
+  /** Transport utilisé pour joindre la source (null en cas d'échec). */
+  transport: SourceTransportName | null;
 }
 
 export interface ApiErrorBody {

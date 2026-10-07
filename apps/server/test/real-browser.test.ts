@@ -158,7 +158,7 @@ describe.skipIf(!executable)('vérification Cloudflare dans le navigateur', () =
   afterAll(async () => {
     await session.close();
     cloudflare.close();
-    fs.rmSync(profileDir, { recursive: true, force: true });
+    fs.rmSync(profileDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
   });
 
   it('passe le défi dans le navigateur et récupère cookies, User-Agent et indices clients', async () => {
@@ -265,7 +265,7 @@ describe.skipIf(!executable)('client de la source en mode automatique', () => {
   afterAll(async () => {
     await stopServices(container);
     cloudflare.close();
-    fs.rmSync(dataDir, { recursive: true, force: true });
+    fs.rmSync(dataDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
   });
 
   it('passe de la requête standard à l’imitation, puis au navigateur réel, et s’y tient', async () => {

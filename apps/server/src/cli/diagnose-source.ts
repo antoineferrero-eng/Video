@@ -6,17 +6,22 @@
  *
  *   npm run diagnose
  *   npm run diagnose -- https://a.111477.xyz/tvs/
- *   npm run diagnose -- https://a.111477.xyz/movies/ --navigateur   (force l'essai 5)
+ *   npm run diagnose -- --zenrows=CLÉ          (clé ZenRows, sinon celle des Paramètres)
+ *   npm run diagnose -- --navigateur           (essaie aussi la vérification dans le navigateur)
  */
 import { spawn } from 'node:child_process';
-import { loadConfig, loadEnvFile } from '../config/env';
+import fs from 'node:fs';
+import { loadConfig, loadEnvFile, type AppConfig } from '../config/env';
 import { createLogger } from '../core/logger';
 import { errorMessage } from '../core/errors';
 import { BrowserSession, type Clearance } from '../modules/source/browser/browser-session';
 import { locateBrowser } from '../modules/source/browser/locate-browser';
 import { RealBrowserTransport } from '../modules/source/browser/real-browser-transport';
 import { parseListing, type ListingItem } from '../modules/source/listing-parser';
-import { DEFAULT_USER_AGENT } from '../modules/settings/settings.service';
+import { openDatabase } from '../infra/database/database';
+import { DEFAULT_CDN } from '../modules/source/cdn-transport';
+import { DEFAULT_USER_AGENT, SettingsService } from '../modules/settings/settings.service';
+import { ZenRowsTransport } from '../modules/source/zenrows-transport';
 import {
   BrowserTransport,
   CookieJar,
@@ -199,10 +204,11 @@ async function findVideo(
   items: ListingItem[],
   base: URL,
   list: (url: URL) => Promise<Fetched>,
+  maxFolders = 3,
 ): Promise<URL | null> {
   const direct = items.find((item) => !item.isDirectory && VIDEO.test(item.name));
   if (direct) return new URL(encodeURIComponent(direct.name), base);
-  for (const folder of items.filter((item) => item.isDirectory).slice(0, 3)) {
+  for (const folder of items.filter((item) => item.isDirectory).slice(0, maxFolders)) {
     const folderUrl = new URL(`${encodeURIComponent(folder.name)}/`, base);
     const result = await list(folderUrl).catch(() => null);
     if (!result || result.status !== 200) continue;
@@ -239,14 +245,34 @@ async function summarize(response: SourceResponse): Promise<string> {
   return parts.join(' · ');
 }
 
-async function probe(
-  label: string,
-  run: () => Promise<SourceResponse>,
-): Promise<{ label: string; line: string }> {
+interface ProbeResult {
+  label: string;
+  line: string;
+  /** Le fichier a été servi (2xx, pas une page HTML). */
+  ok: boolean;
+}
+
+async function probe(label: string, run: () => Promise<SourceResponse>): Promise<ProbeResult> {
   try {
-    return { label, line: await summarize(await run()) };
+    const response = await run();
+    const ok = response.ok && !/text\/html/i.test(response.headers.get('content-type') ?? '');
+    return { label, line: await summarize(response), ok };
   } catch (error) {
-    return { label, line: `échec : ${errorMessage(error)}` };
+    return { label, line: `échec : ${errorMessage(error)}`, ok: false };
+  }
+}
+
+/** Clé ZenRows : option --zenrows=, variable ZENROWS_API_KEY, ou celle des Paramètres. */
+function zenrowsKeyFrom(args: string[], config: AppConfig): string | null {
+  const flag = args.find((arg) => arg.startsWith('--zenrows='));
+  if (flag) return flag.slice('--zenrows='.length).trim() || null;
+  if (config.zenrows.envApiKey) return config.zenrows.envApiKey;
+  if (!fs.existsSync(config.databaseFile)) return null;
+  const db = openDatabase(config.databaseFile, createLogger({ level: 'silent', pretty: false }));
+  try {
+    return new SettingsService(db, config).getZenrowsApiKey();
+  } finally {
+    db.close();
   }
 }
 
@@ -307,15 +333,63 @@ async function main(): Promise<void> {
   attempts.push(await evaluate('4. curl du système', url, () => runCurl(url)));
   for (const attempt of attempts) print(attempt);
 
-  // 5. Vérification Cloudflare dans le navigateur de l'utilisateur.
   const directOk = attempts.some((attempt) => attempt.ok);
+  const silent = createLogger({ level: 'silent', pretty: false });
+  const is111477 = DEFAULT_CDN.hosts.test(url.hostname);
+  let fileUrl: URL | null = null;
+
+  // Z. Pages de listing via ZenRows (service en ligne), si une clé est disponible.
+  const zenrowsKey = zenrowsKeyFrom(args, config);
+  let viaZenRows: Attempt | null = null;
+  console.log('');
+  if (zenrowsKey) {
+    const zenrows = new ZenRowsTransport(() => zenrowsKey, config.zenrows.apiUrl, silent);
+    let page: Fetched | null = null;
+    viaZenRows = await evaluate('Z. pages de listing via ZenRows', url, async () => {
+      page = await read(
+        await zenrows.fetch(url.toString(), {
+          kind: 'document',
+          signal: AbortSignal.timeout(180_000),
+        }),
+      );
+      return page;
+    });
+    print(viaZenRows);
+    for (const attempt of zenrows.lastAttempts) {
+      const credits = attempt.credits !== null ? ` · ${attempt.credits} crédit(s)` : '';
+      const error = attempt.error ? ` · ${attempt.error}` : '';
+      console.log(
+        `    · ${attempt.strategy} : ${attempt.status}${credits}${error} · ${attempt.ms} ms`,
+      );
+    }
+    if (viaZenRows.ok && page) {
+      // Un seul dossier exploré pour trouver un fichier : chaque page coûte des crédits.
+      fileUrl = await findVideo(
+        listOfItems(page, url),
+        url,
+        async (folder) =>
+          read(
+            await zenrows.fetch(folder.toString(), {
+              kind: 'document',
+              signal: AbortSignal.timeout(180_000),
+            }),
+          ),
+        1,
+      );
+    }
+    console.log(`    crédits ZenRows utilisés par ce diagnostic : ${zenrows.usage().credits}`);
+  } else {
+    console.log(
+      '— Z. ZenRows : aucune clé (Paramètres → Source, variable ZENROWS_API_KEY ou --zenrows=CLÉ)',
+    );
+  }
+
+  // 5. Vérification Cloudflare dans le navigateur de l'utilisateur (sur demande).
   const executable = locateBrowser(config.browserPath);
   let verified: Clearance | null = null;
   let reuse: Attempt | null = null;
-  let page: Attempt | null = null;
-  const fileLines: string[] = [];
-  let fileUrl: URL | null = null;
-  if (!directOk || forceBrowser) {
+  let pageAttempt: Attempt | null = null;
+  if (forceBrowser) {
     console.log('');
     if (!executable) {
       console.log('✘ 5. votre navigateur : aucun Chrome, Edge, Brave ou Chromium trouvé');
@@ -325,11 +399,10 @@ async function main(): Promise<void> {
       console.log(
         '    Une fenêtre va s’ouvrir sur le site. Si une case « Je suis humain » apparaît, cochez-la.',
       );
-      const logger = createLogger({ level: 'silent', pretty: false });
       const session = new BrowserSession({
         profileDir: config.browserProfileDir,
         locate: () => executable,
-        logger,
+        logger: silent,
         onEvent: (event) => {
           if (event.state === 'waiting') console.log(`    ${event.message}`);
         },
@@ -339,7 +412,7 @@ async function main(): Promise<void> {
         verified = await session.verify(url.origin);
         console.log(`✔ 5. vérification ${describeClearance(verified, Date.now() - started)}`);
         console.log(`    navigateur : ${verified.userAgent}`);
-        const transport = new RealBrowserTransport(session, new CookieJar(), logger);
+        const transport = new RealBrowserTransport(session, new CookieJar(), silent);
         reuse = await evaluate(
           '5a. passage réutilisé hors du navigateur (impit + cookies)',
           url,
@@ -354,77 +427,81 @@ async function main(): Promise<void> {
           },
         );
         print(reuse, '  ');
-        page = await evaluate('5b. requête faite depuis la page du navigateur', url, async () =>
-          read(await session.pageFetch(url.origin, url.toString(), { kind: 'document' })),
+        let listed: Fetched | null = null;
+        pageAttempt = await evaluate(
+          '5b. requête faite depuis la page du navigateur',
+          url,
+          async () => {
+            listed = await read(
+              await session.pageFetch(url.origin, url.toString(), { kind: 'document' }),
+            );
+            return listed;
+          },
         );
-        print(page, '  ');
-        // 5c. Un fichier vidéo : plage d'octets hors du navigateur et depuis la page.
-        const listed = page.ok
-          ? await session.pageFetch(url.origin, url.toString(), { kind: 'document' }).then(read)
-          : null;
-        if (listed) {
+        print(pageAttempt, '  ');
+        if (!fileUrl && pageAttempt.ok && listed) {
           fileUrl = await findVideo(listOfItems(listed, url), url, async (folder) =>
             read(await session.pageFetch(url.origin, folder.toString(), { kind: 'document' })),
           );
         }
-        if (fileUrl) {
-          const name = decodeURIComponent(fileUrl.pathname.split('/').pop() ?? '');
-          fileLines.push(`  5c. fichier « ${name} » (octets 0-1023) :`);
-          const outside = await probe('hors du navigateur', async () => {
-            const response = await transport.fetchWithClearance(
-              (fileUrl as URL).toString(),
-              { kind: 'file', range: 'bytes=0-1023' },
-              verified as Clearance,
-            );
-            if (!response) throw new Error('module impit indisponible');
-            return response;
-          });
-          const inside = await probe('depuis la page', () =>
-            session.pageFetch(url.origin, (fileUrl as URL).toString(), {
-              kind: 'file',
-              range: 'bytes=0-1023',
-            }),
-          );
-          for (const result of [outside, inside])
-            fileLines.push(`      ${result.label} : ${result.line}`);
-        } else {
-          fileLines.push('  5c. aucun fichier vidéo trouvé pour tester les téléchargements');
-        }
-        for (const line of fileLines) console.log(line);
       } catch (error) {
         console.log(`✘ 5. ${errorMessage(error)}`);
       } finally {
         await session.close();
       }
     }
+  } else if (!directOk) {
+    console.log('— 5. votre navigateur : non essayé (ajoutez --navigateur pour l’essayer)');
+  }
+
+  // F. Téléchargement direct d'un vrai fichier (sans ZenRows) : passe-t-il Cloudflare ?
+  const files: ProbeResult[] = [];
+  if (fileUrl) {
+    const file = fileUrl;
+    const name = decodeURIComponent(file.pathname.split('/').pop() ?? '');
+    console.log(`\nF. téléchargement direct de « ${name} » (octets 0-1023) :`);
+    const range = { kind: 'file' as const, range: 'bytes=0-1023' };
+    files.push(
+      await probe('F1. Node.js + en-têtes de Chrome', () =>
+        standard.fetch(file.toString(), { ...range, signal: AbortSignal.timeout(TIMEOUT_MS) }),
+      ),
+    );
+    if (impersonation) {
+      files.push(
+        await probe('F2. imitation de Chrome', () =>
+          impersonation.fetch(file.toString(), {
+            ...range,
+            signal: AbortSignal.timeout(TIMEOUT_MS),
+          }),
+        ),
+      );
+    }
+    if (is111477) {
+      const cdn = new URL(DEFAULT_CDN.baseUrl);
+      cdn.searchParams.set('u', file.toString());
+      files.push(
+        await probe('F3. point d’accès de lecture p.111477.xyz', async () =>
+          (impersonation ?? standard).fetch(cdn.toString(), {
+            ...range,
+            signal: AbortSignal.timeout(TIMEOUT_MS),
+          }),
+        ),
+      );
+    }
+    for (const result of files)
+      console.log(`  ${result.ok ? '✔' : '✘'} ${result.label} : ${result.line}`);
   }
 
   // 6–7. Services annexes de 111477 : lecteur (p.) et extension Stremio (st.).
-  if (/(^|\.)111477\.xyz$/i.test(url.hostname) && impersonation) {
+  if (is111477 && impersonation) {
     console.log('');
-    const imitate = (target: string, range?: string) =>
-      impersonation.fetch(target, {
-        kind: range ? 'file' : 'document',
-        range,
-        signal: AbortSignal.timeout(TIMEOUT_MS),
-      });
+    const imitate = (target: string) =>
+      impersonation.fetch(target, { kind: 'document', signal: AbortSignal.timeout(TIMEOUT_MS) });
     const probes = [
       await probe('6a. p.111477.xyz/', () => imitate('https://p.111477.xyz/')),
       await probe('6b. p.111477.xyz/bulk?u=<dossier>', () =>
         imitate(`https://p.111477.xyz/bulk?u=${encodeURIComponent(url.toString())}`),
       ),
-    ];
-    if (fileUrl) {
-      probes.push(
-        await probe('6c. p.111477.xyz/bulk?u=<fichier> (octets 0-1023)', () =>
-          imitate(
-            `https://p.111477.xyz/bulk?u=${encodeURIComponent((fileUrl as URL).toString())}`,
-            'bytes=0-1023',
-          ),
-        ),
-      );
-    }
-    probes.push(
       await probe('7. st.111477.xyz/manifest.json', async () => {
         const response = await imitate('https://st.111477.xyz/manifest.json');
         if (!response.ok) return response;
@@ -443,11 +520,13 @@ async function main(): Promise<void> {
           { status: response.status, headers: { 'content-type': 'text/plain' } },
         ) as unknown as SourceResponse;
       }),
-    );
+    ];
     for (const result of probes) console.log(`${result.label} : ${result.line}`);
   }
 
   const [, headers, impersonated] = attempts;
+  const directFile = files.some((result) => result.ok && !result.label.startsWith('F3'));
+  const cdnFile = files.some((result) => result.ok && result.label.startsWith('F3'));
   console.log('\nConclusion :');
   if (headers?.ok) {
     console.log(
@@ -459,11 +538,33 @@ async function main(): Promise<void> {
     console.log(
       "  La source filtre l'empreinte réseau des clients : Lumière bascule automatiquement sur\n  l'imitation de Chrome (mode « Automatique » ou « Imitation de navigateur »).",
     );
+  } else if (viaZenRows?.ok) {
+    if (directFile) {
+      console.log(
+        '  Les pages passent par ZenRows et les fichiers se téléchargent directement : choisissez\n  « ZenRows » (ou « Automatique ») dans Paramètres → Source.',
+      );
+    } else if (cdnFile) {
+      console.log(
+        '  Les pages passent par ZenRows ; les liens directs sont bloqués mais p.111477.xyz sert\n  les fichiers : Lumière s’en sert automatiquement (dans la limite de ses jetons).',
+      );
+    } else if (!fileUrl) {
+      console.log(
+        '  Les pages passent par ZenRows (aucun fichier trouvé pour tester le téléchargement).',
+      );
+    } else {
+      console.log(
+        '  Les pages passent par ZenRows mais les fichiers restent bloqués (lien direct et\n  p.111477.xyz) : envoyez ce rapport complet.',
+      );
+    }
+  } else if (zenrowsKey) {
+    console.log(
+      '  ZenRows n’a pas obtenu la page : voir le détail « Z » ci-dessus (clé, crédits,\n  configuration) et envoyez ce rapport complet.',
+    );
   } else if (reuse?.ok) {
     console.log(
       '  Cloudflare exige une vérification de navigateur : Lumière la fait passer par votre\n  navigateur, puis travaille seul avec ce passage (mode « Automatique »).',
     );
-  } else if (page?.ok) {
+  } else if (pageAttempt?.ok) {
     console.log(
       '  Cloudflare n’accepte que le navigateur lui-même : Lumière fera ses requêtes depuis une\n  fenêtre réduite de votre navigateur (mode « Automatique »).',
     );
@@ -473,7 +574,7 @@ async function main(): Promise<void> {
     );
   } else {
     console.log(
-      "  Aucune méthode n'aboutit : envoyez ce rapport complet (et dites si le site s'ouvre\n  normalement dans votre navigateur habituel).",
+      '  Cloudflare exige une vérification que les requêtes directes ne passent pas : ajoutez\n  une clé ZenRows (Paramètres → Source) puis relancez « npm run diagnose ».',
     );
   }
 }

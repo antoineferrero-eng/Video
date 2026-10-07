@@ -8,6 +8,7 @@ import {
 } from '../../core/errors';
 import type { Logger } from '../../core/logger';
 import type { SettingsService } from '../settings/settings.service';
+import { CdnTransport, DEFAULT_CDN, type CdnOptions } from './cdn-transport';
 import { parseListing, type ListingFormat } from './listing-parser';
 import { joinRemote, normalizeDirPath, normalizeRemotePath } from './remote-path';
 import {
@@ -22,12 +23,17 @@ import {
   type Transport,
   type TransportName,
 } from './transport';
+import type { ZenRowsTransport } from './zenrows-transport';
 
 export interface SourceClientOptions {
   /** Transport d'imitation de Chrome (impit), chargé à la première utilisation. */
   loadImpersonation?: (cookies: CookieJar) => Promise<Transport | null>;
   /** Transport « navigateur réel » (vérification Cloudflare dans le navigateur). */
   realBrowser?: ((cookies: CookieJar) => Transport) | null;
+  /** Pages de listing via ZenRows (service en ligne), si une clé est configurée. */
+  zenrows?: ZenRowsTransport | null;
+  /** Point d'accès de lecture de 111477, en secours pour les fichiers (null : jamais). */
+  cdn?: CdnOptions | null;
 }
 
 const ESCALATION_MESSAGES: Partial<Record<TransportName, string>> = {
@@ -35,6 +41,8 @@ const ESCALATION_MESSAGES: Partial<Record<TransportName, string>> = {
     'La source filtre les clients qui ne sont pas des navigateurs : imitation de Chrome activée',
   'real-browser':
     'Cloudflare exige une vérification de navigateur : passage par le navigateur de l’utilisateur activé',
+  zenrows: 'Cloudflare bloque les pages de listing : elles passent désormais par ZenRows',
+  cdn: 'Lien direct refusé : les fichiers passent par le point d’accès de lecture p.111477.xyz',
 };
 
 export interface RemoteEntry {
@@ -57,6 +65,8 @@ export interface DirectoryListing {
 }
 
 const LISTING_TTL_MS = 10 * 60_000;
+/** Pages payées (ZenRows) : conservées plus longtemps pour économiser des crédits. */
+const PAID_LISTING_TTL_MS = 6 * 60 * 60_000;
 /** Inclut le temps de passer une vérification Cloudflare dans le navigateur (≤ 3 min). */
 const LISTING_TIMEOUT_MS = 240_000;
 const HEADERS_TIMEOUT_MS = 30_000;
@@ -74,7 +84,9 @@ export class SourceClient {
   private impersonation: Promise<Transport | null> | null = null;
   private readonly loadImpersonation: () => Promise<Transport | null>;
   private readonly realBrowser: Transport | null;
-  /** Transport retenu par origine, en mode automatique, après une bascule réussie. */
+  private readonly zenrows: ZenRowsTransport | null;
+  private readonly cdn: CdnTransport | null;
+  /** Transport retenu par origine et type de requête, après une bascule réussie. */
   private readonly preferred = new Map<string, TransportName>();
   private impersonationMissingWarned = false;
 
@@ -87,6 +99,11 @@ export class SourceClient {
     const load = options.loadImpersonation ?? BrowserTransport.load;
     this.loadImpersonation = () => load(this.cookies);
     this.realBrowser = options.realBrowser?.(this.cookies) ?? null;
+    this.zenrows = options.zenrows ?? null;
+    const cdn = options.cdn === undefined ? DEFAULT_CDN : options.cdn;
+    this.cdn = cdn
+      ? new CdnTransport(cdn, async () => (await this.impersonationTransport()) ?? this.standard)
+      : null;
     settings.onChange((next, previous) => {
       if (
         next.sourceBaseUrl !== previous.sourceBaseUrl ||
@@ -97,6 +114,7 @@ export class SourceClient {
         this.preferred.clear();
         this.cookies.clear();
         this.realBrowser?.reset?.();
+        this.zenrows?.reset();
       }
     });
   }
@@ -130,15 +148,20 @@ export class SourceClient {
     const cacheKey = `${this.baseUrl}${dirPath}`;
     if (!options.force) {
       const cached = this.listings.get(cacheKey);
-      if (cached && Date.now() - cached.fetchedAt <= (options.maxAgeMs ?? LISTING_TTL_MS)) {
+      const maxAge = options.maxAgeMs ?? this.ttlFor(cached?.transport);
+      if (cached && Date.now() - cached.fetchedAt <= maxAge) {
         return cached;
       }
     }
     return this.inflight.run(cacheKey, async () => {
       const listing = await this.fetchListing(dirPath);
-      this.listings.set(cacheKey, listing);
+      this.listings.set(cacheKey, listing, this.ttlFor(listing.transport));
       return listing;
     });
+  }
+
+  private ttlFor(transport: TransportName | undefined): number {
+    return transport === 'zenrows' ? PAID_LISTING_TTL_MS : LISTING_TTL_MS;
   }
 
   invalidate(remotePath: string): void {
@@ -151,8 +174,13 @@ export class SourceClient {
     return this.impersonation;
   }
 
-  /** Transports à essayer, dans l'ordre, selon le mode de connexion choisi. */
-  private async transportsFor(origin: string): Promise<Transport[]> {
+  /**
+   * Transports à essayer, dans l'ordre, selon le mode de connexion et le type de requête.
+   *   - pages : standard → imitation → ZenRows (si clé) ou, à défaut, navigateur réel ;
+   *   - fichiers : standard → imitation → p.111477.xyz (111477 seulement) → navigateur réel
+   *     (sauf si ZenRows est configuré : le navigateur n'est alors jamais ouvert).
+   */
+  private async transportsFor(url: string, kind: SourceRequest['kind']): Promise<Transport[]> {
     const mode = this.settings.get().sourceConnection;
     if (mode === 'standard') return [this.standard];
     if (mode === 'real-browser') return [this.realBrowser ?? this.standard];
@@ -164,37 +192,49 @@ export class SourceClient {
       );
     }
     if (mode === 'browser') return [impersonation ?? this.standard];
-    const chain = [this.standard, impersonation, this.realBrowser].filter(
-      (transport): transport is Transport => transport !== null,
-    );
-    const preferred = this.preferred.get(origin);
-    const start = chain.findIndex((transport) => transport.name === preferred);
-    return start > 0 ? chain.slice(start) : chain;
+    const zenrows = mode === 'zenrows' || this.zenrows?.configured ? this.zenrows : null;
+    const chain: Array<Transport | null> = [this.standard, impersonation];
+    if (kind === 'document') chain.push(zenrows ?? this.realBrowser);
+    else chain.push(this.cdn?.appliesTo(url) ? this.cdn : null, zenrows ? null : this.realBrowser);
+    const transports = chain.filter((transport): transport is Transport => transport !== null);
+    const preferred = this.preferred.get(this.preferenceKey(url, kind));
+    const start = transports.findIndex((transport) => transport.name === preferred);
+    return start > 0 ? transports.slice(start) : transports;
+  }
+
+  private preferenceKey(url: string, kind: SourceRequest['kind']): string {
+    return `${new URL(url).origin}|${kind}`;
   }
 
   /**
-   * Envoie une requête à la source. En mode automatique, une réponse de filtrage anti-robot
-   * (403, défi Cloudflare) déclenche un nouvel essai avec le transport suivant : imitation
-   * de Chrome, puis vérification dans le navigateur de l'utilisateur (seulement si la
-   * réponse vient de Cloudflare). Le transport qui passe est retenu pour la suite.
+   * Envoie une requête à la source. Une réponse de filtrage anti-robot (403, défi
+   * Cloudflare) déclenche un nouvel essai avec le transport suivant ; le navigateur réel
+   * n'est sollicité que si la source est servie par Cloudflare. Le transport qui passe est
+   * retenu pour la suite.
    */
   async request(
     url: string,
     request: SourceRequest,
   ): Promise<{ response: SourceResponse; transport: TransportName }> {
-    const origin = new URL(url).origin;
-    const transports = await this.transportsFor(origin);
+    const key = this.preferenceKey(url, request.kind);
+    const transports = await this.transportsFor(url, request.kind);
+    let cloudflare = false;
     for (const [index, transport] of transports.entries()) {
       const next = transports[index + 1];
       const response = await transport.fetch(url, request);
-      const blocked = looksBlocked(response);
-      if (next && blocked && (next.name !== 'real-browser' || servedByCloudflare(response))) {
+      cloudflare ||= servedByCloudflare(response);
+      // Le point d'accès de lecture échoue autrement que par un 403 (limite, page d'erreur…).
+      const blocked = transport.name === 'cdn' ? !response.ok : looksBlocked(response);
+      if (next && blocked && (next.name !== 'real-browser' || cloudflare)) {
         await response.body?.cancel().catch(() => undefined);
         continue;
       }
-      if (index > 0 && !blocked && this.preferred.get(origin) !== transport.name) {
-        this.preferred.set(origin, transport.name);
-        this.logger.info({ origin }, ESCALATION_MESSAGES[transport.name] ?? 'Transport changé');
+      if (index > 0 && !blocked && this.preferred.get(key) !== transport.name) {
+        this.preferred.set(key, transport.name);
+        this.logger.info(
+          { origin: new URL(url).origin, kind: request.kind },
+          ESCALATION_MESSAGES[transport.name] ?? 'Transport changé',
+        );
       }
       return { response, transport: transport.name };
     }
