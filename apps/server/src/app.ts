@@ -22,6 +22,7 @@ import { registerLibraryRoutes } from './modules/library/library.routes';
 import { registerMetadataRoutes } from './modules/metadata/metadata.routes';
 import { registerPlaybackRoutes } from './modules/playback/playback.routes';
 import { registerSettingsRoutes } from './modules/settings/settings.routes';
+import { registerSourceRoutes } from './modules/source/source.routes';
 import { registerSystemRoutes } from './modules/system/system.routes';
 
 export async function buildApp(container: Container): Promise<FastifyInstance> {
@@ -91,6 +92,7 @@ export async function buildApp(container: Container): Promise<FastifyInstance> {
       registerDownloadRoutes(api, container);
       registerLibraryRoutes(api, container);
       registerPlaybackRoutes(api, container);
+      registerSourceRoutes(api, container);
       api.setNotFoundHandler((request, reply) =>
         reply.code(404).send({
           error: 'NOT_FOUND',

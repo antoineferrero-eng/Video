@@ -43,6 +43,7 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
+  container.relay.setListeningAddress(app.server.address());
   await startServices(container);
   const host = config.host === '0.0.0.0' ? 'localhost' : config.host;
   logger.info(`Lumière est prêt : http://${host}:${config.port}`);

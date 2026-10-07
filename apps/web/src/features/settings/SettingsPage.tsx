@@ -13,7 +13,12 @@ import {
   XCircle,
 } from 'lucide-react';
 import { useMemo, useState, type ReactNode } from 'react';
-import type { AppSettings, SettingsResponse, SettingsUpdate } from '@lumiere/shared';
+import type {
+  AppSettings,
+  SettingsResponse,
+  SettingsUpdate,
+  SourceConnection,
+} from '@lumiere/shared';
 import {
   useRefreshCatalog,
   useSettings,
@@ -41,6 +46,26 @@ const LANGUAGES = [
   { value: 'de', label: 'Allemand' },
   { value: 'it', label: 'Italien' },
   { value: 'ja', label: 'Japonais' },
+];
+
+const CONNECTIONS: Array<{ value: SourceConnection; label: string; description: string }> = [
+  {
+    value: 'auto',
+    label: 'Automatique (recommandé)',
+    description:
+      'Connexion standard, puis imitation complète de Chrome si la source filtre les robots (Cloudflare…).',
+  },
+  {
+    value: 'standard',
+    label: 'Standard',
+    description: 'Requêtes avec les en-têtes d’un navigateur et le User-Agent ci-contre.',
+  },
+  {
+    value: 'browser',
+    label: 'Imitation de navigateur',
+    description:
+      'Reproduit l’empreinte réseau de Chrome (TLS, HTTP/2) pour toutes les requêtes vers la source.',
+  },
 ];
 
 export function SettingsPage() {
@@ -112,17 +137,36 @@ function SettingsForm({ response }: { response: SettingsResponse }) {
             />
           </Field>
         </div>
-        <Field
-          label="User-Agent HTTP"
-          description="Identité envoyée à la source (un navigateur courant par défaut)."
-        >
-          <Input
-            value={draft.userAgent}
-            onChange={(event) => set('userAgent', event.target.value)}
-            spellCheck={false}
-            className="font-mono text-xs"
-          />
-        </Field>
+        <div className="grid gap-4 sm:grid-cols-[15rem_1fr]">
+          <Field
+            label="Connexion à la source"
+            description={
+              CONNECTIONS.find((item) => item.value === draft.sourceConnection)?.description
+            }
+          >
+            <Select
+              value={draft.sourceConnection}
+              onChange={(event) => set('sourceConnection', event.target.value as SourceConnection)}
+            >
+              {CONNECTIONS.map((item) => (
+                <option key={item.value} value={item.value}>
+                  {item.label}
+                </option>
+              ))}
+            </Select>
+          </Field>
+          <Field
+            label="User-Agent HTTP"
+            description="Identité de la connexion standard (l’imitation de navigateur utilise celle de Chrome)."
+          >
+            <Input
+              value={draft.userAgent}
+              onChange={(event) => set('userAgent', event.target.value)}
+              spellCheck={false}
+              className="font-mono text-xs"
+            />
+          </Field>
+        </div>
         <SourceTester />
       </Section>
 
@@ -487,7 +531,7 @@ function SourceTester() {
           >
             {result.ok ? <CheckCircle2 className="size-4" /> : <XCircle className="size-4" />}
             {result.ok
-              ? `Source joignable · ${result.directories} dossier(s), ${result.files} fichier(s) · format ${result.format} · ${result.durationMs} ms`
+              ? `Source joignable · ${result.directories} dossier(s), ${result.files} fichier(s) · format ${result.format} · ${result.durationMs} ms${result.transport === 'browser' ? ' · via l’imitation de Chrome' : ''}`
               : (result.error ?? 'Échec')}
           </span>
         )}

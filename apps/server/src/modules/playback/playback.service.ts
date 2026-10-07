@@ -45,6 +45,7 @@ import type { MetadataService } from '../metadata/metadata.service';
 import type { SettingsService } from '../settings/settings.service';
 import { normalizeRemotePath, remoteBaseName, remoteParent } from '../source/remote-path';
 import type { SourceClient } from '../source/source-client';
+import type { SourceRelay } from '../source/source-relay';
 import type { Ffmpeg, ProbeResult, ProbeStream } from './ffmpeg';
 import { buildStreamArgs, buildSubtitleConvertArgs, buildSubtitleExtractArgs } from './ffmpeg-args';
 import { planPlayback, type PlaybackPlan } from './planner';
@@ -125,6 +126,7 @@ export class PlaybackService {
     private readonly ffmpeg: Ffmpeg,
     private readonly sessions: PlaybackSessions,
     private readonly source: SourceClient,
+    private readonly relay: SourceRelay,
     private readonly library: LibraryService,
     private readonly catalog: CatalogService,
     private readonly titles: TitlesRepository,
@@ -271,7 +273,8 @@ export class PlaybackService {
         ? parseEpisode(fileName, parseSeasonFolder(remoteBaseName(remoteParent(remotePath) ?? '')))
         : null;
     return {
-      input: this.source.urlFor(remotePath),
+      // ffmpeg lit la source via le relais local (même transport que le reste de l'application).
+      input: this.relay.urlFor(remotePath),
       isRemote: true,
       remotePath,
       filePath: null,
@@ -330,7 +333,8 @@ export class PlaybackService {
 
   private async probe(media: ResolvedMedia): Promise<ProbeResult | null> {
     if (!this.ffmpeg.info.ffprobeAvailable) return null;
-    let key = media.input;
+    // Fichier distant : clé stable (le relais local change d'URL à chaque démarrage).
+    let key = media.isRemote && media.remotePath ? `remote:${media.remotePath}` : media.input;
     if (!media.isRemote) {
       const stats = await fsp.stat(media.input);
       key += `:${stats.size}:${stats.mtimeMs}`;
@@ -608,7 +612,9 @@ export class PlaybackService {
     }
 
     // Piste intégrée : extraction (mise en cache disque, l'opération lit tout le fichier).
-    let cacheKey = `${session.input}#${track.streamIndex}`;
+    let cacheKey = `${
+      session.isRemote && session.remotePath ? `remote:${session.remotePath}` : session.input
+    }#${track.streamIndex}`;
     if (!session.isRemote) {
       const stats = await fsp.stat(session.input);
       cacheKey += `:${stats.size}:${stats.mtimeMs}`;

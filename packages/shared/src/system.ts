@@ -23,6 +23,8 @@ export interface SourceTestResult {
   files: number;
   sample: ExplorerEntry[];
   error: string | null;
+  /** Transport utilisé : requête standard ou imitation de navigateur (null en cas d'échec). */
+  transport: 'standard' | 'browser' | null;
 }
 
 export interface ApiErrorBody {

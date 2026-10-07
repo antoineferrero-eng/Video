@@ -27,7 +27,8 @@ Conséquences sur la conception :
 > listing courants** (nginx, Apache, Caddy, lighttpd, listes `<ul>`, grilles `<div>`, JSON),
 > testé sur ces formats, et une **source de démonstration** locale a été construite pour
 > valider l'application de bout en bout. L'outil `npm run probe` permet de vérifier en une
-> commande ce que l'analyseur comprend du vrai site.
+> commande ce que l'analyseur comprend du vrai site, et `npm run diagnose` pourquoi la source
+> refuserait une connexion (voir § 11).
 
 ---
 
@@ -279,11 +280,63 @@ basées sur une copie figée de l'arrière-plan, inutilisable sur une interface 
 
 ---
 
-## 11. Qualité, sécurité, exploitation
+## 11. Connexion à la source : passer le filtrage anti‑robot
+
+### Le problème constaté
+
+Sur une vraie machine, l'actualisation du catalogue échouait avec « 403 Forbidden » alors que
+le même site s'affichait normalement dans le navigateur. Les en-têtes reçus par le navigateur
+(`Server: cloudflare`, `Cf-Cache-Status`) montrent que `a.111477.xyz` est désormais servi
+derrière **Cloudflare**, dont le pare-feu refuse les requêtes qui ne ressemblent pas à celles
+d'un navigateur.
+
+Or la première version utilisait `fetch` (undici, intégré à Node.js) avec un simple
+User-Agent de Chrome. Un serveur d'écho montre ce qui partait réellement : `fetch` impose
+`sec-fetch-mode: cors` (même quand on demande `navigate`) et ajoute `accept-language: *`.
+Un User-Agent de Chrome accompagné d'en-têtes qu'aucun Chrome n'envoie lors d'une navigation
+est une signature typique de robot. Au-delà des en-têtes, Cloudflare peut aussi comparer
+l'**empreinte TLS/HTTP2** du client (ordre des suites de chiffrement, extensions, réglages
+HTTP/2) à celle du navigateur annoncé.
+
+### Les choix
+
+| Couche                            | Choix                                                                                                                                                                                                                                               | Pourquoi                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| --------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Connexion standard                | Requêtes `node:http`/`node:https` qui envoient **exactement** les en-têtes d'une navigation Chrome (`sec-ch-ua*`, `sec-fetch-*`, `accept`, `accept-language: fr-FR…`, `priority`, `upgrade-insecure-requests`), cohérents avec le User-Agent choisi | Contrairement à `fetch`, rien n'est ajouté ni réécrit. Les pages sont décompressées (gzip/deflate/br) ; les fichiers sont demandés sans compression pour que les plages d'octets (`Range`) restent exactes.                                                                                                                                                                                                                                        |
+| Cookies                           | Petit « cookie jar » par origine                                                                                                                                                                                                                    | Cloudflare dépose des cookies (`__cf_bm`…) qu'un navigateur renvoie ; les ignorer est un autre signe de robot.                                                                                                                                                                                                                                                                                                                                     |
+| Imitation de navigateur           | **[impit](https://github.com/apify/impit)** (Apify), en secours                                                                                                                                                                                     | Bibliothèque Rust (reqwest + rustls) livrée en binaires précompilés pour Windows, macOS et Linux : elle reproduit la poignée de main TLS, les réglages HTTP/2 et l'ordre des en-têtes de Chrome, avec une API proche de `fetch`. Aucune installation supplémentaire, contrairement à un vrai navigateur piloté (Playwright/Puppeteer : centaines de Mo, lent, gourmand) ou à curl-impersonate (binaires externes à installer et maintenir à part). |
+| Mode « Automatique » (par défaut) | Connexion standard d'abord ; en cas de 403 (ou de 503 de Cloudflare), nouvel essai avec l'imitation, puis **mémorisation par origine**                                                                                                              | Le chemin léger (flux Node.js natifs) sert tant qu'il suffit ; dès que la source filtre, toutes les requêtes suivantes passent directement par l'imitation, sans double requête. Modes « Standard » et « Imitation de navigateur » forçables dans **Paramètres → Source**.                                                                                                                                                                         |
+| ffmpeg / ffprobe                  | **Relais local** `/api/internal/source` (127.0.0.1, jeton aléatoire généré au démarrage)                                                                                                                                                            | ffmpeg a son propre client HTTP (User-Agent `Lavf`, autre pile TLS) que le même pare-feu bloquerait. En lisant via le relais, la lecture en streaming emprunte exactement la même connexion que le catalogue et les téléchargements. Le relais n'accepte que des chemins de la source configurée et un jeton comparé en temps constant : ce n'est pas un proxy ouvert.                                                                             |
+| Messages d'erreur                 | Analyse des refus : page de vérification (`cf-mitigated: challenge`, « Just a moment… »), règle de pare-feu (erreur 1020), User-Agent banni (1010), autre refus                                                                                     | Dire _pourquoi_ la source refuse, plutôt qu'un « 403 » brut ; le journal ajoute `cf-ray`, serveur et titre de la page pour le diagnostic.                                                                                                                                                                                                                                                                                                          |
+| Diagnostic                        | `npm run diagnose [-- <url>]`                                                                                                                                                                                                                       | Compare en une commande quatre méthodes (ancien `fetch`, Node.js + en-têtes de Chrome, imitation impit, curl du système) depuis la machine de l'utilisateur et conclut. Indispensable puisque l'environnement de développement n'atteint pas le site.                                                                                                                                                                                              |
+
+Ces mécanismes ont été validés contre un faux « Cloudflare » local qui refuse les requêtes
+sans métadonnées de navigation (tests automatisés `source-transport.test.ts`), et la lecture
+en streaming a été vérifiée de bout en bout à travers le relais.
+
+### Limites
+
+- Si la source impose une **vérification JavaScript** (page « Just a moment… » / Turnstile),
+  aucun client HTTP ne peut la passer seul : il faut un vrai navigateur. Piste prévue si le
+  cas se présente : réutiliser le cookie `cf_clearance` obtenu dans le navigateur (même
+  User-Agent, même adresse IP).
+- Un blocage par adresse IP ou par pays (erreur 1020) ne se contourne pas côté application.
+
+### Sources
+
+- Cloudflare, [Detect a Challenge Page response](https://developers.cloudflare.com/cloudflare-challenges/challenge-types/challenge-pages/detect-response) (en-tête `cf-mitigated: challenge`) et [Cloudflare challenges](https://developers.cloudflare.com/waf/reference/cloudflare-challenges).
+- MDN, [Sec-Fetch-Mode](https://developer.mozilla.org/docs/Web/HTTP/Reference/Headers/Sec-Fetch-Mode).
+- Apify, [impit](https://github.com/apify/impit) et sa [documentation JavaScript](https://apify.github.io/impit/js).
+- Kinsta, [Error 1020 Access Denied](https://kinsta.com/docs/error-1020-access-denied).
+
+---
+
+## 12. Qualité, sécurité, exploitation
 
 - **Qualité** : TypeScript strict, ESLint 10 (règles React Compiler incluses), Prettier,
   **Vitest** (serveur : analyseur de listings, noms de releases, plan de lecture,
-  téléchargement avec coupure/reprise, enrichissement TMDB, configuration ; interface :
+  téléchargement avec coupure/reprise, enrichissement TMDB, configuration, connexion à la
+  source derrière un pare-feu anti-robot simulé, relais de ffmpeg ; interface :
   réfraction, détection des navigateurs, préférences d'accessibilité, palette d'ambiance),
   parcours de bout en bout et audit d'accessibilité (axe-core) dans Chromium (Playwright).
 - **Sécurité** :
@@ -292,16 +345,19 @@ basées sur une copie figée de l'arrière-plan, inutilisable sur une interface 
   - les fichiers locaux ne sont accessibles que par identifiant de bibliothèque ;
   - les noms de fichiers sont assainis (Windows/macOS/Linux) et les écritures confinées au
     dossier de téléchargement ;
-  - ffmpeg est lancé sans shell (aucune injection possible) ;
+  - ffmpeg est lancé sans shell (aucune injection possible) et ne lit la source qu'à travers
+    le relais local protégé par jeton ;
   - écoute sur `127.0.0.1` par défaut (accès réseau local sur choix explicite) ;
   - la clé TMDB n'est jamais renvoyée à l'interface.
+- **Journal** : pino, écrit via `process.stdout` pour que Node.js convertisse le texte pour la
+  console Windows (sinon les accents s'affichent « ├® »).
 - **Déploiement** : `npm run build && npm start`, ou **Docker** (image multi‑étapes avec
   ffmpeg, utilisateur non‑root, volumes `/data` et `/media`, `HEALTHCHECK`) et
   `docker-compose.yml`.
 
 ---
 
-## 12. Limites connues et pistes d'évolution
+## 13. Limites connues et pistes d'évolution
 
 - Pas d'authentification : l'application est prévue pour un usage personnel/local. Avant de
   l'exposer sur Internet, la placer derrière un reverse proxy avec authentification.
@@ -310,7 +366,8 @@ basées sur une copie figée de l'arrière-plan, inutilisable sur une interface 
 - Le format HTML exact de `a.111477.xyz` n'a pas pu être observé depuis l'environnement de
   développement : en cas de souci, `npm run probe -w @lumiere/server -- https://a.111477.xyz/movies/`
   montre immédiatement ce que l'analyseur comprend, et les chemins `/movies/` et `/tvs/`
-  sont modifiables dans les paramètres.
+  sont modifiables dans les paramètres. Si la source refuse la connexion (403),
+  `npm run diagnose` indique quelle méthode passe depuis la machine (voir § 11).
 - Design : la réfraction n'est visible que dans les navigateurs Chromium (Chrome, Edge,
   Brave, Opera) ; Safari et Firefox affichent le même verre, dépoli. Le verre ne bascule pas
   automatiquement entre clair et sombre selon le fond comme sur iOS (le Web ne permet pas de

@@ -10,6 +10,17 @@ import type { Logger } from '../../core/logger';
 import type { SettingsService } from '../settings/settings.service';
 import { parseListing, type ListingFormat } from './listing-parser';
 import { joinRemote, normalizeDirPath, normalizeRemotePath } from './remote-path';
+import {
+  BrowserTransport,
+  CookieJar,
+  StandardTransport,
+  describeRefusal,
+  looksBlocked,
+  type SourceRequest,
+  type SourceResponse,
+  type Transport,
+  type TransportName,
+} from './transport';
 
 export interface RemoteEntry {
   name: string;
@@ -26,6 +37,8 @@ export interface DirectoryListing {
   format: ListingFormat;
   entries: RemoteEntry[];
   fetchedAt: number;
+  /** Transport qui a obtenu la page (diagnostic). */
+  transport: TransportName;
 }
 
 const LISTING_TTL_MS = 10 * 60_000;
@@ -40,14 +53,30 @@ const MAX_TEXT_BYTES = 8 * 1024 * 1024;
 export class SourceClient {
   private readonly listings = new TtlCache<string, DirectoryListing>(500, LISTING_TTL_MS);
   private readonly inflight = new InFlight<string, DirectoryListing>();
+  private readonly cookies = new CookieJar();
+  private readonly standard: StandardTransport;
+  private browser: Promise<Transport | null> | null = null;
+  /** Origines pour lesquelles l'imitation de navigateur s'est révélée nécessaire. */
+  private readonly needsBrowser = new Set<string>();
+  private readonly loadBrowser: () => Promise<Transport | null>;
+  private browserMissingWarned = false;
 
   constructor(
     private readonly settings: SettingsService,
     private readonly logger: Logger,
+    loadBrowser: (cookies: CookieJar) => Promise<Transport | null> = BrowserTransport.load,
   ) {
+    this.standard = new StandardTransport(() => this.userAgent, this.cookies);
+    this.loadBrowser = () => loadBrowser(this.cookies);
     settings.onChange((next, previous) => {
-      if (next.sourceBaseUrl !== previous.sourceBaseUrl || next.userAgent !== previous.userAgent) {
+      if (
+        next.sourceBaseUrl !== previous.sourceBaseUrl ||
+        next.userAgent !== previous.userAgent ||
+        next.sourceConnection !== previous.sourceConnection
+      ) {
         this.listings.clear();
+        this.needsBrowser.clear();
+        this.cookies.clear();
       }
     });
   }
@@ -96,28 +125,91 @@ export class SourceClient {
     this.listings.delete(`${this.baseUrl}${normalizeDirPath(remotePath)}`);
   }
 
+  /** Transport « navigateur » (chargé une seule fois, à la première utilisation). */
+  private browserTransport(): Promise<Transport | null> {
+    this.browser ??= this.loadBrowser();
+    return this.browser;
+  }
+
+  /** Transports à essayer, dans l'ordre, selon le mode de connexion choisi. */
+  private async transportsFor(origin: string): Promise<Transport[]> {
+    const mode = this.settings.get().sourceConnection;
+    if (mode === 'standard') return [this.standard];
+    const browser = await this.browserTransport();
+    if (!browser) {
+      if (!this.browserMissingWarned) {
+        this.browserMissingWarned = true;
+        this.logger.warn(
+          "Module d'imitation de navigateur (impit) indisponible sur cette plateforme : connexion standard uniquement",
+        );
+      }
+      return [this.standard];
+    }
+    if (mode === 'browser' || this.needsBrowser.has(origin)) return [browser];
+    return [this.standard, browser];
+  }
+
+  /**
+   * Envoie une requête à la source. En mode automatique, une réponse de filtrage anti-robot
+   * (403, défi Cloudflare) déclenche un nouvel essai en imitant Chrome ; si ce dernier passe,
+   * il est retenu pour toute la suite de la session.
+   */
+  async request(
+    url: string,
+    request: SourceRequest,
+  ): Promise<{ response: SourceResponse; transport: TransportName }> {
+    const origin = new URL(url).origin;
+    const transports = await this.transportsFor(origin);
+    for (const [index, transport] of transports.entries()) {
+      const last = index === transports.length - 1;
+      const response = await transport.fetch(url, request);
+      if (!last && looksBlocked(response)) {
+        await response.body?.cancel().catch(() => undefined);
+        continue;
+      }
+      if (index > 0 && !looksBlocked(response) && !this.needsBrowser.has(origin)) {
+        this.needsBrowser.add(origin);
+        this.logger.info(
+          { origin },
+          'La source filtre les clients qui ne sont pas des navigateurs : imitation de Chrome activée',
+        );
+      }
+      return { response, transport: transport.name };
+    }
+    throw new UpstreamError('Aucun transport disponible pour joindre la source.');
+  }
+
   private async fetchListing(dirPath: string): Promise<DirectoryListing> {
     const url = this.urlFor(dirPath);
     const started = Date.now();
-    let response: Response;
+    let result: { response: SourceResponse; transport: TransportName };
     try {
-      response = await fetch(url, {
-        headers: {
-          'user-agent': this.userAgent,
-          accept: 'text/html,application/xhtml+xml,application/json;q=0.9,*/*;q=0.8',
-        },
-        redirect: 'follow',
+      result = await this.request(url, {
+        kind: 'document',
         signal: AbortSignal.timeout(LISTING_TIMEOUT_MS),
       });
     } catch (error) {
       throw new UpstreamError(`Source injoignable (${url}) : ${errorMessage(error)}`);
     }
+    const { response, transport } = result;
     if (response.status === 404) {
+      await response.body?.cancel().catch(() => undefined);
       throw new NotFoundError(`Dossier introuvable sur la source : ${dirPath}`);
     }
     if (!response.ok) {
+      const bodyStart = (await response.text().catch(() => '')).slice(0, 4000);
+      const diagnosis = describeRefusal(
+        response.status,
+        response.statusText,
+        response.headers,
+        bodyStart,
+      );
+      this.logger.warn(
+        { url, transport, ...diagnosis.details },
+        'Refus de la source (détails pour le diagnostic)',
+      );
       throw new UpstreamError(
-        `La source a répondu « ${response.status} ${response.statusText} » pour ${dirPath}`,
+        `La source a répondu ${diagnosis.message} pour ${dirPath}`,
         response.status,
       );
     }
@@ -132,6 +224,7 @@ export class SourceClient {
         path: dirPath,
         entries: parsed.items.length,
         format: parsed.format,
+        transport,
         ms: Date.now() - started,
       },
       'Listing distant récupéré',
@@ -141,6 +234,7 @@ export class SourceClient {
       url,
       format: parsed.format,
       fetchedAt: Date.now(),
+      transport,
       entries: parsed.items.map((item) => ({
         ...item,
         path: joinRemote(dirPath, item.name, item.isDirectory),
@@ -162,13 +256,11 @@ export class SourceClient {
       signal?: AbortSignal;
       method?: 'GET' | 'HEAD';
     } = {},
-  ): Promise<Response> {
+  ): Promise<SourceResponse> {
     const url = this.urlFor(remotePath);
-    const headers: Record<string, string> = { 'user-agent': this.userAgent, accept: '*/*' };
-    if (options.range) {
-      headers.range = options.range;
-    } else if (options.start !== undefined || options.end !== undefined) {
-      headers.range = `bytes=${options.start ?? 0}-${options.end ?? ''}`;
+    let range = options.range;
+    if (!range && (options.start !== undefined || options.end !== undefined)) {
+      range = `bytes=${options.start ?? 0}-${options.end ?? ''}`;
     }
     const timeout = new AbortController();
     const timer = setTimeout(
@@ -179,12 +271,13 @@ export class SourceClient {
       ? AbortSignal.any([options.signal, timeout.signal])
       : timeout.signal;
     try {
-      return await fetch(url, {
+      const { response } = await this.request(url, {
+        kind: 'file',
         method: options.method ?? 'GET',
-        headers,
+        range,
         signal,
-        redirect: 'follow',
       });
+      return response;
     } catch (error) {
       if (options.signal?.aborted && isAbortError(error)) throw error;
       throw new UpstreamError(`Source injoignable : ${errorMessage(error)}`);

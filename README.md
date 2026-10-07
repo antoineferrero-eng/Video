@@ -112,7 +112,8 @@ une source locale qui imite le site, un faux service TMDB, puis l'application su
 La plupart des réglages se font dans l'interface (**Paramètres**) : apparence du verre
 (propre à chaque appareil), adresse et dossiers de la source, dossier de téléchargement, téléchargements simultanés, limite de débit, qualité
 préférée, langue audio et sous-titres par défaut, qualité de conversion, clé et langue TMDB,
-fréquence d'actualisation du catalogue, test de connexion à la source.
+fréquence d'actualisation du catalogue, mode de connexion à la source (automatique, standard
+ou imitation de navigateur), test de connexion à la source.
 
 Les variables d'environnement définissent les valeurs de départ. Elles peuvent aussi être
 placées dans un fichier `.env` à la racine du dépôt (copiez [`.env.example`](.env.example)) :
@@ -175,6 +176,7 @@ npm run dev        # API (port 8484, rechargement à chaud) + interface Vite (ht
 | `npm run demo:media`                        | (Re)génère les vidéos et affiches de démonstration.                     |
 | `npm run demo`                              | Démonstration complète hors ligne.                                      |
 | `npm run probe -w @lumiere/server -- <url>` | Affiche ce que l'analyseur comprend d'une page de listing.              |
+| `npm run diagnose -- [url]`                 | Explique pourquoi la source refuserait la connexion (403, Cloudflare…). |
 
 Structure du dépôt :
 
@@ -194,15 +196,15 @@ Liquid Glass dans **[docs/DESIGN.md](docs/DESIGN.md)**.
 
 ## Dépannage
 
-| Symptôme                                             | Piste                                                                                                                                                                                                                   |
-| ---------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Le catalogue reste vide / « Aucune entrée reconnue » | **Paramètres → Tester la source**. Vérifiez l'adresse et les dossiers (`/movies/`, `/tvs/`). Lancez `npm run probe -w @lumiere/server -- https://a.111477.xyz/movies/` pour voir ce que l'analyseur extrait de la page. |
-| « La source a répondu 403 »                          | Le site filtre peut-être les robots : essayez un autre User-Agent dans les paramètres.                                                                                                                                  |
-| Une vidéo ne se lance pas                            | Vérifiez que ffmpeg est détecté (**Paramètres → Système**). Le lecteur bascule automatiquement en conversion en cas d'échec.                                                                                            |
-| Pas d'affiches                                       | Ajoutez/testez la clé TMDB dans les paramètres.                                                                                                                                                                         |
-| Défilement saccadé                                   | **Paramètres → Apparence** : désactivez la réfraction ou choisissez « Teinté » ou « Opaque » (la réfraction se coupe d'elle-même si l'affichage saccade).                                                               |
-| Pas d'effet de réfraction                            | Normal hors Chrome, Edge, Brave ou Opera : Safari et Firefox affichent un verre dépoli.                                                                                                                                 |
-| « Le port 8484 est déjà utilisé »                    | `PORT=8585 npm start`                                                                                                                                                                                                   |
+| Symptôme                                                  | Piste                                                                                                                                                                                                                                                                                                                                   |
+| --------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Le catalogue reste vide / « Aucune entrée reconnue »      | **Paramètres → Tester la source**. Vérifiez l'adresse et les dossiers (`/movies/`, `/tvs/`). Lancez `npm run probe -w @lumiere/server -- https://a.111477.xyz/movies/` pour voir ce que l'analyseur extrait de la page.                                                                                                                 |
+| « La source a répondu 403 » / « vérification anti-robot » | Le site est protégé par Cloudflare. Laissez **Paramètres → Source → Connexion à la source** sur « Automatique » (Lumière imite alors Chrome) ou choisissez « Imitation de navigateur ». Si le refus persiste, lancez `npm run diagnose` (ou `npm run diagnose -- https://a.111477.xyz/tvs/`) et joignez le rapport à votre signalement. |
+| Une vidéo ne se lance pas                                 | Vérifiez que ffmpeg est détecté (**Paramètres → Système**). Le lecteur bascule automatiquement en conversion en cas d'échec.                                                                                                                                                                                                            |
+| Pas d'affiches                                            | Ajoutez/testez la clé TMDB dans les paramètres.                                                                                                                                                                                                                                                                                         |
+| Défilement saccadé                                        | **Paramètres → Apparence** : désactivez la réfraction ou choisissez « Teinté » ou « Opaque » (la réfraction se coupe d'elle-même si l'affichage saccade).                                                                                                                                                                               |
+| Pas d'effet de réfraction                                 | Normal hors Chrome, Edge, Brave ou Opera : Safari et Firefox affichent un verre dépoli.                                                                                                                                                                                                                                                 |
+| « Le port 8484 est déjà utilisé »                         | `PORT=8585 npm start`                                                                                                                                                                                                                                                                                                                   |
 
 ---
 

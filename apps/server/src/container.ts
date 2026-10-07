@@ -21,6 +21,7 @@ import { ProgressRepository } from './modules/playback/progress.repository';
 import { PlaybackSessions } from './modules/playback/sessions';
 import { SettingsService } from './modules/settings/settings.service';
 import { SourceClient } from './modules/source/source-client';
+import { SourceRelay } from './modules/source/source-relay';
 
 /** Racine de composition : instancie et relie tous les services (injection manuelle). */
 export interface Container {
@@ -30,6 +31,7 @@ export interface Container {
   events: EventBus;
   settings: SettingsService;
   source: SourceClient;
+  relay: SourceRelay;
   titles: TitlesRepository;
   availability: AvailabilityService;
   tmdb: TmdbClient;
@@ -49,6 +51,7 @@ export function createContainer(config: AppConfig, logger: Logger): Container {
   const events = new EventBus();
   const settings = new SettingsService(db, config);
   const source = new SourceClient(settings, logger.child({ module: 'source' }));
+  const relay = new SourceRelay(config);
   const titles = new TitlesRepository(db);
   const availability = new AvailabilityService(db);
   const tmdb = new TmdbClient(() => settings.getTmdbApiKey(), config.tmdb.apiBaseUrl);
@@ -103,6 +106,7 @@ export function createContainer(config: AppConfig, logger: Logger): Container {
     ffmpeg,
     sessions,
     source,
+    relay,
     library,
     catalog,
     titles,
@@ -120,6 +124,7 @@ export function createContainer(config: AppConfig, logger: Logger): Container {
     events,
     settings,
     source,
+    relay,
     titles,
     availability,
     tmdb,

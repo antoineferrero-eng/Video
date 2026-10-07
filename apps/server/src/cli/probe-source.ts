@@ -3,7 +3,30 @@
  *
  *   npm run probe -w @lumiere/server -- https://a.111477.xyz/movies/
  */
+import { DEFAULT_USER_AGENT } from '../modules/settings/settings.service';
 import { parseListing } from '../modules/source/listing-parser';
+import {
+  BrowserTransport,
+  CookieJar,
+  StandardTransport,
+  looksBlocked,
+  type SourceResponse,
+} from '../modules/source/transport';
+
+/** Même stratégie que le mode « Automatique » : requête standard, puis imitation de Chrome. */
+async function download(url: URL): Promise<{ response: SourceResponse; via: string }> {
+  const cookies = new CookieJar();
+  const standard = new StandardTransport(() => DEFAULT_USER_AGENT, cookies);
+  const response = await standard.fetch(url.toString(), { kind: 'document' });
+  if (!looksBlocked(response)) return { response, via: 'connexion standard' };
+  const browser = await BrowserTransport.load(cookies);
+  if (!browser) return { response, via: 'connexion standard (impit indisponible)' };
+  await response.body?.cancel();
+  return {
+    response: await browser.fetch(url.toString(), { kind: 'document' }),
+    via: 'imitation de Chrome',
+  };
+}
 
 async function main(): Promise<void> {
   const target = process.argv[2];
@@ -13,15 +36,10 @@ async function main(): Promise<void> {
   }
   const url = new URL(target.endsWith('/') ? target : `${target}/`);
   const started = Date.now();
-  const response = await fetch(url, {
-    headers: {
-      'user-agent':
-        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36',
-    },
-  });
+  const { response, via } = await download(url);
   const body = await response.text();
   console.log(
-    `HTTP ${response.status} — ${body.length} octets en ${Date.now() - started} ms (${response.url})`,
+    `HTTP ${response.status} — ${body.length} octets en ${Date.now() - started} ms (${response.url}, ${via})`,
   );
   const parsed = parseListing(
     body,

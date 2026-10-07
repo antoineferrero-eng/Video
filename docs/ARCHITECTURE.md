@@ -17,6 +17,7 @@ flowchart LR
     Metadata[Métadonnées TMDB<br/>+ cache d'images]
     DB[(SQLite<br/>node:sqlite)]
     FF[ffmpeg / ffprobe]
+    Client[Client de la source<br/>en-têtes Chrome · imitation TLS]
   end
   Source[(Index HTTP<br/>a.111477.xyz)]
   TMDB[(API TMDB)]
@@ -26,11 +27,13 @@ flowchart LR
   SSE -- événements --> UI
   Player -- flux vidéo --> Playback
   API --> Catalog & Downloads & Playback & Metadata
-  Catalog -- listings HTML --> Source
-  Downloads -- HTTP Range --> Source
+  Catalog -- listings HTML --> Client
+  Downloads -- HTTP Range --> Client
   Downloads --> Disk
   Playback --> FF
-  FF -- lit --> Source & Disk
+  FF -- relais local --> Client
+  FF -- lit --> Disk
+  Client --> Source
   Metadata --> TMDB
   Catalog & Downloads & Playback & Metadata --> DB
 ```
@@ -55,7 +58,8 @@ core/                utilitaires transverses (erreurs, logs, bus d'événements,
 infra/database/      connexion SQLite, migrations versionnées, cache clé/valeur
 domain/              fonctions pures : noms de releases, épisodes/saisons, titres, choix de version
 modules/
-  source/            client HTTP de la source + analyseur générique de listings
+  source/            client de la source (transports standard / imitation de Chrome, cookies),
+                     relais local pour ffmpeg, analyseur générique de listings
   catalog/           synchronisation films/séries, recherche, fiches, structure saisons/épisodes
   metadata/          client TMDB, rapprochement des titres, cache des images
   downloads/         file d'attente, moteur de transfert, rangement des fichiers
@@ -76,7 +80,10 @@ serveurs HTTP).
 
 1. `CatalogService` lit `/movies/` et `/tvs/` via `SourceClient` (cache mémoire, requêtes
    mutualisées) ; l'analyseur `listing-parser.ts` transforme la page en entrées
-   `{ nom, dossier ?, taille, date }`.
+   `{ nom, dossier ?, taille, date }`. `SourceClient` choisit le transport (`transport.ts`) :
+   requête Node.js avec les en-têtes exacts d'une navigation Chrome (`node-http.ts`), puis,
+   si la source filtre les robots (403, page de vérification Cloudflare), imitation complète
+   de Chrome avec **impit** — choix mémorisé par origine.
 2. Chaque entrée devient un titre (`title-parser.ts` : « Titre (Année) », nom de release…),
    inséré/actualisé en une transaction ; les titres disparus sont retirés.
 3. `MetadataService` enrichit progressivement les titres (TMDB) en arrière-plan, et à la
@@ -118,6 +125,8 @@ au redémarrage, les téléchargements interrompus repartent de l'octet où ils 
 3. Le lecteur lit `GET /api/playback/sessions/:id/stream` :
    - direct : fichier local ou relais de la source avec prise en charge de `Range` ;
    - remux/conversion : ffmpeg produit un MP4 fragmenté à partir de `?start=<secondes>` ;
+     un fichier distant est lu par le **relais local** `/api/internal/source` (jeton aléatoire),
+     pour que ffmpeg passe par la même connexion que le reste de l'application ;
      `GET …/seek?position=` donne l'image clé réelle pour rester synchronisé.
 4. Sous-titres : `GET …/subtitles/:piste` renvoie du WebVTT (extraction ffmpeg ou conversion
    SRT/ASS), affiché par le lecteur.
@@ -158,6 +167,7 @@ au redémarrage, les téléchargements interrompus repartent de l'octet où ils 
 | GET/PATCH | `/api/settings`                                  | Paramètres.                                                  |
 | GET       | `/api/events`                                    | Flux temps réel (Server-Sent Events).                        |
 | GET       | `/api/system`, `/api/health`                     | État du système.                                             |
+| GET       | `/api/internal/source?path&token`                | Relais de la source réservé à ffmpeg/ffprobe (jeton requis). |
 
 ## Interface (`apps/web/src`)
 

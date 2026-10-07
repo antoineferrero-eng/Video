@@ -1,4 +1,9 @@
 export type PreferredQuality = '2160p' | '1080p' | '720p' | 'smallest';
+/**
+ * Connexion à la source : automatique (requête standard, puis imitation de Chrome si la source
+ * filtre les robots), standard uniquement, ou imitation de navigateur systématique.
+ */
+export type SourceConnection = 'auto' | 'standard' | 'browser';
 export type TranscodePreset = 'quality' | 'balanced' | 'fast';
 
 export interface AppSettings {
@@ -9,6 +14,7 @@ export interface AppSettings {
   /** Dossier distant contenant les séries. */
   seriesPath: string;
   userAgent: string;
+  sourceConnection: SourceConnection;
   /** Dossier local de téléchargement (bibliothèque). */
   downloadDir: string;
   maxConcurrentDownloads: number;

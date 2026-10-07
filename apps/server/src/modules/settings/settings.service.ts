@@ -17,6 +17,7 @@ export function defaultSettings(config: AppConfig): AppSettings {
     moviesPath: normalizeDirPath(config.defaults.moviesPath),
     seriesPath: normalizeDirPath(config.defaults.seriesPath),
     userAgent: DEFAULT_USER_AGENT,
+    sourceConnection: 'auto',
     downloadDir: config.defaults.downloadDir,
     maxConcurrentDownloads: 2,
     maxDownloadSpeedKbps: 0,
@@ -97,6 +98,7 @@ export class SettingsService {
       next.downloadDir = dir;
     }
     for (const key of [
+      'sourceConnection',
       'maxConcurrentDownloads',
       'maxDownloadSpeedKbps',
       'preferredQuality',

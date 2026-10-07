@@ -24,7 +24,8 @@
     "format:check": "prettier --check .",
     "check": "npm run typecheck && npm run lint && npm run test",
     "demo:media": "npm run generate -w @lumiere/demo-source",
-    "demo": "npm run demo -w @lumiere/demo-source"
+    "demo": "npm run demo -w @lumiere/demo-source",
+    "diagnose": "npm run diagnose -w @lumiere/server --"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

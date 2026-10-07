@@ -85,6 +85,7 @@ export class ExplorerService {
         files: listing.entries.filter((entry) => !entry.isDirectory).length,
         sample: listing.entries.slice(0, 12).map((entry) => toExplorerEntry(entry)),
         error: listing.entries.length > 0 ? null : 'Aucune entrée reconnue dans la page.',
+        transport: listing.transport,
       };
     } catch (error) {
       const upstream =
@@ -99,6 +100,7 @@ export class ExplorerService {
         files: 0,
         sample: [],
         error: errorMessage(error),
+        transport: null,
       };
     }
   }
