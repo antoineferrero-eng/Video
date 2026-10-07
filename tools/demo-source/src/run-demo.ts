@@ -44,6 +44,10 @@ createDemoServer({
         ...process.env,
         SOURCE_BASE_URL: `http://127.0.0.1:${port}`,
         DATA_DIR: process.env.DATA_DIR ?? path.join(repoRoot, 'data', 'demo'),
+        // Faux TMDB de la démonstration (les titres d'exemple sont fictifs).
+        TMDB_API_KEY: 'demo',
+        TMDB_API_BASE_URL: `http://127.0.0.1:${port}/tmdb/3`,
+        TMDB_IMAGE_BASE_URL: `http://127.0.0.1:${port}/tmdb-images`,
       },
     },
   );

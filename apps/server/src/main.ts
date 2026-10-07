@@ -1,12 +1,16 @@
 import { buildApp } from './app';
-import { loadConfig } from './config/env';
+import { loadConfig, loadEnvFile } from './config/env';
 import { createContainer, startServices, stopServices } from './container';
 import { errorMessage } from './core/errors';
 import { createLogger } from './core/logger';
+import { silenceSqliteExperimentalWarning } from './core/warnings';
 
 async function main(): Promise<void> {
+  silenceSqliteExperimentalWarning();
+  const envFile = loadEnvFile();
   const config = loadConfig();
   const logger = createLogger({ level: config.logLevel, pretty: config.prettyLogs });
+  if (envFile) logger.info({ file: envFile }, 'Configuration chargée depuis le fichier .env');
   const container = createContainer(config, logger);
   const app = await buildApp(container);
 

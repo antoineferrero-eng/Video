@@ -78,7 +78,10 @@ export class LibraryRepository {
 
   filePaths(): Set<string> {
     return new Set(
-      this.db.prepare('SELECT file_path FROM library_items').pluck().all() as string[],
+      this.db
+        .prepare('SELECT file_path FROM library_items')
+        .all()
+        .map((row) => (row as { file_path: string }).file_path),
     );
   }
 }

@@ -1,0 +1,18 @@
+services:
+  lumiere:
+    build: .
+    image: lumiere:latest
+    container_name: lumiere
+    restart: unless-stopped
+    ports:
+      - '8484:8484'
+    environment:
+      TZ: Europe/Paris
+      SOURCE_BASE_URL: https://a.111477.xyz
+      # Clé TMDB (facultative, configurable aussi depuis l'interface) :
+      # TMDB_API_KEY: votre_cle_tmdb
+    volumes:
+      # Base de données, caches (affiches, sous-titres) et paramètres.
+      - ./data:/data
+      # Bibliothèque : films et séries téléchargés.
+      - ./media:/media

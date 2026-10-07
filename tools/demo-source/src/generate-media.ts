@@ -10,6 +10,7 @@ import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { DEMO_TITLES, backdropFile, posterFile, stillFile } from './fake-tmdb';
 
 const ROOT = path.resolve(fileURLToPath(new URL('../content', import.meta.url)));
 const FFMPEG = process.env.FFMPEG_PATH ?? 'ffmpeg';
@@ -363,6 +364,78 @@ const jobs: Job[] = [
   })),
 ];
 
+/** Découpe un titre en lignes courtes pour l'affiche. */
+function wrapTitle(title: string, max = 12): string[] {
+  const lines: string[] = [];
+  for (const word of title.toUpperCase().split(/\s+/)) {
+    const last = lines.at(-1);
+    if (last && `${last} ${word}`.length <= max) lines[lines.length - 1] = `${last} ${word}`;
+    else lines.push(word);
+  }
+  return lines;
+}
+
+function text(value: string, size: number, y: number | string, alpha = 1): string {
+  if (!drawtextAvailable) return '';
+  return (
+    `,drawtext=text='${escapeDrawtext(value)}':fontsize=${size}:fontcolor=white@${alpha}:` +
+    `x=(w-text_w)/2:y=${y}:shadowcolor=black@0.5:shadowx=2:shadowy=2`
+  );
+}
+
+/** Affiches, fonds et vignettes servis par le faux service TMDB de la démonstration. */
+function generateArtwork(): number {
+  const dir = path.join(ROOT, '.tmdb');
+  fs.mkdirSync(dir, { recursive: true });
+  let created = 0;
+  const image = (file: string, filter: string) => {
+    const output = path.join(dir, file);
+    if (!force && fs.existsSync(output)) return;
+    ffmpeg([
+      '-f',
+      'lavfi',
+      '-i',
+      `${filter},format=yuvj420p`,
+      '-frames:v',
+      '1',
+      '-q:v',
+      '4',
+      output,
+    ]);
+    created += 1;
+  };
+  for (const title of DEMO_TITLES) {
+    const [c0, c1] = title.colors;
+    const lines = wrapTitle(title.title);
+    const top = 470 - lines.length * 58;
+    const bottom = top + lines.length * 58;
+    const titleText = lines.map((line, index) => text(line, 54, top + index * 58)).join('');
+    image(
+      posterFile(title),
+      `gradients=s=500x750:c0=${c0}:c1=${c1}:c2=0x0b0b12:nb_colors=3:x0=40:y0=0:x1=460:y1=750:d=1:speed=0.0001,` +
+        `vignette=PI/5${titleText}` +
+        (drawtextAvailable
+          ? `,drawbox=x=60:y=${bottom + 14}:w=380:h=2:color=white@0.5:t=fill`
+          : '') +
+        text(title.date.slice(0, 4), 24, bottom + 34, 0.8),
+    );
+    image(
+      backdropFile(title),
+      `gradients=s=1280x720:c0=${c1}:c1=${c0}:c2=0x050508:nb_colors=3:type=radial:x0=980:y0=260:x1=1280:y1=900:d=1:speed=0.0001,vignette=PI/4`,
+    );
+    for (const [season, episodes] of Object.entries(title.seasons ?? {})) {
+      episodes.forEach((episode, index) => {
+        image(
+          stillFile(title, Number(season), index + 1),
+          `gradients=s=400x225:c0=${c1}:c1=${c0}:nb_colors=2:x0=0:y0=0:x1=400:y1=225:d=1:speed=0.0001,vignette=PI/4` +
+            text(episode.name, 22, '(h-text_h)/2'),
+        );
+      });
+    }
+  }
+  return created;
+}
+
 function checkDrawtext(): void {
   const probe = spawnSync(
     FFMPEG,
@@ -400,6 +473,7 @@ function main(): void {
     created += 1;
     console.log('ok');
   }
+  created += generateArtwork();
   fs.writeFileSync(
     path.join(ROOT, 'LISEZMOI.txt'),
     'Contenu de démonstration généré pour Lumière.\n',

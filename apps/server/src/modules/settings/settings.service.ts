@@ -3,7 +3,7 @@ import type { AppSettings, SettingsResponse, SettingsUpdate } from '@lumiere/sha
 import type { AppConfig } from '../../config/env';
 import { BadRequestError, errorMessage } from '../../core/errors';
 import { assertWritableDir } from '../../core/fs';
-import type { Db } from '../../infra/database/database';
+import { transaction, type Db } from '../../infra/database/database';
 import { normalizeDirPath } from '../source/remote-path';
 
 export const DEFAULT_USER_AGENT =
@@ -116,7 +116,7 @@ export class SettingsService {
     );
     const now = new Date().toISOString();
     const tmdbChanged = patch.tmdbApiKey !== undefined;
-    this.db.transaction(() => {
+    transaction(this.db, () => {
       for (const key of Object.keys(next) as Array<keyof AppSettings>) {
         if (next[key] !== previous[key]) write.run(key, JSON.stringify(next[key]), now);
       }
@@ -125,7 +125,7 @@ export class SettingsService {
         if (value) write.run(TMDB_KEY, JSON.stringify(value), now);
         else this.db.prepare('DELETE FROM settings WHERE key = ?').run(TMDB_KEY);
       }
-    })();
+    });
 
     if (tmdbChanged) this.storedTmdbKey = patch.tmdbApiKey?.trim() || null;
     this.current = next;

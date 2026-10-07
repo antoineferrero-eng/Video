@@ -155,7 +155,7 @@ export class DownloadsRepository {
       .prepare(
         `SELECT id FROM downloads WHERE status IN (${statuses.map(() => '?').join(',')}) ORDER BY id`,
       )
-      .pluck()
-      .all(...statuses) as number[];
+      .all(...statuses)
+      .map((row) => (row as { id: number }).id);
   }
 }

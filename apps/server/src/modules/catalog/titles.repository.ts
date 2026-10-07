@@ -1,5 +1,5 @@
 import type { CatalogSectionStatus, CatalogSort, MetadataStatus, TitleKind } from '@lumiere/shared';
-import type { Db } from '../../infra/database/database';
+import { scalar, transaction, type Db, type SqlParams } from '../../infra/database/database';
 
 export interface TitleRow {
   id: number;
@@ -135,24 +135,34 @@ export class TitlesRepository {
         remote_size = excluded.remote_size,
         last_seen_at = excluded.last_seen_at
     `);
-    return this.db.transaction(() => {
+    return transaction(this.db, () => {
       for (const item of items) {
-        upsert.run({ ...item, isFile: item.isFile ? 1 : 0, seenAt });
+        upsert.run({
+          kind: item.kind,
+          remotePath: item.remotePath,
+          folderName: item.folderName,
+          isFile: item.isFile ? 1 : 0,
+          title: item.title,
+          year: item.year,
+          searchText: item.searchText,
+          sortKey: item.sortKey,
+          modifiedAt: item.modifiedAt,
+          size: item.size,
+          seenAt,
+        });
       }
-      const removed = this.db
-        .prepare('DELETE FROM titles WHERE kind = ? AND last_seen_at < ?')
-        .run(kind, seenAt).changes;
-      const total = this.db
-        .prepare('SELECT COUNT(*) FROM titles WHERE kind = ?')
-        .pluck()
-        .get(kind) as number;
+      const removed = Number(
+        this.db.prepare('DELETE FROM titles WHERE kind = ? AND last_seen_at < ?').run(kind, seenAt)
+          .changes,
+      );
+      const total = scalar<number>(this.db, 'SELECT COUNT(*) FROM titles WHERE kind = ?', kind);
       return { total, removed };
-    })();
+    });
   }
 
   search(query: TitleSearch): { rows: TitleRow[]; total: number } {
     const where: string[] = [];
-    const params: Record<string, unknown> = { limit: query.limit, offset: query.offset };
+    const params: SqlParams = {};
     if (query.kind) {
       where.push('kind = @kind');
       params.kind = query.kind;
@@ -166,15 +176,15 @@ export class TitlesRepository {
       params.genre = query.genre;
     }
     const whereSql = where.length > 0 ? `WHERE ${where.join(' AND ')}` : '';
-    const total = this.db
-      .prepare(`SELECT COUNT(*) FROM titles ${whereSql}`)
-      .pluck()
-      .get(params) as number;
+    const counted = this.db.prepare(`SELECT COUNT(*) AS n FROM titles ${whereSql}`).get(params) as {
+      n: number;
+    };
     const rows = this.db
       .prepare(
         `SELECT * FROM titles ${whereSql} ORDER BY ${ORDER_BY[query.sort]} LIMIT @limit OFFSET @offset`,
       )
-      .all(params) as TitleRow[];
+      .all({ ...params, limit: query.limit, offset: query.offset }) as unknown as TitleRow[];
+    const total = counted.n;
     return { rows, total };
   }
 
@@ -215,7 +225,7 @@ export class TitlesRepository {
          WHERE id = @id`,
       )
       .run({
-        ...metadata,
+        ...(metadata as unknown as SqlParams),
         id,
         genres: JSON.stringify(metadata.genres),
         updatedAt: new Date().toISOString(),

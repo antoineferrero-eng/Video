@@ -55,6 +55,22 @@ export interface AppConfig {
   prettyLogs: boolean;
 }
 
+/** Dossier de lancement : npm exécute les scripts d'un workspace depuis son propre dossier. */
+function launchDir(env: NodeJS.ProcessEnv): string {
+  return env.INIT_CWD ?? process.cwd();
+}
+
+/**
+ * Charge le fichier `.env` du dossier de lancement s'il existe. Les variables déjà
+ * définies dans l'environnement restent prioritaires.
+ */
+export function loadEnvFile(env: NodeJS.ProcessEnv = process.env): string | null {
+  const file = path.join(launchDir(env), '.env');
+  if (!fs.existsSync(file)) return null;
+  process.loadEnvFile(file);
+  return file;
+}
+
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   const parsed = EnvSchema.safeParse(env);
   if (!parsed.success) {
@@ -64,7 +80,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     throw new Error(`Configuration invalide :\n${issues}`);
   }
   const e = parsed.data;
-  const dataDir = path.resolve(e.DATA_DIR);
+  // Chemins relatifs résolus depuis le dossier où la commande a été lancée.
+  const baseDir = launchDir(env);
+  const dataDir = path.resolve(baseDir, e.DATA_DIR);
   // Interface compilée (apps/web/dist), que le serveur tourne depuis le bundle
   // (apps/server/dist/main.js) ou depuis les sources (apps/server/src/config/env.ts).
   const webDistCandidates = ['../../web/dist', '../../../web/dist'].map((relative) =>
@@ -82,12 +100,12 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     dataDir,
     databaseFile: path.join(dataDir, 'lumiere.db'),
     cacheDir: path.join(dataDir, 'cache'),
-    webDistDir: e.WEB_DIST_DIR ? path.resolve(e.WEB_DIST_DIR) : defaultWebDist,
+    webDistDir: e.WEB_DIST_DIR ? path.resolve(baseDir, e.WEB_DIST_DIR) : defaultWebDist,
     defaults: {
       sourceBaseUrl: e.SOURCE_BASE_URL.replace(/\/+$/, ''),
       moviesPath: e.SOURCE_MOVIES_PATH,
       seriesPath: e.SOURCE_SERIES_PATH,
-      downloadDir: path.resolve(e.MEDIA_DIR ?? path.join(dataDir, 'media')),
+      downloadDir: e.MEDIA_DIR ? path.resolve(baseDir, e.MEDIA_DIR) : path.join(dataDir, 'media'),
     },
     tmdb: {
       envApiKey: e.TMDB_API_KEY ?? null,

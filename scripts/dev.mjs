@@ -12,7 +12,8 @@ const children = tasks.map(({ name, color, workspace }) => {
   const child = spawn(npm, ['run', 'dev', '-w', workspace], {
     stdio: ['inherit', 'pipe', 'pipe'],
     shell: process.platform === 'win32',
-    env: { ...process.env, FORCE_COLOR: '1' },
+    // Journaux lisibles en développement (la sortie est relayée, donc pas un terminal).
+    env: { ...process.env, FORCE_COLOR: '1', LOG_PRETTY: process.env.LOG_PRETTY ?? 'true' },
   });
   const prefix = `${color}[${name}]\x1b[0m `;
   const forward = (stream, target) => {

@@ -12,6 +12,7 @@ import path from 'node:path';
 import { Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { fileURLToPath } from 'node:url';
+import { handleFakeTmdb } from './fake-tmdb';
 
 export interface DemoServerOptions {
   root: string;
@@ -82,6 +83,7 @@ export function createDemoServer(options: DemoServerOptions): http.Server {
   return http.createServer((request, response) => {
     void (async () => {
       const url = new URL(request.url ?? '/', 'http://localhost');
+      if (handleFakeTmdb(url, request.headers, response, path.join(root, '.tmdb'))) return;
       let urlPath: string;
       try {
         urlPath = decodeURIComponent(url.pathname);

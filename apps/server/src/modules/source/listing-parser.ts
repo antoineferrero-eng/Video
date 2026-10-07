@@ -1,5 +1,4 @@
 import * as cheerio from 'cheerio';
-import type { CheerioAPI } from 'cheerio';
 import type { AnyNode, Element } from 'domhandler';
 import { findDate, findSize, parseDateValue, parseSizeExact } from './listing-dates';
 
@@ -94,7 +93,8 @@ function resolveChild(href: string, pageUrl: URL, basePath: string): ChildLink |
 // ---------------------------------------------------------------------------
 
 function parseHtmlListing(html: string, pageUrl: URL): ParsedListing {
-  const $ = cheerio.load(html);
+  // htmlparser2 (mode « xml » désactivé) : bien plus rapide que parse5 sur les très gros listings.
+  const $ = cheerio.load(html, { xml: { xmlMode: false, decodeEntities: true } });
   const pagePath = pageUrl.pathname.endsWith('/') ? pageUrl.pathname : `${pageUrl.pathname}/`;
   const basePath = decodePathname(pagePath);
   // Les liens relatifs se résolvent par rapport au dossier (URL avec slash final).
@@ -123,7 +123,7 @@ function parseHtmlListing(html: string, pageUrl: URL): ParsedListing {
 
   for (const { link, anchors } of entries.values()) {
     const anchor = anchors.at(-1) as Element;
-    const details = extractDetails($, anchor, link, anchorKeys, headerCache);
+    const details = extractDetails(anchor, link, anchorKeys, headerCache);
     votes[details.format] += 1;
     items.push({
       name: link.name,
@@ -150,6 +150,16 @@ function isElement(node: AnyNode | null | undefined): node is Element {
   return !!node && (node.type === 'tag' || node.type === 'script' || node.type === 'style');
 }
 
+/** Équivalent de `closest()` sans passer par le moteur de sélecteurs (coûteux sur 50 000 lignes). */
+function closestByName(node: Element, name: string): Element | null {
+  let current: AnyNode | null = node;
+  while (current) {
+    if (isElement(current) && current.name === name) return current;
+    current = current.parent;
+  }
+  return null;
+}
+
 function nodeText(node: AnyNode): string {
   if (node.type === 'text') return (node as unknown as { data: string }).data;
   if (isElement(node)) return node.children.map(nodeText).join('');
@@ -157,7 +167,6 @@ function nodeText(node: AnyNode): string {
 }
 
 function extractDetails(
-  $: CheerioAPI,
   anchor: Element,
   link: ChildLink,
   anchorKeys: Map<Element, string>,
@@ -167,7 +176,7 @@ function extractDetails(
   const row = findRow(anchor, key, anchorKeys);
 
   if (!row) {
-    const inPre = $(anchor).closest('pre').length > 0;
+    const inPre = closestByName(anchor, 'pre') !== null;
     const text = textAfterAnchor(anchor);
     const date = findDate(text);
     const remainder = date
@@ -181,7 +190,7 @@ function extractDetails(
   }
 
   if (row.name === 'tr')
-    return { ...extractFromTableRow($, row, key, anchorKeys, headerCache), format: 'table' };
+    return { ...extractFromTableRow(row, key, anchorKeys, headerCache), format: 'table' };
   return {
     ...extractFromGenericRow(row, link, anchorKeys),
     format: row.name === 'li' ? 'list' : 'generic',
@@ -243,24 +252,40 @@ interface HeaderIndex {
   date: number | null;
 }
 
-function headerIndexFor(
-  $: CheerioAPI,
-  table: Element,
-  cache: Map<Element, HeaderIndex>,
-): HeaderIndex {
+/** Première ligne d'en-tête (<tr> contenant des <th>) d'un tableau, sans parcourir tout le DOM. */
+function findHeaderRow(table: Element): Element | null {
+  const stack: AnyNode[] = [];
+  for (let index = table.children.length - 1; index >= 0; index -= 1) {
+    stack.push(table.children[index] as AnyNode);
+  }
+  while (stack.length > 0) {
+    const node = stack.pop();
+    if (!isElement(node) || node.name === 'table') continue;
+    if (node.name === 'tr') {
+      if (node.children.some((child) => isElement(child) && child.name === 'th')) return node;
+      continue;
+    }
+    for (let index = node.children.length - 1; index >= 0; index -= 1) {
+      stack.push(node.children[index] as AnyNode);
+    }
+  }
+  return null;
+}
+
+function headerIndexFor(table: Element, cache: Map<Element, HeaderIndex>): HeaderIndex {
   const cached = cache.get(table);
   if (cached) return cached;
   const index: HeaderIndex = { size: null, date: null };
-  const headerRow = $(table)
-    .find('tr')
-    .filter((_, tr) => $(tr).children('th').length > 0)
-    .first();
-  headerRow.children('th, td').each((position, cell) => {
-    const label = $(cell).text().trim().toLowerCase();
-    if (index.size === null && /size|taille|gr(ö|o)(ss|ß)e|tama|dimensione|poids/.test(label))
+  const cells = (findHeaderRow(table)?.children ?? []).filter(
+    (child): child is Element => isElement(child) && (child.name === 'th' || child.name === 'td'),
+  );
+  cells.forEach((cell, position) => {
+    const label = nodeText(cell).trim().toLowerCase();
+    if (index.size === null && /size|taille|gr(ö|o)(ss|ß)e|tama|dimensione|poids/.test(label)) {
       index.size = position;
-    else if (index.date === null && /modif|date|time|updated|mtime|last|derni/.test(label))
+    } else if (index.date === null && /modif|date|time|updated|mtime|last|derni/.test(label)) {
       index.date = position;
+    }
   });
   cache.set(table, index);
   return index;
@@ -311,7 +336,6 @@ function dateFromCell(cell: Element): string | null {
 }
 
 function extractFromTableRow(
-  $: CheerioAPI,
   row: Element,
   key: string,
   anchorKeys: Map<Element, string>,
@@ -320,10 +344,8 @@ function extractFromTableRow(
   const cells = row.children.filter(
     (child): child is Element => isElement(child) && (child.name === 'td' || child.name === 'th'),
   );
-  const table = $(row).closest('table').get(0);
-  const header = isElement(table)
-    ? headerIndexFor($, table, headerCache)
-    : { size: null, date: null };
+  const table = closestByName(row, 'table');
+  const header = table ? headerIndexFor(table, headerCache) : { size: null, date: null };
 
   let size: number | null = null;
   let modifiedAt: string | null = null;

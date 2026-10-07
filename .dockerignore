@@ -1,0 +1,13 @@
+**/node_modules
+**/dist
+**/*.tsbuildinfo
+data
+media
+coverage
+.git
+.vscode
+.idea
+tools/demo-source/content
+*.log
+.env
+.env.*
