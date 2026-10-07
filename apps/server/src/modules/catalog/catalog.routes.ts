@@ -1,5 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
+import type { EpisodeFiles } from '@lumiere/shared';
 import { z } from 'zod';
 import type { Container } from '../../container';
 import { NotFoundError } from '../../core/errors';
@@ -35,6 +36,24 @@ export function registerCatalogRoutes(
 
   app.get('/titles/:id', { schema: { params: IdParams } }, async (request) =>
     catalog.details(request.params.id),
+  );
+
+  /** Versions d'un épisode proposées par l'extension Stremio (une demande de liens). */
+  app.get(
+    '/titles/:id/episodes/:season/:episode',
+    {
+      schema: {
+        params: IdParams.extend({
+          season: z.coerce.number().int().min(0),
+          episode: z.coerce.number().int().min(0),
+        }),
+      },
+    },
+    async (request): Promise<EpisodeFiles> => {
+      const { id, season, episode } = request.params;
+      const { files, notice } = await catalog.episodeFiles(id, season, episode);
+      return { files, notice };
+    },
   );
 
   /** Illustration « paresseuse » : déclenche la recherche TMDB au premier affichage. */

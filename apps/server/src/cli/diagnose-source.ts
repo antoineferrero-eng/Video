@@ -1,28 +1,34 @@
 /**
- * Diagnostic de connexion à la source : essaie plusieurs façons de télécharger une page de
- * listing et explique pourquoi la source refuse (filtrage Cloudflare, en-têtes, empreinte).
- * Si aucune requête directe ne passe, la vérification Cloudflare est tentée dans le
- * navigateur de l'utilisateur (une fenêtre s'ouvre).
+ * Diagnostic de Lumière : vérifie l'extension Stremio qui fournit les liens des fichiers
+ * (manifeste, liens d'un film, lecture des premiers octets), et, sur demande, l'accès direct
+ * aux pages du site (filtrage Cloudflare, en-têtes, empreinte réseau).
  *
  *   npm run diagnose
- *   npm run diagnose -- https://a.111477.xyz/tvs/
- *   npm run diagnose -- --zenrows=CLÉ          (clé ZenRows, sinon celle des Paramètres)
- *   npm run diagnose -- --dossier=URL          (dossier d'un titre, si la liste complète échoue)
- *   npm run diagnose -- --navigateur           (essaie aussi la vérification dans le navigateur)
+ *   npm run diagnose -- --extension=URL      (manifeste à tester, sinon celui des Paramètres)
+ *   npm run diagnose -- --film=tt1677720     (film à demander, identifiant IMDb)
+ *   npm run diagnose -- --serie=tt0903747:1:1  (demande aussi un épisode : saison 1, épisode 1)
+ *   npm run diagnose -- --site               (teste aussi l'accès direct à a.111477.xyz)
+ *   npm run diagnose -- --site https://a.111477.xyz/tvs/
+ *
+ * Chaque demande de liens consomme des jetons de la réserve de l'extension (un par lien
+ * proposé chez 111477) : le diagnostic n'en fait qu'une par défaut.
  */
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import { loadConfig, loadEnvFile, type AppConfig } from '../config/env';
-import { createLogger } from '../core/logger';
 import { errorMessage } from '../core/errors';
-import { BrowserSession, type Clearance } from '../modules/source/browser/browser-session';
-import { locateBrowser } from '../modules/source/browser/locate-browser';
-import { RealBrowserTransport } from '../modules/source/browser/real-browser-transport';
-import { parseListing, type ListingItem } from '../modules/source/listing-parser';
-import { openDatabase } from '../infra/database/database';
-import { DEFAULT_CDN } from '../modules/source/cdn-transport';
+import { createLogger } from '../core/logger';
+import { silenceSqliteExperimentalWarning } from '../core/warnings';
+import { KeyValueCache, openDatabase } from '../infra/database/database';
 import { DEFAULT_USER_AGENT, SettingsService } from '../modules/settings/settings.service';
-import { ZenRowsTransport } from '../modules/source/zenrows-transport';
+import { parseListing } from '../modules/source/listing-parser';
+import { SourceClient } from '../modules/source/source-client';
+import {
+  StremioAddon,
+  contentIdFor,
+  normalizeAddonUrl,
+  type AddonResult,
+} from '../modules/source/stremio/stremio-addon';
 import {
   BrowserTransport,
   CookieJar,
@@ -50,9 +56,9 @@ interface Fetched {
   url: string;
 }
 
-const DEFAULT_URL = 'https://a.111477.xyz/movies/';
+const DEFAULT_SITE_URL = 'https://a.111477.xyz/movies/';
+const DEFAULT_MOVIE = 'tt1677720'; // Ready Player One (2018)
 const TIMEOUT_MS = 25_000;
-const VIDEO = /\.(mkv|mp4|m4v|avi|webm|mov|ts)$/i;
 
 function keyHeaders(headers: Headers): Record<string, string | null> {
   return {
@@ -71,11 +77,6 @@ async function read(response: SourceResponse): Promise<Fetched> {
     body: await response.text(),
     url: response.url,
   };
-}
-
-function listingOf(result: Fetched, url: URL): ListingItem[] {
-  return parseListing(result.body, new URL(result.url || url), result.headers.get('content-type'))
-    .items;
 }
 
 async function evaluate(label: string, url: URL, run: () => Promise<Fetched>): Promise<Attempt> {
@@ -188,39 +189,6 @@ function runCurl(url: URL): Promise<Fetched> {
   });
 }
 
-function formatTime(ms: number): string {
-  return new Date(ms).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
-}
-
-function describeClearance(clearance: Clearance, ms: number): string {
-  const names = clearance.cookies.map((cookie) => cookie.name).join(', ') || 'aucun';
-  const validity = clearance.expiresAt
-    ? `cf_clearance valable ${Math.round((clearance.expiresAt - Date.now()) / 60_000)} min (jusqu'à ${formatTime(clearance.expiresAt)})`
-    : 'pas de cookie cf_clearance';
-  return `passée en ${Math.round(ms / 1000)} s · cookies : ${names} · ${validity}`;
-}
-
-/** Premier fichier vidéo trouvé dans les premiers dossiers du listing (pour tester les fichiers). */
-async function findVideo(
-  items: ListingItem[],
-  base: URL,
-  list: (url: URL) => Promise<Fetched>,
-  maxFolders = 3,
-): Promise<URL | null> {
-  const direct = items.find((item) => !item.isDirectory && VIDEO.test(item.name));
-  if (direct) return new URL(encodeURIComponent(direct.name), base);
-  for (const folder of items.filter((item) => item.isDirectory).slice(0, maxFolders)) {
-    const folderUrl = new URL(`${encodeURIComponent(folder.name)}/`, base);
-    const result = await list(folderUrl).catch(() => null);
-    if (!result || result.status !== 200) continue;
-    const video = listingOf(result, folderUrl).find(
-      (item) => !item.isDirectory && VIDEO.test(item.name),
-    );
-    if (video) return new URL(encodeURIComponent(video.name), folderUrl);
-  }
-  return null;
-}
-
 /** Résumé d'une réponse (fichier ou page) sans la télécharger entièrement. */
 async function summarize(response: SourceResponse): Promise<string> {
   const type = response.headers.get('content-type') ?? '?';
@@ -263,37 +231,186 @@ async function probe(label: string, run: () => Promise<SourceResponse>): Promise
   }
 }
 
-/** Clé ZenRows : option --zenrows=, variable ZENROWS_API_KEY, ou celle des Paramètres. */
-function zenrowsKeyFrom(args: string[], config: AppConfig): string | null {
-  const flag = args.find((arg) => arg.startsWith('--zenrows='));
-  if (flag) return flag.slice('--zenrows='.length).trim() || null;
-  if (config.zenrows.envApiKey) return config.zenrows.envApiKey;
-  if (!fs.existsSync(config.databaseFile)) return null;
-  const db = openDatabase(config.databaseFile, createLogger({ level: 'silent', pretty: false }));
+function option(args: string[], name: string): string | null {
+  const flag = args.find((arg) => arg.startsWith(`--${name}=`));
+  return flag ? flag.slice(name.length + 3).trim() || null : null;
+}
+
+/** Manifeste à tester : option --extension=, sinon celui des Paramètres, sinon le défaut. */
+function addonUrlFrom(args: string[], config: AppConfig): string {
+  const flag = option(args, 'extension');
+  if (flag) return flag;
+  if (fs.existsSync(config.databaseFile)) {
+    const db = openDatabase(config.databaseFile, createLogger({ level: 'silent', pretty: false }));
+    try {
+      return new SettingsService(db, config).get().stremioAddonUrl;
+    } finally {
+      db.close();
+    }
+  }
+  return config.defaults.stremioAddonUrl;
+}
+
+/** Adresse sans ses paramètres (les liens portent souvent un jeton personnel). */
+function hostOf(link: string): string {
   try {
-    return new SettingsService(db, config).getZenrowsApiKey();
-  } finally {
-    db.close();
+    const url = new URL(link);
+    return `${url.protocol}//${url.host}${url.pathname.split('/').slice(0, 2).join('/')}/…`;
+  } catch {
+    return '?';
   }
 }
 
-async function main(): Promise<void> {
-  const args = process.argv.slice(2);
-  const forceBrowser = args.includes('--navigateur');
-  const target = args.find((arg) => !arg.startsWith('--')) ?? DEFAULT_URL;
-  const url = new URL(target.endsWith('/') ? target : `${target}/`);
-  console.log(`Diagnostic de connexion à ${url.toString()}`);
-  console.log(`Node.js ${process.version} — ${process.platform} ${process.arch}\n`);
+function formatSize(bytes: number | null): string {
+  if (!bytes) return 'taille inconnue';
+  return bytes >= 1024 ** 3
+    ? `${(bytes / 1024 ** 3).toFixed(1)} Go`
+    : `${Math.round(bytes / 1024 ** 2)} Mo`;
+}
 
-  loadEnvFile();
-  const config = loadConfig();
+function printFiles(result: AddonResult): void {
+  for (const file of result.files.slice(0, 5)) {
+    console.log(`      · ${file.fileName} (${formatSize(file.size)})`);
+    if (file.label) console.log(`        ${file.label.slice(0, 140)}`);
+  }
+  if (result.files.length > 5) console.log(`      · … et ${result.files.length - 5} autre(s)`);
+  if (result.notice) console.log(`    message de l’extension : ${result.notice}`);
+}
+
+interface AddonReport {
+  manifest: boolean;
+  configurationRequired: boolean;
+  links: number | null;
+  limited: boolean;
+  bytes: boolean | null;
+}
+
+async function diagnoseAddon(args: string[], config: AppConfig): Promise<AddonReport> {
+  const report: AddonReport = {
+    manifest: false,
+    configurationRequired: false,
+    links: null,
+    limited: false,
+    bytes: null,
+  };
+  const input = addonUrlFrom(args, config);
+  let manifestUrl: string;
+  try {
+    manifestUrl = normalizeAddonUrl(input);
+  } catch (error) {
+    console.log(`✘ A. adresse d’extension invalide : ${errorMessage(error)}`);
+    return report;
+  }
+  if (!manifestUrl) {
+    console.log('— A. extension Stremio : désactivée (Paramètres → Extension Stremio)');
+    return report;
+  }
+  console.log(`A. Extension Stremio : ${manifestUrl}`);
+
+  // Base en mémoire : le diagnostic ne touche pas au cache de l'application.
+  const silent = createLogger({ level: 'silent', pretty: false });
+  const memory = openDatabase(':memory:', silent);
+  try {
+    const settings = new SettingsService(memory, config);
+    await settings.update({ stremioAddonUrl: manifestUrl });
+    const addon = new StremioAddon(settings, new KeyValueCache(memory), silent);
+    const source = new SourceClient(settings, silent, { addon });
+
+    let started = Date.now();
+    let manifest;
+    try {
+      manifest = await addon.manifest();
+    } catch (error) {
+      console.log(`✘ A1. manifeste : ${errorMessage(error)} · ${Date.now() - started} ms`);
+      return report;
+    }
+    report.manifest = true;
+    report.configurationRequired = manifest.behaviorHints?.configurationRequired === true;
+    const resources = manifest.resources.map((entry) =>
+      typeof entry === 'string' ? entry : entry.name,
+    );
+    const prefixes =
+      manifest.idPrefixes ??
+      manifest.resources.flatMap((entry) =>
+        typeof entry === 'object' ? (entry.idPrefixes ?? []) : [],
+      );
+    console.log(
+      `✔ A1. manifeste : « ${manifest.name} » v${manifest.version} · ressources : ${resources.join(', ') || '—'} · types : ${manifest.types.join(', ') || '—'} · préfixes : ${prefixes.join(', ') || 'tous'} · ${Date.now() - started} ms`,
+    );
+    if (report.configurationRequired) {
+      console.log(
+        '    l’extension demande à être configurée : collez son lien d’installation personnalisé.',
+      );
+    }
+
+    const movie = option(args, 'film') ?? DEFAULT_MOVIE;
+    const movieId = contentIdFor(manifest, { imdb: movie, tmdb: null }) ?? movie;
+    console.log(
+      `… A2. liens du film ${movieId} (consomme des jetons de la réserve de l’extension)`,
+    );
+    started = Date.now();
+    let result: AddonResult;
+    try {
+      result = await addon.files({ kind: 'movie', id: movieId });
+    } catch (error) {
+      console.log(`✘ A2. ${errorMessage(error)} · ${Date.now() - started} ms`);
+      return report;
+    }
+    report.links = result.files.length;
+    report.limited = result.limited;
+    console.log(
+      `${result.files.length > 0 ? '✔' : '✘'} A2. ${result.files.length} fichier(s) proposé(s) · ${Date.now() - started} ms`,
+    );
+    printFiles(result);
+
+    const first = result.files[0];
+    if (first) {
+      const link = await addon.resolve(first.path).catch(() => null);
+      if (link) console.log(`    lien : ${hostOf(link.url)}`);
+      started = Date.now();
+      const bytes = await probe('A3. lecture du lien (octets 0-1023)', () =>
+        source.openFile(first.path, { start: 0, end: 1023 }),
+      );
+      report.bytes = bytes.ok;
+      console.log(
+        `${bytes.ok ? '✔' : '✘'} ${bytes.label} : ${bytes.line} · ${Date.now() - started} ms`,
+      );
+    }
+
+    const episode = option(args, 'serie');
+    if (episode) {
+      const [id = '', season = '1', number = '1'] = episode.split(':');
+      started = Date.now();
+      try {
+        const series = await addon.files({
+          kind: 'series',
+          id,
+          season: Number(season),
+          episode: Number(number),
+        });
+        console.log(
+          `${series.files.length > 0 ? '✔' : '✘'} A4. épisode ${id}:${season}:${number} : ${series.files.length} fichier(s) · ${Date.now() - started} ms`,
+        );
+        printFiles(series);
+      } catch (error) {
+        console.log(`✘ A4. épisode ${episode} : ${errorMessage(error)}`);
+      }
+    }
+    return report;
+  } finally {
+    memory.close();
+  }
+}
+
+async function diagnoseSite(target: string): Promise<Attempt[]> {
+  const url = new URL(target.endsWith('/') ? target : `${target}/`);
+  console.log(`\nB. Accès direct au site : ${url.toString()}`);
   const cookies = new CookieJar();
   const standard = new StandardTransport(() => DEFAULT_USER_AGENT, cookies);
   const impersonation = await BrowserTransport.load(new CookieJar());
-
   const attempts: Attempt[] = [];
   attempts.push(
-    await evaluate('1. fetch minimal (ancienne version)', url, async () => {
+    await evaluate('B1. fetch minimal', url, async () => {
       const response = await fetch(url, {
         headers: { 'user-agent': DEFAULT_USER_AGENT },
         signal: AbortSignal.timeout(TIMEOUT_MS),
@@ -302,7 +419,7 @@ async function main(): Promise<void> {
     }),
   );
   attempts.push(
-    await evaluate('2. requête Node.js + en-têtes de Chrome', url, async () =>
+    await evaluate('B2. requête Node.js + en-têtes de Chrome', url, async () =>
       read(
         await standard.fetch(url.toString(), {
           kind: 'document',
@@ -313,7 +430,7 @@ async function main(): Promise<void> {
   );
   attempts.push(
     impersonation
-      ? await evaluate('3. imitation complète de Chrome (impit)', url, async () =>
+      ? await evaluate('B3. imitation complète de Chrome (impit)', url, async () =>
           read(
             await impersonation.fetch(url.toString(), {
               kind: 'document',
@@ -322,7 +439,7 @@ async function main(): Promise<void> {
           ),
         )
       : {
-          label: '3. imitation complète de Chrome (impit)',
+          label: 'B3. imitation complète de Chrome (impit)',
           status: null,
           ok: false,
           summary: 'module impit indisponible (relancez « npm install »)',
@@ -331,282 +448,55 @@ async function main(): Promise<void> {
           ms: 0,
         },
   );
-  attempts.push(await evaluate('4. curl du système', url, () => runCurl(url)));
+  attempts.push(await evaluate('B4. curl du système', url, () => runCurl(url)));
   for (const attempt of attempts) print(attempt);
-
-  const directOk = attempts.some((attempt) => attempt.ok);
-  const silent = createLogger({ level: 'silent', pretty: false });
-  const is111477 = DEFAULT_CDN.hosts.test(url.hostname);
-  let fileUrl: URL | null = null;
-
-  // Z. Pages de listing via ZenRows (service en ligne), si une clé est disponible.
-  const zenrowsKey = zenrowsKeyFrom(args, config);
-  let viaZenRows: Attempt | null = null;
-  let titleFolder: Attempt | null = null;
-  console.log('');
-  if (zenrowsKey) {
-    const zenrows = new ZenRowsTransport(() => zenrowsKey, config.zenrows.apiUrl, silent);
-    let page: Fetched | null = null;
-    viaZenRows = await evaluate('Z. pages de listing via ZenRows', url, async () => {
-      page = await read(
-        await zenrows.fetch(url.toString(), {
-          kind: 'document',
-          signal: AbortSignal.timeout(180_000),
-        }),
-      );
-      return page;
-    });
-    print(viaZenRows);
-    for (const attempt of zenrows.lastAttempts) {
-      const credits = attempt.credits !== null ? ` · ${attempt.credits} crédit(s)` : '';
-      const error = attempt.error ? ` · ${attempt.error}` : '';
-      console.log(
-        `    · ${attempt.strategy} : ${attempt.status}${credits}${error} · ${attempt.ms} ms`,
-      );
-    }
-    const viaZenRowsFetch = async (target: URL) =>
-      read(
-        await zenrows.fetch(target.toString(), {
-          kind: 'document',
-          signal: AbortSignal.timeout(180_000),
-        }),
-      );
-    if (viaZenRows.ok && page) {
-      // Un seul dossier exploré pour trouver un fichier : chaque page coûte des crédits.
-      fileUrl = await findVideo(listOfItems(page, url), url, viaZenRowsFetch, 1);
-    } else {
-      // Liste complète illisible (trop volumineuse…) : le catalogue TMDB n'a besoin que du
-      // dossier de chaque titre. On en essaie un.
-      const flag = args.find((arg) => arg.startsWith('--dossier='))?.slice('--dossier='.length);
-      const folder = flag
-        ? new URL(flag.endsWith('/') ? flag : `${flag}/`)
-        : is111477
-          ? new URL('/movies/Ready%20Player%20One%20(2018)/', url.origin)
-          : null;
-      if (folder) {
-        let folderPage: Fetched | null = null;
-        titleFolder = await evaluate(
-          `Z2. dossier d’un titre via ZenRows (${decodeURIComponent(folder.pathname)})`,
-          folder,
-          async () => {
-            folderPage = await viaZenRowsFetch(folder);
-            return folderPage;
-          },
-        );
-        print(titleFolder);
-        if (titleFolder.ok && folderPage)
-          fileUrl = await findVideo(listOfItems(folderPage, folder), folder, viaZenRowsFetch, 1);
-      }
-    }
-    console.log(`    crédits ZenRows utilisés par ce diagnostic : ${zenrows.usage().credits}`);
-  } else {
-    console.log(
-      '— Z. ZenRows : aucune clé (Paramètres → Source, variable ZENROWS_API_KEY ou --zenrows=CLÉ)',
-    );
-  }
-
-  // 5. Vérification Cloudflare dans le navigateur de l'utilisateur (sur demande).
-  const executable = locateBrowser(config.browserPath);
-  let verified: Clearance | null = null;
-  let reuse: Attempt | null = null;
-  let pageAttempt: Attempt | null = null;
-  if (forceBrowser) {
-    console.log('');
-    if (!executable) {
-      console.log('✘ 5. votre navigateur : aucun Chrome, Edge, Brave ou Chromium trouvé');
-      console.log('    (installez-en un, ou indiquez son chemin avec la variable BROWSER_PATH)');
-    } else {
-      console.log(`… 5. votre navigateur (${executable.name}) : vérification Cloudflare`);
-      console.log(
-        '    Une fenêtre va s’ouvrir sur le site. Si une case « Je suis humain » apparaît, cochez-la.',
-      );
-      const session = new BrowserSession({
-        profileDir: config.browserProfileDir,
-        locate: () => executable,
-        logger: silent,
-        onEvent: (event) => {
-          if (event.state === 'waiting') console.log(`    ${event.message}`);
-        },
-      });
-      const started = Date.now();
-      try {
-        verified = await session.verify(url.origin);
-        console.log(`✔ 5. vérification ${describeClearance(verified, Date.now() - started)}`);
-        console.log(`    navigateur : ${verified.userAgent}`);
-        const transport = new RealBrowserTransport(session, new CookieJar(), silent);
-        reuse = await evaluate(
-          '5a. passage réutilisé hors du navigateur (impit + cookies)',
-          url,
-          async () => {
-            const response = await transport.fetchWithClearance(
-              url.toString(),
-              { kind: 'document' },
-              verified as Clearance,
-            );
-            if (!response) throw new Error('module impit indisponible');
-            return read(response);
-          },
-        );
-        print(reuse, '  ');
-        let listed: Fetched | null = null;
-        pageAttempt = await evaluate(
-          '5b. requête faite depuis la page du navigateur',
-          url,
-          async () => {
-            listed = await read(
-              await session.pageFetch(url.origin, url.toString(), { kind: 'document' }),
-            );
-            return listed;
-          },
-        );
-        print(pageAttempt, '  ');
-        if (!fileUrl && pageAttempt.ok && listed) {
-          fileUrl = await findVideo(listOfItems(listed, url), url, async (folder) =>
-            read(await session.pageFetch(url.origin, folder.toString(), { kind: 'document' })),
-          );
-        }
-      } catch (error) {
-        console.log(`✘ 5. ${errorMessage(error)}`);
-      } finally {
-        await session.close();
-      }
-    }
-  } else if (!directOk) {
-    console.log('— 5. votre navigateur : non essayé (ajoutez --navigateur pour l’essayer)');
-  }
-
-  // F. Téléchargement direct d'un vrai fichier (sans ZenRows) : passe-t-il Cloudflare ?
-  const files: ProbeResult[] = [];
-  if (fileUrl) {
-    const file = fileUrl;
-    const name = decodeURIComponent(file.pathname.split('/').pop() ?? '');
-    console.log(`\nF. téléchargement direct de « ${name} » (octets 0-1023) :`);
-    const range = { kind: 'file' as const, range: 'bytes=0-1023' };
-    files.push(
-      await probe('F1. Node.js + en-têtes de Chrome', () =>
-        standard.fetch(file.toString(), { ...range, signal: AbortSignal.timeout(TIMEOUT_MS) }),
-      ),
-    );
-    if (impersonation) {
-      files.push(
-        await probe('F2. imitation de Chrome', () =>
-          impersonation.fetch(file.toString(), {
-            ...range,
-            signal: AbortSignal.timeout(TIMEOUT_MS),
-          }),
-        ),
-      );
-    }
-    if (is111477) {
-      const cdn = new URL(DEFAULT_CDN.baseUrl);
-      cdn.searchParams.set('u', file.toString());
-      files.push(
-        await probe('F3. point d’accès de lecture p.111477.xyz', async () =>
-          (impersonation ?? standard).fetch(cdn.toString(), {
-            ...range,
-            signal: AbortSignal.timeout(TIMEOUT_MS),
-          }),
-        ),
-      );
-    }
-    for (const result of files)
-      console.log(`  ${result.ok ? '✔' : '✘'} ${result.label} : ${result.line}`);
-  }
-
-  // 6–7. Services annexes de 111477 : lecteur (p.) et extension Stremio (st.).
-  if (is111477 && impersonation) {
-    console.log('');
-    const imitate = (target: string) =>
-      impersonation.fetch(target, { kind: 'document', signal: AbortSignal.timeout(TIMEOUT_MS) });
-    const probes = [
-      await probe('6a. p.111477.xyz/', () => imitate('https://p.111477.xyz/')),
-      await probe('6b. p.111477.xyz/bulk?u=<dossier>', () =>
-        imitate(`https://p.111477.xyz/bulk?u=${encodeURIComponent(url.toString())}`),
-      ),
-      await probe('7. st.111477.xyz/manifest.json', async () => {
-        const response = await imitate('https://st.111477.xyz/manifest.json');
-        if (!response.ok) return response;
-        const manifest = JSON.parse(await response.text()) as {
-          name?: string;
-          version?: string;
-          resources?: Array<string | { name: string }>;
-          types?: string[];
-          catalogs?: unknown[];
-        };
-        const resources = (manifest.resources ?? []).map((entry) =>
-          typeof entry === 'string' ? entry : entry.name,
-        );
-        return new Response(
-          `« ${manifest.name ?? '?'} » v${manifest.version ?? '?'} · ressources : ${resources.join(', ') || '—'} · types : ${(manifest.types ?? []).join(', ') || '—'} · catalogues : ${manifest.catalogs?.length ?? 0}`,
-          { status: response.status, headers: { 'content-type': 'text/plain' } },
-        ) as unknown as SourceResponse;
-      }),
-    ];
-    for (const result of probes) console.log(`${result.label} : ${result.line}`);
-  }
-
-  const [, headers, impersonated] = attempts;
-  const directFile = files.some((result) => result.ok && !result.label.startsWith('F3'));
-  const cdnFile = files.some((result) => result.ok && result.label.startsWith('F3'));
-  console.log('\nConclusion :');
-  if (headers?.ok) {
-    console.log(
-      attempts[0]?.ok
-        ? '  La source répond normalement : Lumière fonctionne en mode « Automatique ».'
-        : "  Il suffisait d'envoyer les en-têtes d'un navigateur : c'est ce que fait Lumière.",
-    );
-  } else if (impersonated?.ok) {
-    console.log(
-      "  La source filtre l'empreinte réseau des clients : Lumière bascule automatiquement sur\n  l'imitation de Chrome (mode « Automatique » ou « Imitation de navigateur »).",
-    );
-  } else if (viaZenRows?.ok || titleFolder?.ok) {
-    if (!viaZenRows?.ok) {
-      console.log(
-        '  La liste complète est illisible via ZenRows (trop volumineuse pour l’offre ?), mais le\n  dossier d’un titre passe : le catalogue TMDB (Paramètres → Catalogue → « Automatique » ou\n  « TMDB ») fonctionnera, avec une clé TMDB.',
-      );
-    }
-    if (directFile) {
-      console.log(
-        '  Les pages passent par ZenRows et les fichiers se téléchargent directement : choisissez\n  « ZenRows » (ou « Automatique ») dans Paramètres → Source.',
-      );
-    } else if (cdnFile) {
-      console.log(
-        '  Les pages passent par ZenRows ; les liens directs sont bloqués mais p.111477.xyz sert\n  les fichiers : Lumière s’en sert automatiquement (dans la limite de ses jetons).',
-      );
-    } else if (!fileUrl) {
-      console.log(
-        '  Les pages passent par ZenRows (aucun fichier trouvé pour tester le téléchargement).',
-      );
-    } else {
-      console.log(
-        '  Les pages passent par ZenRows mais les fichiers restent bloqués (lien direct et\n  p.111477.xyz) : envoyez ce rapport complet.',
-      );
-    }
-  } else if (zenrowsKey) {
-    console.log(
-      '  ZenRows n’a pas obtenu la page : voir le détail « Z » ci-dessus (clé, crédits,\n  configuration) et envoyez ce rapport complet.',
-    );
-  } else if (reuse?.ok) {
-    console.log(
-      '  Cloudflare exige une vérification de navigateur : Lumière la fait passer par votre\n  navigateur, puis travaille seul avec ce passage (mode « Automatique »).',
-    );
-  } else if (pageAttempt?.ok) {
-    console.log(
-      '  Cloudflare n’accepte que le navigateur lui-même : Lumière fera ses requêtes depuis une\n  fenêtre réduite de votre navigateur (mode « Automatique »).',
-    );
-  } else if (verified) {
-    console.log(
-      '  La vérification passe dans le navigateur mais les requêtes restent refusées :\n  envoyez ce rapport complet.',
-    );
-  } else {
-    console.log(
-      '  Cloudflare exige une vérification que les requêtes directes ne passent pas : ajoutez\n  une clé ZenRows (Paramètres → Source) puis relancez « npm run diagnose ».',
-    );
-  }
+  return attempts;
 }
 
-function listOfItems(result: Fetched, url: URL): ListingItem[] {
-  return result.status === 200 ? listingOf(result, url) : [];
+async function main(): Promise<void> {
+  silenceSqliteExperimentalWarning();
+  const args = process.argv.slice(2);
+  console.log('Diagnostic de Lumière');
+  console.log(`Node.js ${process.version} — ${process.platform} ${process.arch}\n`);
+
+  loadEnvFile();
+  const config = loadConfig();
+  const addon = await diagnoseAddon(args, config);
+
+  const siteTarget = args.find((arg) => !arg.startsWith('--'));
+  const site =
+    args.includes('--site') || siteTarget || !addon.manifest
+      ? await diagnoseSite(siteTarget ?? DEFAULT_SITE_URL)
+      : null;
+
+  console.log('\nConclusion :');
+  if (addon.manifest && addon.bytes) {
+    console.log(
+      '  L’extension Stremio fonctionne : Lumière lui demande les liens des films et des\n  épisodes (catalogue TMDB, clé TMDB nécessaire).',
+    );
+  } else if (addon.manifest && addon.links && addon.bytes === false) {
+    console.log(
+      '  L’extension donne des liens mais leur lecture est refusée (voir A3) : envoyez ce\n  rapport complet.',
+    );
+  } else if (addon.manifest && addon.links === 0) {
+    console.log(
+      addon.limited
+        ? '  L’extension a atteint sa limite de liens : réessayez dans quelques minutes (chez\n  111477, la réserve regagne un lien toutes les 5 minutes).'
+        : addon.configurationRequired
+          ? '  L’extension doit être configurée : ouvrez sa page de configuration, puis collez le\n  lien d’installation obtenu dans Paramètres → Extension Stremio.'
+          : '  L’extension répond mais ne propose aucun fichier pour ce film : essayez un autre\n  titre (--film=tt…) ou vérifiez sa configuration.',
+    );
+  } else if (addon.manifest) {
+    console.log('  L’extension répond mais la demande de liens a échoué (voir A2).');
+  } else if (site?.some((attempt) => attempt.ok)) {
+    console.log(
+      '  L’extension est injoignable mais le site répond directement : videz l’adresse de\n  l’extension (Paramètres → Extension Stremio) pour lire la liste du site.',
+    );
+  } else {
+    console.log(
+      '  Ni l’extension ni le site ne répondent : vérifiez l’adresse de l’extension\n  (Paramètres → Extension Stremio) et votre connexion, puis envoyez ce rapport complet.',
+    );
+  }
 }
 
 main().catch((error: unknown) => {

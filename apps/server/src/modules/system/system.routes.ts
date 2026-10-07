@@ -4,7 +4,7 @@ import type { Container } from '../../container';
 import { getDiskSpace } from '../../core/fs';
 
 export function registerSystemRoutes(server: FastifyInstance, container: Container): void {
-  const { config, settings, ffmpeg, catalog, browser, zenrows } = container;
+  const { config, settings, ffmpeg, catalog } = container;
 
   server.get('/health', async () => ({ status: 'ok' }));
 
@@ -24,8 +24,6 @@ export function registerSystemRoutes(server: FastifyInstance, container: Contain
       },
       tmdbConfigured: settings.getTmdbApiKey() !== null,
       catalog: catalog.statuses(),
-      browser: browser.executable,
-      zenrows: zenrows.configured ? zenrows.usage() : null,
     };
   });
 }

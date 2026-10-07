@@ -1,8 +1,9 @@
-import { ChevronDown, Download, Play, Tv } from 'lucide-react';
-import { useState } from 'react';
+import { ChevronDown, Download, Loader2, Play, Tv } from 'lucide-react';
+import { useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router';
-import type { EpisodeEntry, SeasonEntry, TitleDetails } from '@lumiere/shared';
-import { useEnqueueTitle } from '../../api/queries';
+import type { EpisodeEntry, MediaRef, SeasonEntry, TitleDetails } from '@lumiere/shared';
+import { errorMessage } from '../../api/client';
+import { useEnqueueTitle, useEpisodeFiles } from '../../api/queries';
 import { ReleaseBadges } from '../../components/media/ReleaseBadges';
 import { Button } from '../../components/ui/Button';
 import { EmptyState } from '../../components/ui/States';
@@ -30,7 +31,11 @@ export function SeriesSeasons({
       <EmptyState
         icon={<Tv />}
         title="Aucun épisode trouvé"
-        description="Le dossier de cette série ne contient pas encore de vidéo reconnue."
+        description={
+          title.streamsOnDemand
+            ? 'TMDB ne liste encore aucun épisode diffusé pour cette série.'
+            : 'Le dossier de cette série ne contient pas encore de vidéo reconnue.'
+        }
       />
     );
   }
@@ -51,16 +56,26 @@ export function SeriesSeasons({
         season={season}
         onDownload={() => enqueue.mutate({ titleId: title.id, season: season.number })}
         downloading={enqueue.isPending}
+        onDemand={title.streamsOnDemand}
       />
       <div className="flex flex-col gap-2">
-        {season.episodes.map((episode) => (
-          <EpisodeRow
-            key={episode.key}
-            episode={episode}
-            titleId={title.id}
-            seriesTitle={title.title}
-          />
-        ))}
+        {season.episodes.map((episode) =>
+          title.streamsOnDemand ? (
+            <OnDemandEpisodeRow
+              key={episode.key}
+              episode={episode}
+              titleId={title.id}
+              seriesTitle={title.title}
+            />
+          ) : (
+            <EpisodeRow
+              key={episode.key}
+              episode={episode}
+              titleId={title.id}
+              seriesTitle={title.title}
+            />
+          ),
+        )}
       </div>
     </section>
   );
@@ -70,10 +85,12 @@ function SeasonHeader({
   season,
   onDownload,
   downloading,
+  onDemand,
 }: {
   season: SeasonEntry;
   onDownload: () => void;
   downloading: boolean;
+  onDemand: boolean;
 }) {
   const size = season.episodes.reduce((total, episode) => total + (episode.files[0]?.size ?? 0), 0);
   return (
@@ -86,6 +103,12 @@ function SeasonHeader({
         </p>
         {season.overview && (
           <p className="mt-2 max-w-3xl text-sm text-zinc-300">{season.overview}</p>
+        )}
+        {onDemand && (
+          <p className="mt-2 max-w-3xl text-xs text-zinc-400">
+            Les liens d’un épisode sont demandés à l’extension Stremio au moment de le lire ou de le
+            télécharger (sa réserve de liens est limitée).
+          </p>
         )}
       </div>
       {season.episodes.length > 0 && (
@@ -102,6 +125,217 @@ function SeasonHeader({
   );
 }
 
+/** Vignette d'un épisode (image TMDB, sinon dégradé et numéro). */
+function EpisodeStill({
+  episode,
+  seriesTitle,
+  onPlay,
+  children,
+}: {
+  episode: EpisodeEntry;
+  seriesTitle: string;
+  onPlay: () => void;
+  children?: ReactNode;
+}) {
+  const [stillFailed, setStillFailed] = useState(false);
+  return (
+    <button
+      type="button"
+      onClick={onPlay}
+      className="relative aspect-video w-full shrink-0 overflow-hidden rounded-[0.75rem] shadow-[0_10px_24px_-14px_rgb(0_0_0/0.9)] sm:w-48"
+      aria-label={`Lire ${episode.title}`}
+    >
+      <div
+        className="absolute inset-0"
+        style={{ background: gradientFor(`${seriesTitle}-${episode.key}`) }}
+      />
+      {episode.stillUrl && !stillFailed && (
+        <img
+          src={episode.stillUrl}
+          alt=""
+          loading="lazy"
+          onError={() => setStillFailed(true)}
+          className="absolute inset-0 size-full object-cover"
+        />
+      )}
+      {(!episode.stillUrl || stillFailed) && episode.episode !== null && (
+        <span className="absolute inset-0 flex items-center justify-center text-3xl font-black text-white/25">
+          {pad2(episode.episode)}
+        </span>
+      )}
+      <span className="absolute inset-0 flex items-center justify-center bg-black/25 opacity-0 transition group-hover:opacity-100">
+        <span className="glass glass-clear flex size-12 items-center justify-center rounded-full">
+          <Play className="ml-0.5 size-5 fill-white text-white" />
+        </span>
+      </span>
+      {children}
+    </button>
+  );
+}
+
+/**
+ * Épisode en mode extension : lecture et téléchargement sans fichier choisi d'avance (la
+ * version préférée est demandée à l'extension au moment voulu) ; la liste des versions
+ * n'est demandée qu'à l'ouverture.
+ */
+function OnDemandEpisodeRow({
+  episode,
+  titleId,
+  seriesTitle,
+}: {
+  episode: EpisodeEntry;
+  titleId: number;
+  seriesTitle: string;
+}) {
+  const navigate = useNavigate();
+  const enqueue = useEnqueueTitle();
+  const [expanded, setExpanded] = useState(false);
+  if (episode.season === null || episode.episode === null) return null;
+  const { season, episode: number } = episode;
+  // Copie déjà connue : téléchargée, en cours de téléchargement, ou regardée en streaming.
+  const known =
+    episode.files.find((item) => item.availability.libraryItemId !== null) ?? episode.files[0];
+  const media: MediaRef = known
+    ? mediaRefFor(known)
+    : { type: 'episode', titleId, season, episode: number };
+  const watched = known?.availability.watch?.completed ?? false;
+
+  return (
+    <article className="fill group flex flex-col gap-3 rounded-card p-2.5 sm:flex-row sm:items-center sm:gap-4">
+      <EpisodeStill
+        episode={episode}
+        seriesTitle={seriesTitle}
+        onPlay={() => navigate(playerUrl(media))}
+      >
+        {known && (
+          <WatchProgress file={known} className="absolute inset-x-0 bottom-0 rounded-none" />
+        )}
+      </EpisodeStill>
+
+      <div className="min-w-0 flex-1 px-1 sm:px-0">
+        <h3 className={cn('font-semibold', watched ? 'text-zinc-400' : 'text-white')}>
+          <span className="text-zinc-400">{number}. </span>
+          {episode.title}
+        </h3>
+        <p className="mt-0.5 text-xs text-zinc-400">
+          {[
+            episode.airDate && formatDate(episode.airDate),
+            episode.runtime && `${episode.runtime} min`,
+          ]
+            .filter(Boolean)
+            .join(' · ')}
+        </p>
+        {episode.overview && (
+          <p className="mt-1.5 line-clamp-2 text-sm text-zinc-300">{episode.overview}</p>
+        )}
+        {known && (
+          <div className="mt-2">
+            <ReleaseBadges release={known.release} compact />
+          </div>
+        )}
+        <button
+          type="button"
+          onClick={() => setExpanded((value) => !value)}
+          aria-expanded={expanded}
+          className="mt-2 flex items-center gap-1 text-xs font-medium text-brand-300 hover:text-brand-200"
+        >
+          Choisir une version
+          <ChevronDown className={cn('size-3.5 transition', expanded && 'rotate-180')} />
+        </button>
+        {expanded && <EpisodeVersions titleId={titleId} season={season} episode={number} />}
+      </div>
+
+      <div className="flex items-center gap-2 self-end pr-1.5 pb-1 sm:self-center sm:pb-0">
+        {known && <WatchedToggle file={known} />}
+        {known ? (
+          <DownloadState file={known} titleId={titleId} />
+        ) : (
+          <Button
+            size="sm"
+            icon={<Download className="size-4" />}
+            loading={enqueue.isPending}
+            onClick={() => enqueue.mutate({ titleId, season, episode: number })}
+            title="Télécharger la version préférée (demandée à l’extension)"
+          >
+            Télécharger
+          </Button>
+        )}
+        {known ? (
+          <PlayButton file={known} />
+        ) : (
+          <Button
+            variant="primary"
+            size="sm"
+            icon={<Play className="size-4 fill-current" />}
+            onClick={() => navigate(playerUrl(media))}
+            title="Regarder (la version préférée est demandée à l’extension)"
+          >
+            Lecture
+          </Button>
+        )}
+      </div>
+    </article>
+  );
+}
+
+/** Versions d'un épisode proposées par l'extension (une demande de liens à l'ouverture). */
+function EpisodeVersions({
+  titleId,
+  season,
+  episode,
+}: {
+  titleId: number;
+  season: number;
+  episode: number;
+}) {
+  const query = useEpisodeFiles(titleId, season, episode, true);
+  if (query.isPending) {
+    return (
+      <p className="mt-2 flex items-center gap-2 text-xs text-zinc-400">
+        <Loader2 className="size-3.5 animate-spin" />
+        Demande des liens à l’extension…
+      </p>
+    );
+  }
+  if (query.isError) {
+    return <p className="mt-2 text-xs text-red-300">{errorMessage(query.error)}</p>;
+  }
+  const { files, notice } = query.data;
+  return (
+    <div className="mt-2 flex flex-col gap-2">
+      {notice && <p className="text-xs text-amber-200">{notice}</p>}
+      {files.length === 0 && !notice && (
+        <p className="text-xs text-zinc-400">
+          L’extension ne propose aucune version de cet épisode.
+        </p>
+      )}
+      {files.map((version) => (
+        <div
+          key={version.path}
+          className="flex flex-wrap items-center gap-2 rounded-[0.875rem] bg-white/[0.05] p-2"
+        >
+          <div className="min-w-0 flex-1">
+            <span
+              className="block truncate font-mono text-[11px] text-zinc-300"
+              title={version.name}
+            >
+              {version.name}
+            </span>
+            {version.label && (
+              <span className="block truncate text-[11px] text-zinc-500" title={version.label}>
+                {version.label}
+              </span>
+            )}
+          </div>
+          <span className="text-xs text-zinc-400">{formatBytes(version.size)}</span>
+          <DownloadState file={version} titleId={titleId} compact />
+          <PlayButton file={version} label={null} />
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function EpisodeRow({
   episode,
   titleId,
@@ -113,44 +347,19 @@ function EpisodeRow({
 }) {
   const navigate = useNavigate();
   const [expanded, setExpanded] = useState(false);
-  const [stillFailed, setStillFailed] = useState(false);
   const file = episode.files[0];
   if (!file) return null;
   const watched = file.availability.watch?.completed ?? false;
 
   return (
     <article className="fill group flex flex-col gap-3 rounded-card p-2.5 sm:flex-row sm:items-center sm:gap-4">
-      <button
-        type="button"
-        onClick={() => navigate(playerUrl(mediaRefFor(file)))}
-        className="relative aspect-video w-full shrink-0 overflow-hidden rounded-[0.75rem] shadow-[0_10px_24px_-14px_rgb(0_0_0/0.9)] sm:w-48"
-        aria-label={`Lire ${episode.title}`}
+      <EpisodeStill
+        episode={episode}
+        seriesTitle={seriesTitle}
+        onPlay={() => navigate(playerUrl(mediaRefFor(file)))}
       >
-        <div
-          className="absolute inset-0"
-          style={{ background: gradientFor(`${seriesTitle}-${episode.key}`) }}
-        />
-        {episode.stillUrl && !stillFailed && (
-          <img
-            src={episode.stillUrl}
-            alt=""
-            loading="lazy"
-            onError={() => setStillFailed(true)}
-            className="absolute inset-0 size-full object-cover"
-          />
-        )}
-        {(!episode.stillUrl || stillFailed) && episode.episode !== null && (
-          <span className="absolute inset-0 flex items-center justify-center text-3xl font-black text-white/25">
-            {pad2(episode.episode)}
-          </span>
-        )}
-        <span className="absolute inset-0 flex items-center justify-center bg-black/25 opacity-0 transition group-hover:opacity-100">
-          <span className="glass glass-clear flex size-12 items-center justify-center rounded-full">
-            <Play className="ml-0.5 size-5 fill-white text-white" />
-          </span>
-        </span>
         <WatchProgress file={file} className="absolute inset-x-0 bottom-0 rounded-none" />
-      </button>
+      </EpisodeStill>
 
       <div className="min-w-0 flex-1 px-1 sm:px-0">
         <h3 className={cn('font-semibold', watched ? 'text-zinc-400' : 'text-white')}>

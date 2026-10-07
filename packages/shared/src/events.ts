@@ -9,12 +9,12 @@ export type ServerEvent =
   | { type: 'library.changed' }
   | { type: 'catalog.updated'; status: CatalogSectionStatus }
   | { type: 'metadata.updated'; titleId: number }
+  /** Bilan d'un ajout fait en arrière-plan (épisodes demandés à l'extension Stremio). */
   | {
-      /** Vérification Cloudflare dans le navigateur de l'utilisateur. */
-      type: 'source.verification';
-      state: 'opening' | 'waiting' | 'passed' | 'failed';
-      browser: string | null;
+      type: 'downloads.notice';
+      level: 'success' | 'info' | 'warning';
       message: string;
+      description: string | null;
     };
 
 export type ServerEventType = ServerEvent['type'];

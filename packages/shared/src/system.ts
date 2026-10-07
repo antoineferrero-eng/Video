@@ -11,14 +11,10 @@ export interface SystemInfo {
   ffmpeg: { available: boolean; version: string | null; ffprobeAvailable: boolean };
   tmdbConfigured: boolean;
   catalog: CatalogSectionStatus[];
-  /** Navigateur utilisé pour les vérifications Cloudflare (null si aucun n'est installé). */
-  browser: { name: string; path: string } | null;
-  /** Consommation ZenRows depuis le démarrage du serveur (null sans clé). */
-  zenrows: { pages: number; credits: number } | null;
 }
 
 /** Façon dont une requête a joint la source. */
-export type SourceTransportName = 'standard' | 'browser' | 'real-browser' | 'zenrows' | 'cdn';
+export type SourceTransportName = 'standard' | 'browser';
 
 export interface SourceTestResult {
   ok: boolean;
@@ -38,4 +34,14 @@ export interface ApiErrorBody {
   error: string;
   message: string;
   details?: unknown;
+}
+
+/** Résultat du test de l'extension Stremio (paramètres). */
+export interface AddonTestResult {
+  ok: boolean;
+  manifestUrl: string;
+  name: string | null;
+  version: string | null;
+  types: string[];
+  message: string;
 }

@@ -1,5 +1,6 @@
 import {
   CheckCircle2,
+  Clapperboard,
   Cpu,
   Database,
   Download,
@@ -24,6 +25,7 @@ import {
   useRefreshCatalog,
   useSettings,
   useSystemInfo,
+  useTestAddon,
   useTestSource,
   useTestTmdb,
   useUpdateSettings,
@@ -54,7 +56,7 @@ const CONNECTIONS: Array<{ value: SourceConnection; label: string; description: 
     value: 'auto',
     label: 'Automatique (recommandé)',
     description:
-      'Connexion standard, puis imitation de Chrome ; si Cloudflare exige une vérification (« Just a moment… »), ZenRows si une clé est configurée, sinon votre navigateur.',
+      'Connexion standard, puis imitation complète de Chrome si la source filtre les robots.',
   },
   {
     value: 'standard',
@@ -66,18 +68,6 @@ const CONNECTIONS: Array<{ value: SourceConnection; label: string; description: 
     label: 'Imitation de navigateur',
     description:
       'Reproduit l’empreinte réseau de Chrome (TLS, HTTP/2) pour toutes les requêtes vers la source.',
-  },
-  {
-    value: 'real-browser',
-    label: 'Navigateur réel (Chrome, Edge…)',
-    description:
-      'Votre navigateur passe la vérification Cloudflare dans une petite fenêtre (cochez la case si elle apparaît), puis Lumière réutilise ce passage.',
-  },
-  {
-    value: 'zenrows',
-    label: 'ZenRows (service en ligne)',
-    description:
-      'Les pages de listing passent par ZenRows, qui franchit la vérification Cloudflare ; les fichiers sont téléchargés directement. Le navigateur n’est jamais ouvert.',
   },
 ];
 
@@ -94,7 +84,6 @@ function SettingsForm({ response }: { response: SettingsResponse }) {
   const update = useUpdateSettings();
   const [draft, setDraft] = useState<AppSettings>(response.settings);
   const [tmdbKey, setTmdbKey] = useState('');
-  const [zenrowsKey, setZenrowsKey] = useState('');
 
   const changes = useMemo(() => {
     const patch: SettingsUpdate = {};
@@ -103,9 +92,8 @@ function SettingsForm({ response }: { response: SettingsResponse }) {
         (patch as Record<string, unknown>)[key] = draft[key];
     }
     if (tmdbKey.trim()) patch.tmdbApiKey = tmdbKey.trim();
-    if (zenrowsKey.trim()) patch.zenrowsApiKey = zenrowsKey.trim();
     return patch;
-  }, [draft, response.settings, tmdbKey, zenrowsKey]);
+  }, [draft, response.settings, tmdbKey]);
   const dirty = Object.keys(changes).length > 0;
 
   const set = <K extends keyof AppSettings>(key: K, value: AppSettings[K]) =>
@@ -124,10 +112,43 @@ function SettingsForm({ response }: { response: SettingsResponse }) {
       <AppearanceSection />
 
       <Section
+        tone="violet"
+        icon={<Clapperboard />}
+        title="Extension Stremio"
+        description="Fournit les liens des films et des épisodes quand le site lui-même est protégé (vérification Cloudflare)."
+      >
+        <Field
+          label="Adresse de l’extension"
+          description="Lien d’installation (stremio://… ou https://…/manifest.json), par exemple celui de st.111477.xyz après configuration. Laissez vide pour lire directement la liste de la source."
+        >
+          <Input
+            value={draft.stremioAddonUrl}
+            onChange={(event) => set('stremioAddonUrl', event.target.value)}
+            placeholder="https://st.111477.xyz/manifest.json"
+            spellCheck={false}
+            className="font-mono text-xs"
+          />
+        </Field>
+        <AddonTester candidate={draft.stremioAddonUrl} />
+        {draft.stremioAddonUrl.trim() && (
+          <p className="text-xs leading-relaxed text-zinc-400">
+            Avec l’extension, le catalogue vient de TMDB (clé requise) et les liens ne sont demandés
+            qu’à l’ouverture d’un film, ou à la lecture et au téléchargement d’un épisode. Chez
+            111477, chaque lien consomme un jeton d’une réserve limitée par adresse IP : réglez
+            l’extension pour qu’elle propose peu de liens par titre.
+          </p>
+        )}
+      </Section>
+
+      <Section
         tone="blue"
         icon={<Globe />}
         title="Source"
-        description="Index HTTP (listing de dossiers) depuis lequel les films et séries sont récupérés."
+        description={
+          draft.stremioAddonUrl.trim()
+            ? 'Index HTTP du site : inutilisé tant que l’extension Stremio est renseignée.'
+            : 'Index HTTP (listing de dossiers) depuis lequel les films et séries sont récupérés.'
+        }
       >
         <Field label="Adresse de la source" description="Exemple : https://a.111477.xyz">
           <Input
@@ -182,12 +203,6 @@ function SettingsForm({ response }: { response: SettingsResponse }) {
             />
           </Field>
         </div>
-        <ZenRowsField
-          configured={response.zenrowsApiKeyConfigured}
-          fromEnv={response.zenrowsApiKeyFromEnv}
-          value={zenrowsKey}
-          onChange={setZenrowsKey}
-        />
         <SourceTester />
       </Section>
 
@@ -366,6 +381,7 @@ function SettingsForm({ response }: { response: SettingsResponse }) {
         onRefreshHours={(value) => set('catalogRefreshHours', value)}
         catalogSource={draft.catalogSource}
         onCatalogSource={(value) => set('catalogSource', value)}
+        addonEnabled={response.settings.stremioAddonUrl !== ''}
       />
       <SystemSection />
 
@@ -389,7 +405,6 @@ function SettingsForm({ response }: { response: SettingsResponse }) {
             onClick={() => {
               setDraft(response.settings);
               setTmdbKey('');
-              setZenrowsKey('');
             }}
           >
             Annuler
@@ -534,71 +549,7 @@ function Section({
 const TRANSPORT_LABELS = {
   standard: '',
   browser: ' · via l’imitation de Chrome',
-  'real-browser': ' · via votre navigateur (vérification Cloudflare)',
-  zenrows: ' · via ZenRows',
-  cdn: ' · via p.111477.xyz',
 } as const;
-
-/** Clé ZenRows : service en ligne payant qui franchit les vérifications anti-robot. */
-function ZenRowsField({
-  configured,
-  fromEnv,
-  value,
-  onChange,
-}: {
-  configured: boolean;
-  fromEnv: boolean;
-  value: string;
-  onChange: (value: string) => void;
-}) {
-  const usage = useSystemInfo().data?.zenrows;
-  return (
-    <div className="flex flex-col gap-3 rounded-[1rem] bg-white/[0.05] p-4">
-      <div className="flex flex-wrap items-center gap-2 text-sm">
-        <span className="font-semibold">ZenRows</span>
-        {configured ? (
-          <Badge tone="success" icon={<CheckCircle2 className="size-3" />}>
-            Clé configurée{fromEnv ? ' (variable d’environnement)' : ''}
-          </Badge>
-        ) : (
-          <Badge tone="neutral">Facultatif</Badge>
-        )}
-        {usage && (
-          <span className="text-xs text-zinc-400">
-            Depuis le démarrage : {usage.pages} page(s), {usage.credits} crédit(s)
-          </span>
-        )}
-      </div>
-      <Field
-        label={configured ? 'Remplacer la clé API ZenRows' : 'Clé API ZenRows'}
-        description={
-          <>
-            Service en ligne payant au crédit qui franchit la vérification Cloudflare pour les pages
-            de listing (jusqu’à 25 crédits par page, échecs non facturés) ; les fichiers restent
-            téléchargés directement. Clé sur{' '}
-            <a
-              href="https://app.zenrows.com/builder"
-              target="_blank"
-              rel="noreferrer"
-              className="font-medium text-brand-300 underline underline-offset-2"
-            >
-              app.zenrows.com
-            </a>
-            .
-          </>
-        }
-      >
-        <Input
-          type="password"
-          value={value}
-          onChange={(event) => onChange(event.target.value)}
-          placeholder="••••••••••••"
-          autoComplete="off"
-        />
-      </Field>
-    </div>
-  );
-}
 
 function SourceTester() {
   const test = useTestSource();
@@ -637,6 +588,40 @@ function SourceTester() {
             </li>
           ))}
         </ul>
+      )}
+    </div>
+  );
+}
+
+function AddonTester({ candidate }: { candidate: string }) {
+  const test = useTestAddon();
+  const result = test.data;
+  return (
+    <div className="flex flex-wrap items-center gap-3">
+      <Button
+        size="sm"
+        variant="glass"
+        icon={<Server className="size-4" />}
+        loading={test.isPending}
+        disabled={!candidate.trim()}
+        onClick={() => test.mutate(candidate.trim() || undefined)}
+      >
+        Tester l’extension
+      </Button>
+      {result && (
+        <span
+          className={cn(
+            'flex min-w-0 items-center gap-1.5 text-sm',
+            result.ok ? 'text-emerald-300' : 'text-red-300',
+          )}
+        >
+          {result.ok ? (
+            <CheckCircle2 className="size-4 shrink-0" />
+          ) : (
+            <XCircle className="size-4 shrink-0" />
+          )}
+          {result.message}
+        </span>
       )}
     </div>
   );
@@ -694,11 +679,13 @@ function CatalogSection({
   onRefreshHours,
   catalogSource,
   onCatalogSource,
+  addonEnabled,
 }: {
   refreshHours: number;
   onRefreshHours: (value: number) => void;
   catalogSource: CatalogSource;
   onCatalogSource: (value: CatalogSource) => void;
+  addonEnabled: boolean;
 }) {
   const system = useSystemInfo();
   const refresh = useRefreshCatalog();
@@ -716,6 +703,7 @@ function CatalogSection({
               <span className="font-semibold">{section.kind === 'movie' ? 'Films' : 'Séries'}</span>
               <div className="flex items-center gap-1.5">
                 {section.mode === 'tmdb' && <Badge tone="info">TMDB</Badge>}
+                {section.mode === 'addon' && <Badge tone="info">TMDB · extension</Badge>}
                 <Badge
                   tone={
                     section.state === 'error'
@@ -748,10 +736,15 @@ function CatalogSection({
       </div>
       <Field
         label="Source du catalogue"
-        description={CATALOG_SOURCES.find((item) => item.value === catalogSource)?.description}
+        description={
+          addonEnabled
+            ? 'Avec l’extension Stremio, le catalogue vient toujours de TMDB (tendances, titres populaires et recherche).'
+            : CATALOG_SOURCES.find((item) => item.value === catalogSource)?.description
+        }
       >
         <Select
           value={catalogSource}
+          disabled={addonEnabled}
           onChange={(event) => onCatalogSource(event.target.value as CatalogSource)}
         >
           {CATALOG_SOURCES.map((item) => (
@@ -803,18 +796,6 @@ function SystemSection() {
       ) : (
         <span className="text-amber-300">
           Introuvable : installez ffmpeg pour lire tous les formats
-        </span>
-      ),
-    ],
-    [
-      'Navigateur',
-      info.browser ? (
-        <span>
-          {info.browser.name} <span className="text-zinc-400">(vérifications Cloudflare)</span>
-        </span>
-      ) : (
-        <span className="text-amber-300">
-          Aucun trouvé : installez Chrome ou Edge si la source exige une vérification Cloudflare
         </span>
       ),
     ],

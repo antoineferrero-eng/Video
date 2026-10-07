@@ -5,12 +5,12 @@ import { BadRequestError, errorMessage } from '../../core/errors';
 import { assertWritableDir } from '../../core/fs';
 import { transaction, type Db } from '../../infra/database/database';
 import { normalizeDirPath } from '../source/remote-path';
+import { normalizeAddonUrl } from '../source/stremio/stremio-addon';
 
 export const DEFAULT_USER_AGENT =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36';
 
 const TMDB_KEY = 'tmdbApiKey';
-const ZENROWS_KEY = 'zenrowsApiKey';
 
 export function defaultSettings(config: AppConfig): AppSettings {
   return {
@@ -19,6 +19,7 @@ export function defaultSettings(config: AppConfig): AppSettings {
     seriesPath: normalizeDirPath(config.defaults.seriesPath),
     userAgent: DEFAULT_USER_AGENT,
     sourceConnection: 'auto',
+    stremioAddonUrl: defaultAddonUrl(config.defaults.stremioAddonUrl),
     downloadDir: config.defaults.downloadDir,
     maxConcurrentDownloads: 2,
     maxDownloadSpeedKbps: 0,
@@ -33,13 +34,20 @@ export function defaultSettings(config: AppConfig): AppSettings {
   };
 }
 
+function defaultAddonUrl(value: string): string {
+  try {
+    return normalizeAddonUrl(value);
+  } catch {
+    return '';
+  }
+}
+
 export type SettingsListener = (next: AppSettings, previous: AppSettings) => void;
 
 /** Paramètres modifiables depuis l'interface, persistés en base (valeurs par défaut issues de l'environnement). */
 export class SettingsService {
   private current: AppSettings;
   private storedTmdbKey: string | null;
-  private storedZenrowsKey: string | null;
   private readonly listeners = new Set<SettingsListener>();
 
   constructor(
@@ -54,8 +62,6 @@ export class SettingsService {
     }
     this.current = merged as unknown as AppSettings;
     this.storedTmdbKey = typeof stored[TMDB_KEY] === 'string' ? (stored[TMDB_KEY] as string) : null;
-    this.storedZenrowsKey =
-      typeof stored[ZENROWS_KEY] === 'string' ? (stored[ZENROWS_KEY] as string) : null;
   }
 
   get(): AppSettings {
@@ -67,20 +73,11 @@ export class SettingsService {
     return key && key.trim() ? key.trim() : null;
   }
 
-  /** Clé ZenRows (service payant qui passe les vérifications anti-robot), si configurée. */
-  getZenrowsApiKey(): string | null {
-    const key = this.storedZenrowsKey ?? this.config.zenrows.envApiKey;
-    return key && key.trim() ? key.trim() : null;
-  }
-
   toResponse(): SettingsResponse {
     return {
       settings: this.current,
       tmdbApiKeyConfigured: this.getTmdbApiKey() !== null,
       tmdbApiKeyFromEnv: this.storedTmdbKey === null && this.config.tmdb.envApiKey !== null,
-      zenrowsApiKeyConfigured: this.getZenrowsApiKey() !== null,
-      zenrowsApiKeyFromEnv:
-        this.storedZenrowsKey === null && this.config.zenrows.envApiKey !== null,
     };
   }
 
@@ -98,6 +95,8 @@ export class SettingsService {
     }
     if (patch.moviesPath !== undefined) next.moviesPath = normalizeDirPath(patch.moviesPath);
     if (patch.seriesPath !== undefined) next.seriesPath = normalizeDirPath(patch.seriesPath);
+    if (patch.stremioAddonUrl !== undefined)
+      next.stremioAddonUrl = normalizeAddonUrl(patch.stremioAddonUrl);
     if (patch.userAgent !== undefined)
       next.userAgent = patch.userAgent.trim() || DEFAULT_USER_AGENT;
     if (patch.downloadDir !== undefined) {
@@ -133,7 +132,6 @@ export class SettingsService {
     );
     const now = new Date().toISOString();
     const tmdbChanged = patch.tmdbApiKey !== undefined;
-    const zenrowsChanged = patch.zenrowsApiKey !== undefined;
     const writeSecret = (name: string, raw: string | undefined) => {
       const value = raw?.trim() ?? '';
       if (value) write.run(name, JSON.stringify(value), now);
@@ -144,11 +142,9 @@ export class SettingsService {
         if (next[key] !== previous[key]) write.run(key, JSON.stringify(next[key]), now);
       }
       if (tmdbChanged) writeSecret(TMDB_KEY, patch.tmdbApiKey);
-      if (zenrowsChanged) writeSecret(ZENROWS_KEY, patch.zenrowsApiKey);
     });
 
     if (tmdbChanged) this.storedTmdbKey = patch.tmdbApiKey?.trim() || null;
-    if (zenrowsChanged) this.storedZenrowsKey = patch.zenrowsApiKey?.trim() || null;
     this.current = next;
     for (const listener of this.listeners) listener(next, previous);
     return next;

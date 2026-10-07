@@ -36,11 +36,14 @@ export function registerDownloadRoutes(server: FastifyInstance, { downloads }: C
         body: z.object({
           titleId: z.number().int().positive(),
           season: z.number().int().min(0).nullable().optional(),
+          episode: z.number().int().min(0).nullable().optional(),
         }),
       },
     },
-    async (request, reply) =>
-      reply.code(201).send(await downloads.enqueueTitle(request.body.titleId, request.body.season)),
+    async (request, reply) => {
+      const { titleId, season, episode } = request.body;
+      return reply.code(201).send(await downloads.enqueueTitle(titleId, season, episode));
+    },
   );
 
   app.post(

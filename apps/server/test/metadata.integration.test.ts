@@ -156,6 +156,8 @@ beforeAll(async () => {
   dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lumiere-meta-'));
   const config = loadConfig({
     DATA_DIR: dataDir,
+    // Liste de la source lue directement (pas d'extension Stremio).
+    STREMIO_ADDON_URL: '',
     SOURCE_BASE_URL: sourceUrl,
     TMDB_API_KEY: 'secret',
     TMDB_API_BASE_URL: `${tmdbUrl}/3`,

@@ -44,6 +44,17 @@ export class LibraryRepository {
       .all(titleId) as LibraryRow[];
   }
 
+  /** Copie locale d'un épisode précis d'une série. */
+  findEpisode(titleId: number, season: number, episode: number): LibraryRow | undefined {
+    return this.db
+      .prepare(
+        `SELECT * FROM library_items
+         WHERE kind = 'episode' AND title_id = ? AND season = ? AND episode = ?
+         ORDER BY id DESC LIMIT 1`,
+      )
+      .get(titleId, season, episode) as LibraryRow | undefined;
+  }
+
   /** Épisodes d'une même série présents localement (pour l'enchaînement automatique). */
   listEpisodes(title: string, titleId: number | null): LibraryRow[] {
     return this.db

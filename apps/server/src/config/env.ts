@@ -21,14 +21,13 @@ const EnvSchema = z.object({
   ),
   SOURCE_MOVIES_PATH: z.string().default('/movies/'),
   SOURCE_SERIES_PATH: z.string().default('/tvs/'),
+  // Vide : pas d'extension (fichiers lus directement sur la source).
+  STREMIO_ADDON_URL: z.string().default('https://st.111477.xyz/manifest.json'),
   TMDB_API_KEY: optionalString,
   TMDB_API_BASE_URL: z.url().default('https://api.themoviedb.org/3'),
   TMDB_IMAGE_BASE_URL: z.url().default('https://image.tmdb.org/t/p'),
-  ZENROWS_API_KEY: optionalString,
-  ZENROWS_API_URL: z.url().default('https://api.zenrows.com/v1/'),
   FFMPEG_PATH: z.string().default('ffmpeg'),
   FFPROBE_PATH: z.string().default('ffprobe'),
-  BROWSER_PATH: optionalString,
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']).default('info'),
   LOG_PRETTY: z.enum(['auto', 'true', 'false']).default('auto'),
 });
@@ -46,22 +45,15 @@ export interface AppConfig {
     moviesPath: string;
     seriesPath: string;
     downloadDir: string;
+    stremioAddonUrl: string;
   };
   tmdb: {
     envApiKey: string | null;
     apiBaseUrl: string;
     imageBaseUrl: string;
   };
-  zenrows: {
-    envApiKey: string | null;
-    apiUrl: string;
-  };
   ffmpegPath: string;
   ffprobePath: string;
-  /** Navigateur imposé pour les vérifications Cloudflare (sinon recherche automatique). */
-  browserPath: string | null;
-  /** Profil dédié du navigateur piloté par Lumière. */
-  browserProfileDir: string;
   logLevel: string;
   prettyLogs: boolean;
 }
@@ -116,6 +108,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
       sourceBaseUrl: e.SOURCE_BASE_URL.replace(/\/+$/, ''),
       moviesPath: e.SOURCE_MOVIES_PATH,
       seriesPath: e.SOURCE_SERIES_PATH,
+      stremioAddonUrl: e.STREMIO_ADDON_URL.trim(),
       downloadDir: e.MEDIA_DIR ? path.resolve(baseDir, e.MEDIA_DIR) : path.join(dataDir, 'media'),
     },
     tmdb: {
@@ -123,14 +116,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
       apiBaseUrl: e.TMDB_API_BASE_URL.replace(/\/+$/, ''),
       imageBaseUrl: e.TMDB_IMAGE_BASE_URL.replace(/\/+$/, ''),
     },
-    zenrows: {
-      envApiKey: e.ZENROWS_API_KEY ?? null,
-      apiUrl: e.ZENROWS_API_URL,
-    },
     ffmpegPath: e.FFMPEG_PATH,
     ffprobePath: e.FFPROBE_PATH,
-    browserPath: e.BROWSER_PATH ? path.resolve(baseDir, e.BROWSER_PATH) : null,
-    browserProfileDir: path.join(dataDir, 'navigateur'),
     logLevel: e.LOG_LEVEL,
     prettyLogs: e.LOG_PRETTY === 'auto' ? Boolean(process.stdout.isTTY) : e.LOG_PRETTY === 'true',
   };

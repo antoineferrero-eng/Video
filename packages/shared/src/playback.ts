@@ -1,5 +1,9 @@
 /** Référence vers un média lisible : fichier distant ou élément de la bibliothèque locale. */
-export type MediaRef = { type: 'remote'; path: string } | { type: 'library'; id: number };
+export type MediaRef =
+  | { type: 'remote'; path: string }
+  | { type: 'library'; id: number }
+  /** Épisode dont le fichier est choisi au moment de la lecture (extension Stremio). */
+  | { type: 'episode'; titleId: number; season: number; episode: number };
 
 /** Codecs et conteneurs que le navigateur sait décoder nativement. */
 export interface ClientCapabilities {

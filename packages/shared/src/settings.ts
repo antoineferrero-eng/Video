@@ -1,11 +1,9 @@
 export type PreferredQuality = '2160p' | '1080p' | '720p' | 'smallest';
 /**
- * Connexion à la source : automatique (requête standard, imitation de Chrome, puis ZenRows
- * si une clé est configurée, sinon vérification dans le navigateur de l'utilisateur),
- * standard uniquement, imitation de navigateur, navigateur réel, ou ZenRows pour les pages
- * de listing (les fichiers restent téléchargés directement).
+ * Connexion à la source : automatique (requête standard, puis imitation de Chrome si la source
+ * filtre les robots), standard uniquement, ou imitation de navigateur systématique.
  */
-export type SourceConnection = 'auto' | 'standard' | 'browser' | 'real-browser' | 'zenrows';
+export type SourceConnection = 'auto' | 'standard' | 'browser';
 export type TranscodePreset = 'quality' | 'balanced' | 'fast';
 /**
  * Origine du catalogue : liste complète de la source, catalogue TMDB (le dossier de chaque
@@ -23,6 +21,11 @@ export interface AppSettings {
   seriesPath: string;
   userAgent: string;
   sourceConnection: SourceConnection;
+  /**
+   * Manifeste d'une extension Stremio qui fournit les liens des fichiers (vide : désactivé).
+   * Quand elle est active, le catalogue vient de TMDB et les fichiers de l'extension.
+   */
+  stremioAddonUrl: string;
   /** Dossier local de téléchargement (bibliothèque). */
   downloadDir: string;
   maxConcurrentDownloads: number;
@@ -45,13 +48,9 @@ export interface SettingsResponse {
   settings: AppSettings;
   tmdbApiKeyConfigured: boolean;
   tmdbApiKeyFromEnv: boolean;
-  zenrowsApiKeyConfigured: boolean;
-  zenrowsApiKeyFromEnv: boolean;
 }
 
 export type SettingsUpdate = Partial<AppSettings> & {
   /** Nouvelle clé TMDB (chaîne vide pour la supprimer). */
   tmdbApiKey?: string;
-  /** Nouvelle clé ZenRows (chaîne vide pour la supprimer). */
-  zenrowsApiKey?: string;
 };

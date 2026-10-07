@@ -1,7 +1,8 @@
 # Choix techniques — Lumière
 
 Ce document explique les choix faits pour construire **Lumière**, l'application qui permet
-de parcourir, télécharger et regarder les films et séries de `a.111477.xyz`.
+de parcourir, télécharger et regarder les films et séries de `a.111477.xyz` — aujourd'hui
+via son extension Stremio, le site lui-même exigeant une vérification Cloudflare (§ 11).
 
 ---
 
@@ -27,8 +28,8 @@ Conséquences sur la conception :
 > listing courants** (nginx, Apache, Caddy, lighttpd, listes `<ul>`, grilles `<div>`, JSON),
 > testé sur ces formats, et une **source de démonstration** locale a été construite pour
 > valider l'application de bout en bout. L'outil `npm run probe` permet de vérifier en une
-> commande ce que l'analyseur comprend du vrai site, et `npm run diagnose` pourquoi la source
-> refuserait une connexion (voir § 11).
+> commande ce que l'analyseur comprend du vrai site, et `npm run diagnose` si l'extension
+> Stremio (ou le site) répond depuis la machine de l'utilisateur (voir § 11).
 
 ---
 
@@ -164,7 +165,7 @@ Autres points :
 
 ---
 
-## 8. Métadonnées : TMDB (facultatif)
+## 8. Métadonnées : TMDB
 
 Les affiches, résumés, notes, genres et titres d'épisodes viennent de **The Movie Database**
 (clé gratuite, saisie dans les paramètres ou via `TMDB_API_KEY`) :
@@ -173,7 +174,9 @@ Les affiches, résumés, notes, genres et titres d'épisodes viennent de **The M
   année, popularité) ;
 - enrichissement progressif en arrière-plan + à la demande quand une affiche s'affiche ;
 - **cache disque des images** (la bibliothèque reste illustrée hors ligne) ;
-- **sans clé**, l'application reste pleinement fonctionnelle avec des affiches générées.
+- **sans clé**, l'application reste fonctionnelle avec des affiches générées quand le
+  catalogue vient de la liste du site ; avec l'extension Stremio, la clé est indispensable
+  puisque TMDB fournit le catalogue (§ 11).
 
 ---
 
@@ -280,7 +283,7 @@ basées sur une copie figée de l'arrière-plan, inutilisable sur une interface 
 
 ---
 
-## 11. Connexion à la source : passer le filtrage anti‑robot
+## 11. Connexion à la source : de Cloudflare à l'extension Stremio
 
 ### Le problème constaté
 
@@ -304,78 +307,72 @@ l'utilisateur a montré que même l'imitation recevait `cf-mitigated: challenge`
 Challenge) à tout client qui n'est pas un vrai navigateur. Aucune requête HTTP, aussi bien
 imitée soit-elle, ne peut l'exécuter : il faut un navigateur.
 
-Enfin, chez l'utilisateur, la vérification lancée dans son propre navigateur (Edge) tournait
-en boucle : la case cochée, la page se rechargeait sur la même vérification — Cloudflare
-repère sans doute le navigateur piloté. Plutôt que de jouer au chat et à la souris, Lumière
-peut confier les seules **pages de listing** à **ZenRows**, un service dont c'est le métier,
-et télécharger les fichiers directement.
+Les contournements essayés ensuite ont tous buté sur cette vérification : la vérification
+lancée dans le navigateur de l'utilisateur tournait en boucle chez lui (Edge : case cochée, page
+rechargée sur la même vérification) ; le service de scraping **ZenRows** obtenait la racine du
+site mais pas la liste `/movies/`, trop volumineuse pour son offre (« RESP005 ») ; enfin, avec
+un catalogue venu de TMDB, les dossiers des titres et les fichiers eux-mêmes restaient bloqués.
+Ces mécanismes (navigateur piloté, ZenRows, point d'accès `p.111477.xyz/bulk`) ont donc été
+**retirés** : ils ajoutaient du code, une dépendance payante et une fenêtre qui s'ouvre, pour
+un résultat nul.
 
-### Les choix
+### Le choix : l'extension Stremio de 111477
 
-| Couche                            | Choix                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    | Pourquoi                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
-| --------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Connexion standard                | Requêtes `node:http`/`node:https` qui envoient **exactement** les en-têtes d'une navigation Chrome (`sec-ch-ua*`, `sec-fetch-*`, `accept`, `accept-language: fr-FR…`, `priority`, `upgrade-insecure-requests`), cohérents avec le User-Agent choisi                                                                                                                                                                                                                                                                                                                                                                                                                                      | Contrairement à `fetch`, rien n'est ajouté ni réécrit. Les pages sont décompressées (gzip/deflate/br) ; les fichiers sont demandés sans compression pour que les plages d'octets (`Range`) restent exactes.                                                                                                                                                                                                                                                                                              |
-| Cookies                           | Petit « cookie jar » par origine                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         | Cloudflare dépose des cookies (`__cf_bm`…) qu'un navigateur renvoie ; les ignorer est un autre signe de robot.                                                                                                                                                                                                                                                                                                                                                                                           |
-| Imitation de navigateur           | **[impit](https://github.com/apify/impit)** (Apify), en secours                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | Bibliothèque Rust (reqwest + rustls) livrée en binaires précompilés pour Windows, macOS et Linux : elle reproduit la poignée de main TLS, les réglages HTTP/2 et l'ordre des en-têtes de Chrome, avec une API proche de `fetch`. Aucune installation supplémentaire, contrairement à un vrai navigateur piloté (Playwright/Puppeteer : centaines de Mo, lent, gourmand) ou à curl-impersonate (binaires externes à installer et maintenir à part).                                                       |
-| Mode « Automatique » (par défaut) | Pages : standard, imitation de Chrome, puis **ZenRows** si une clé est configurée, sinon navigateur réel. Fichiers : standard, imitation, `p.111477.xyz`, puis navigateur réel (jamais si ZenRows est configuré). Le transport qui passe est **mémorisé par origine et par type de requête**                                                                                                                                                                                                                                                                                                                                                                                             | Le chemin gratuit et léger sert tant qu'il suffit ; dès que la source filtre, les requêtes suivantes vont directement au bon transport. Chaque mode est forçable dans **Paramètres → Source**.                                                                                                                                                                                                                                                                                                           |
-| Navigateur réel                   | Le navigateur installé (Chrome, Edge — toujours présent sous Windows —, Brave, Chromium ; `BROWSER_PATH` pour l'imposer) est lancé normalement dans un **profil dédié**, avec le port de débogage (protocole DevTools, client minimal sur le WebSocket intégré à Node.js). Pendant la vérification, Lumière ne fait qu'observer le titre de l'onglet et les cookies ; ensuite il réutilise le passage : cookies (`cf_clearance`), User-Agent, indices clients et langues du navigateur, avec l'empreinte impit de **la même version de Chrome**. Si Cloudflare refuse ce passage hors du navigateur, les requêtes sont faites **depuis la page** (fenêtre réduite), fichiers lus en flux | Seul un navigateur peut exécuter la vérification ; l'utilisateur peut cocher la case Turnstile si elle apparaît. Aucun mode « automatisation » (pas de `--enable-automation`, donc `navigator.webdriver` faux) et aucune dépendance lourde (Playwright/Puppeteer). La fenêtre se ferme d'elle-même quand le passage suffit ; le passage expiré est repassé automatiquement (une seule fois par minute au plus, pour éviter les boucles). L'interface affiche chaque étape (notifications en temps réel). |
-| ZenRows (pages de listing)        | API [ZenRows](https://www.zenrows.com/) : `mode=auto` (ZenRows choisit la configuration la moins chère qui passe), puis rendu JavaScript + proxys résidentiels ; `original_status` pour garder le 404 d'un dossier absent, `Zr-Final-Url` comme adresse de base des liens. Clé saisie dans **Paramètres → Source** (stockée comme la clé TMDB, jamais renvoyée à l'interface) ou `ZENROWS_API_KEY`                                                                                                                                                                                                                                                                                       | C'est son métier : vrais navigateurs, IP résidentielles. Seuls les succès sont facturés (jusqu'à 25 crédits par page) ; les pages ainsi payées restent 6 h en cache et deux requêtes au plus partent en parallèle. Les erreurs du service (clé invalide, crédits épuisés…) sont traduites. Quand une clé est configurée, le navigateur n'est jamais ouvert.                                                                                                                                              |
-| Fichiers                          | Lien direct (en-têtes de Chrome, puis imitation) ; s'il est refusé, point d'accès de lecture `p.111477.xyz/bulk?u=…` (111477 uniquement), accepté seulement s'il renvoie bien le fichier                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 | Les fichiers (plusieurs Go) ne peuvent pas passer par ZenRows : l'idée est de lister par ZenRows puis de télécharger le lien. `p.111477.xyz` est le point d'accès qu'utilise l'extension Stremio de 111477, limité par un réservoir de jetons par adresse IP.                                                                                                                                                                                                                                            |
-| ffmpeg / ffprobe                  | **Relais local** `/api/internal/source` (127.0.0.1, jeton aléatoire généré au démarrage)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 | ffmpeg a son propre client HTTP (User-Agent `Lavf`, autre pile TLS) que le même pare-feu bloquerait. En lisant via le relais, la lecture en streaming emprunte exactement la même connexion que le catalogue et les téléchargements. Le relais n'accepte que des chemins de la source configurée et un jeton comparé en temps constant : ce n'est pas un proxy ouvert.                                                                                                                                   |
-| Messages d'erreur                 | Analyse des refus : page de vérification (`cf-mitigated: challenge`, « Just a moment… »), règle de pare-feu (erreur 1020), User-Agent banni (1010), autre refus                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | Dire _pourquoi_ la source refuse, plutôt qu'un « 403 » brut ; le journal ajoute `cf-ray`, serveur et titre de la page pour le diagnostic.                                                                                                                                                                                                                                                                                                                                                                |
-| Diagnostic                        | `npm run diagnose [-- <url>] [--zenrows=CLÉ] [--navigateur]`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             | Compare depuis la machine de l'utilisateur l'ancien `fetch`, Node.js + en-têtes de Chrome, l'imitation impit, curl, puis ZenRows (détail de chaque configuration et crédits consommés) ; sur un vrai fichier trouvé ainsi, il teste le **téléchargement direct** et `p.111477.xyz` ; la vérification dans le navigateur n'est essayée que sur demande. Indispensable puisque l'environnement de développement n'atteint pas le site.                                                                     |
+111477 publie une **extension Stremio** (`st.111477.xyz`). Stremio est un lecteur vidéo dont
+les extensions répondent à un protocole HTTP+JSON simple : on leur donne l'identifiant d'un
+film ou d'un épisode, elles renvoient des liens de lecture directs. Ces liens sont faits pour
+des lecteurs vidéo ordinaires, pas pour des navigateurs : pas de vérification JavaScript.
 
-ZenRows et le point d'accès de lecture ont été validés contre de faux services locaux
-(`zenrows.test.ts` : configuration de secours, statut d'origine, erreurs, crédits, clé jamais
-renvoyée, fichiers directs ou via le point d'accès, navigateur jamais sollicité).
-Les autres mécanismes ont été validés contre de faux « Cloudflare » locaux : l'un refuse les
-requêtes sans métadonnées de navigation (`source-transport.test.ts`), l'autre impose une
-vérification JavaScript qui délivre un cookie `cf_clearance` HttpOnly lié au User-Agent, avec
-un mode où seul le navigateur lui-même est accepté (`real-browser.test.ts`, avec un vrai
-Chromium, avec et sans fenêtre). L'application complète a aussi été vérifiée derrière ce
-dernier : catalogue, téléchargement (fichier identique à l'octet près) et lecture convertie
-par ffmpeg à travers le relais et la page du navigateur.
+| Élément               | Choix                                                                                                                                                                                                                                                     | Pourquoi                                                                                                                                                                                                                                |
+| --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Protocole             | `GET <base>/manifest.json`, puis `<base>/stream/movie/tt1677720.json` (film) ou `<base>/stream/series/tt0903747:1:3.json` (épisode) ; lecture de `url`, `name`/`title`/`description` et `behaviorHints` (`filename`, `videoSize`, `proxyHeaders.request`) | Protocole public et stable : n'importe quelle extension compatible convient, pas seulement celle de 111477. Les en-têtes demandés par l'extension sont renvoyés avec le lien.                                                           |
+| Adresse               | **Paramètres → Extension Stremio** : lien d'installation `stremio://…`, adresse de configuration ou manifeste (normalisés), avec un bouton de test ; `STREMIO_ADDON_URL` pour la valeur de départ                                                         | La configuration d'une extension (serveurs, nombre de liens par titre…) est encodée dans son adresse : il suffit de coller celle obtenue sur sa page de configuration.                                                                  |
+| Catalogue             | **TMDB** (tendances, populaires, à l'affiche, mieux notés, et toute recherche) ; identifiant IMDb d'un titre obtenu une fois par `external_ids`, puis gardé                                                                                               | L'extension ne fournit pas de catalogue, seulement des liens titre par titre ; les extensions Stremio identifient les titres par leur identifiant IMDb.                                                                                 |
+| Identité des fichiers | **Chemin virtuel** stable par fichier : `/@stremio/movie/tt1677720/<fichier>`, `/@stremio/series/tt0903747/1x3/<fichier>`                                                                                                                                 | Les liens expirent et changent d'une demande à l'autre. Téléchargements, reprise de lecture, bibliothèque, « vu / non vu » et relais ffmpeg travaillent sur cette identité ; le lien réel n'est résolu qu'au moment de lire les octets. |
+| Économie de liens     | Liens demandés seulement à l'ouverture d'un film, à la lecture ou au téléchargement d'un épisode, ou à l'ouverture de « Choisir une version » ; jamais pour afficher une série (saisons et épisodes viennent de TMDB)                                     | Chez 111477, **chaque lien généré consomme un jeton** d'une réserve de 50 par adresse IP (un regagné toutes les 5 minutes), avec 10 requêtes par 10 s au plus.                                                                          |
+| Cache                 | Réponses gardées **en base** 12 h avec le lien de chaque fichier (3 min si la réponse est vide ou signale la limite) ; un lien refusé par l'hôte (401, 403, 404, 410) est redemandé une fois                                                              | Rouvrir une fiche, reprendre une lecture ou lancer un téléchargement plus tard ne coûte rien tant que l'hôte accepte le lien, même après un redémarrage.                                                                                |
+| Lecture d'un épisode  | Référence `{ type: 'episode', titleId, season, episode }` : copie locale si elle existe, sinon version préférée (qualité, langue) parmi celles de l'extension ; l'épisode suivant est proposé de la même façon                                            | Lancer un épisode, ou enchaîner sur le suivant, ne demande un lien qu'au moment de le regarder.                                                                                                                                         |
+| Saison ou série       | File d'épisodes : une demande toutes les 1,2 s, épisodes déjà téléchargés ou en file ignorés, lot arrêté au premier signal de limite (« ⚠️ Slow down — rate limit reached ») ; bilan en notification                                                      | Respecter la limite en rafale et ne jamais vider la réserve en arrière-plan : le reste du lot se relance plus tard, en un clic.                                                                                                         |
+| Sans extension        | Champ vide : la liste du site est lue directement (en-têtes exacts de Chrome, puis imitation **impit**), avec repli possible sur le catalogue TMDB et la recherche des dossiers à la demande                                                              | Pour un index HTTP non protégé, et la démonstration en mode liste (`DEMO_MODE=listing`).                                                                                                                                                |
 
-### Catalogue TMDB quand la liste complète est illisible
+### Ce qui reste de la couche de connexion
 
-Avec ZenRows, la racine du site passait (1 crédit), mais `/movies/` échouait : « Response
-data is bigger than the maximum allowed download size for your plan » (RESP005). La page
-qui liste tous les films est trop lourde pour l'offre de l'utilisateur. Sur sa proposition,
-le catalogue peut donc venir de **TMDB** au lieu de la liste de la source :
+| Couche                            | Choix                                                                                                                                                                                                                                               | Pourquoi                                                                                                                                                                                                                                                                             |
+| --------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Connexion standard                | Requêtes `node:http`/`node:https` qui envoient **exactement** les en-têtes d'une navigation Chrome (`sec-ch-ua*`, `sec-fetch-*`, `accept`, `accept-language: fr-FR…`, `priority`, `upgrade-insecure-requests`), cohérents avec le User-Agent choisi | `fetch` (undici) impose des en-têtes qu'aucun navigateur n'envoie lors d'une navigation.                                                                                                                                                                                             |
+| Cookies                           | Petit « cookie jar » par origine                                                                                                                                                                                                                    | Un navigateur renvoie les cookies déposés par le site ; les ignorer est un signe de robot.                                                                                                                                                                                           |
+| Imitation de navigateur           | **[impit](https://github.com/apify/impit)** (Apify), en secours : empreinte TLS/HTTP2 de Chrome                                                                                                                                                     | Passe les filtres qui comparent l'empreinte réseau au navigateur annoncé ; sert aussi de secours si l'extension ou l'hôte d'un lien refuse la première requête (403/503).                                                                                                            |
+| Mode « Automatique » (par défaut) | Standard, puis imitation de Chrome ; le transport qui passe est **mémorisé par origine**                                                                                                                                                            | Le chemin léger sert tant qu'il suffit ; chaque mode est forçable dans **Paramètres → Source**.                                                                                                                                                                                      |
+| ffmpeg / ffprobe                  | **Relais local** `/api/internal/source` (127.0.0.1, jeton aléatoire généré au démarrage)                                                                                                                                                            | ffmpeg lit la source (ou le lien de l'extension) par la même connexion que le reste de l'application, sans jamais recevoir de lien expiré.                                                                                                                                           |
+| Messages d'erreur                 | Analyse des refus : page de vérification (`cf-mitigated: challenge`, « Just a moment… »), règle de pare-feu (erreur 1020), User-Agent banni (1010), autre refus ; limite de l'extension traduite en français                                        | Dire _pourquoi_ la source refuse, plutôt qu'un « 403 » brut.                                                                                                                                                                                                                         |
+| Diagnostic                        | `npm run diagnose [-- --extension=URL] [--film=tt…] [--serie=tt…:S:E] [--site]`                                                                                                                                                                     | Teste depuis la machine de l'utilisateur le manifeste, les liens d'**un seul** film (pour ménager la réserve), la lecture des premiers octets du premier lien, et, sur demande, l'accès direct au site. Indispensable puisque l'environnement de développement n'atteint pas 111477. |
 
-| Élément            | Choix                                                                                                                                                                                                                                                                                                                             | Pourquoi                                                                                                                                                                              |
-| ------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Liste des titres   | Tendances, populaires, à l'affiche et mieux notés de TMDB (≈ 150 films et 150 séries), plus **toute recherche** (interroge TMDB en direct et ajoute les résultats)                                                                                                                                                                | Le catalogue se parcourt comme avant (affiches, genres, tri) sans jamais lire la grosse liste de la source.                                                                           |
-| Dossier d'un titre | Cherché à l'**ouverture de sa fiche** : noms probables construits selon les conventions de Radarr (« Titre (Année) ») et Sonarr (« Titre », puis « Titre (Année) »), à partir des titres anglais, original et traduit de TMDB ; deux-points et caractères interdits remplacés, variante en capitales, année ±1 ; 8 essais au plus | Les exemples de la source (« Ready Player One (2018) », « Spider-Noir ») suivent exactement ces conventions. Chaque essai est une petite page (1 crédit ZenRows en mode automatique). |
-| Mémorisation       | Dossier trouvé gardé en base (fiche suivante instantanée) ; titre introuvable marqué comme tel, avec les noms essayés, et cherché à nouveau après 24 h                                                                                                                                                                            | Ne pas repayer les mêmes essais ; montrer à l'utilisateur ce qui a été tenté.                                                                                                         |
-| Choix du mode      | **Paramètres → Catalogue → Source du catalogue** : « Automatique » (liste complète si elle passe, sinon TMDB), « Liste complète », « TMDB »                                                                                                                                                                                       | Le repli est automatique, et explicable : la section du catalogue dit pourquoi elle vient de TMDB.                                                                                    |
+### Validation
 
-La suite est inchangée : une fois le dossier connu, versions, saisons, téléchargement et
-lecture fonctionnent comme avec la liste complète. Validé par des tests (`folder-names`,
-`tmdb-catalog`) et dans le navigateur sur la démonstration (« COSMOS ODYSSEY (2025) » trouvé
-en deux essais, film absent signalé, série « Orbite (2020) »).
+L'extension est testée contre de faux services locaux : client et file d'épisodes
+(`stremio-addon.test.ts` : normalisation de l'adresse, identifiants IMDb/TMDB, doublons,
+description, en-têtes, réponse gardée en base, limite signalée, lien redemandé), parcours
+complet (`addon-catalog.test.ts` : catalogue TMDB, versions d'un film demandées une seule fois,
+série affichée sans aucune demande de liens, téléchargement d'un film avec lien expiré
+redemandé, saison téléchargée en arrière-plan, lot arrêté à la limite, épisode suivant). La
+démonstration (`npm run demo`) embarque une fausse extension (liens qui expirent, réserve de
+jetons, limite en rafale) ; l'interface a été vérifiée de bout en bout dans Chromium : versions
+d'un film, téléchargement, épisodes à la demande, saison en arrière-plan, lecture d'un épisode
+à la demande (conversion ffmpeg à travers le relais), bandeau de limite atteinte, paramètres.
 
 ### Limites
 
-- La vérification dans le navigateur demande un navigateur Chromium installé et un écran :
-  elle n'est pas disponible dans Docker ni sur un serveur sans affichage. Elle peut demander un
-  clic (case « Je suis humain ») et le passage expire au bout d'une durée choisie par le site
-  (souvent de 30 minutes à quelques heures) : une fenêtre s'ouvre alors brièvement.
-- En mode « requêtes depuis la page », les fichiers transitent par le navigateur : un peu plus
-  de processeur, mais une seule requête HTTP par fichier, comme un téléchargement normal.
-- ZenRows est payant : chaque page de listing obtenue coûte des crédits (jusqu'à 25). Le
-  catalogue en lit deux par actualisation, puis une par fiche ou dossier ouvert (mise en cache
-  6 h). Si les liens directs des fichiers sont eux aussi bloqués, il reste `p.111477.xyz`,
-  limité par ses jetons.
-- Catalogue TMDB : un dossier qui s'écarte des conventions de nommage (titre différent de
-  celui de TMDB, année décalée de plus d'un an…) n'est pas trouvé ; un titre absent des listes
-  TMDB n'apparaît qu'après une recherche.
+- Lumière dépend de l'extension : de sa disponibilité, de son offre (un film qu'elle ne propose
+  pas est marqué « Aucun fichier proposé ») et de sa réserve de liens. Une extension réglée pour
+  proposer beaucoup de liens par titre vide la réserve plus vite.
+- Télécharger une série entière d'un coup est limité par la réserve : le lot s'arrête à la
+  limite et se relance plus tard. La file des épisodes à demander est en mémoire : un
+  redémarrage du serveur l'abandonne (les téléchargements déjà créés, eux, reprennent).
+- Le protocole Stremio permet à une extension de fournir des sous-titres avec ses liens ;
+  Lumière ne les lit pas encore (les sous-titres intégrés aux fichiers restent disponibles).
+- Avec l'extension, une clé TMDB est indispensable : c'est elle qui fournit le catalogue.
+- L'explorateur, qui parcourt le site directement, ne fonctionne que si le site est accessible.
 - Un blocage par adresse IP ou par pays (erreur 1020) ne se contourne pas côté application.
-- Les services annexes de 111477 ne remplacent pas le listing : l'extension Stremio
-  (`st.111477.xyz`) ne fournit que des liens de lecture titre par titre, puisés dans un
-  réservoir de 50 jetons par adresse IP (un de plus toutes les 5 minutes), et
-  `p.111477.xyz/bulk?u=…` est le point d'accès de lecture qu'elle utilise. Le diagnostic les
-  sonde pour décider s'ils peuvent servir à la lecture.
 
 ### Sources
 
@@ -383,14 +380,12 @@ en deux essais, film absent signalé, série « Orbite (2020) »).
 - MDN, [Sec-Fetch-Mode](https://developer.mozilla.org/docs/Web/HTTP/Reference/Headers/Sec-Fetch-Mode).
 - Apify, [impit](https://github.com/apify/impit) et sa [documentation JavaScript](https://apify.github.io/impit/js).
 - Kinsta, [Error 1020 Access Denied](https://kinsta.com/docs/error-1020-access-denied).
-- Chrome DevTools, [Chrome DevTools Protocol](https://chromedevtools.github.io/devtools-protocol/)
-  (domaines `Target`, `Storage`, `Runtime`, `Browser`).
-- 111477, [page de configuration de l'extension Stremio](https://st.111477.xyz/) (jetons par
-  adresse IP, hôte de lecture).
-- ZenRows, [Universal Scraper API](https://docs.zenrows.com/universal-scraper-api),
-  [Adaptive Stealth Mode](https://docs.zenrows.com/universal-scraper-api/features/adaptive-stealth-mode),
-  [système de crédits](https://docs.zenrows.com/first-steps/faq/understanding-zenRows-pricing-system)
-  et [codes d'erreur](https://docs.zenrows.com/api-error-codes).
+- 111477, [page de configuration de l'extension Stremio](https://st.111477.xyz/) (réserve de
+  50 jetons par adresse IP, un de plus toutes les 5 minutes, 10 requêtes par 10 s,
+  avertissement « Slow down — rate limit reached »).
+- Stremio, [Stream object](https://github.com/Stremio/stremio-addon-sdk/blob/master/docs/api/responses/stream.md)
+  (`url`, `name`, `description`, `behaviorHints.filename`, `videoSize`, `proxyHeaders`) et
+  [ressources d'une extension](https://www.mintlify.com/Stremio/stremio-core/addons/resources).
 
 ---
 
@@ -399,8 +394,8 @@ en deux essais, film absent signalé, série « Orbite (2020) »).
 - **Qualité** : TypeScript strict, ESLint 10 (règles React Compiler incluses), Prettier,
   **Vitest** (serveur : analyseur de listings, noms de releases, plan de lecture,
   téléchargement avec coupure/reprise, enrichissement TMDB, configuration, connexion à la
-  source derrière un pare-feu anti-robot simulé, vérification Cloudflare passée dans un vrai
-  Chromium, relais de ffmpeg ; interface :
+  source derrière un pare-feu anti-robot simulé, extension Stremio (liens expirés, limite de
+  liens, saisons en arrière-plan), relais de ffmpeg ; interface :
   réfraction, détection des navigateurs, préférences d'accessibilité, palette d'ambiance),
   parcours de bout en bout et audit d'accessibilité (axe-core) dans Chromium (Playwright).
 - **Sécurité** :
@@ -430,8 +425,9 @@ en deux essais, film absent signalé, série « Orbite (2020) »).
 - Le format HTML exact de `a.111477.xyz` n'a pas pu être observé depuis l'environnement de
   développement : en cas de souci, `npm run probe -w @lumiere/server -- https://a.111477.xyz/movies/`
   montre immédiatement ce que l'analyseur comprend, et les chemins `/movies/` et `/tvs/`
-  sont modifiables dans les paramètres. Si la source refuse la connexion (403),
-  `npm run diagnose` indique quelle méthode passe depuis la machine (voir § 11).
+  sont modifiables dans les paramètres. Le site exigeant une vérification Cloudflare, les
+  fichiers passent par l'extension Stremio ; `npm run diagnose` vérifie qu'elle répond depuis
+  la machine (voir § 11).
 - Design : la réfraction n'est visible que dans les navigateurs Chromium (Chrome, Edge,
   Brave, Opera) ; Safari et Firefox affichent le même verre, dépoli. Le verre ne bascule pas
   automatiquement entre clair et sombre selon le fond comme sur iOS (le Web ne permet pas de

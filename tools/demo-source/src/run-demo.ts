@@ -2,9 +2,11 @@
  * Lance une démonstration complète hors ligne :
  *  1. génère les vidéos d'exemple si besoin ;
  *  2. démarre la source de démonstration (http://127.0.0.1:8585) ;
- *  3. démarre Lumière avec une base de données dédiée (data/demo) pointant vers cette source.
+ *  3. démarre Lumière avec une base de données dédiée (data/demo) : catalogue du faux TMDB,
+ *     fichiers fournis par la fausse extension Stremio (comme avec 111477).
  *
  *   npm run demo          (depuis la racine du dépôt, après « npm run build » pour l'interface)
+ *   DEMO_MODE=listing npm run demo   (liste de la source lue directement, sans extension)
  */
 import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
@@ -44,6 +46,11 @@ createDemoServer({
         ...process.env,
         SOURCE_BASE_URL: `http://127.0.0.1:${port}`,
         DATA_DIR: process.env.DATA_DIR ?? path.join(repoRoot, 'data', 'demo'),
+        // Fausse extension Stremio (ou liste de la source avec DEMO_MODE=listing).
+        STREMIO_ADDON_URL:
+          process.env.DEMO_MODE === 'listing'
+            ? ''
+            : `http://127.0.0.1:${port}/stremio/manifest.json`,
         // Faux TMDB de la démonstration (les titres d'exemple sont fictifs).
         TMDB_API_KEY: 'demo',
         TMDB_API_BASE_URL: `http://127.0.0.1:${port}/tmdb/3`,

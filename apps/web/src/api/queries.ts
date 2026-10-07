@@ -6,6 +6,7 @@ import {
   useQueryClient,
 } from '@tanstack/react-query';
 import type {
+  AddonTestResult,
   CatalogQuery,
   CatalogSectionStatus,
   ContinueWatchingItem,
@@ -13,6 +14,7 @@ import type {
   DownloadList,
   DownloadStats,
   EnqueueResult,
+  EpisodeFiles,
   ExplorerListing,
   GenreCount,
   HomeFeed,
@@ -29,6 +31,7 @@ import type {
   TitleSummary,
 } from '@lumiere/shared';
 import { toast } from 'sonner';
+import { plural } from '../lib/format';
 import { api, errorMessage } from './client';
 
 export const queryKeys = {
@@ -79,6 +82,24 @@ export function useTitle(id: number) {
     queryKey: queryKeys.title(id),
     queryFn: () => api<TitleDetails>(`/titles/${id}`),
     enabled: Number.isFinite(id),
+  });
+}
+
+/**
+ * Versions d'un épisode proposées par l'extension Stremio : chaque demande consomme des
+ * liens, elle n'est donc faite qu'à l'ouverture de la liste des versions.
+ */
+export function useEpisodeFiles(
+  titleId: number,
+  season: number,
+  episode: number,
+  enabled: boolean,
+) {
+  return useQuery({
+    queryKey: ['title', titleId, 'episode', season, episode] as const,
+    queryFn: () => api<EpisodeFiles>(`/titles/${titleId}/episodes/${season}/${episode}`),
+    enabled,
+    staleTime: 10 * 60_000,
   });
 }
 
@@ -137,10 +158,17 @@ export function useExplorer(path: string) {
 
 function reportEnqueue(result: EnqueueResult): void {
   const created = result.created.length;
+  const pending = result.pending ?? 0;
   if (created === 1)
     toast.success('Téléchargement ajouté', { description: result.created[0]?.fileName });
   else if (created > 1) toast.success(`${created} téléchargements ajoutés`);
-  if (created === 0 && result.skipped.length > 0) {
+  if (pending > 0) {
+    toast.info(`${plural(pending, 'épisode')} en cours d’ajout`, {
+      description:
+        'Les liens sont demandés un par un à l’extension Stremio ; le bilan s’affichera ici.',
+    });
+  }
+  if (created === 0 && pending === 0 && result.skipped.length > 0) {
     toast.info(result.skipped[0]?.reason ?? 'Rien à télécharger');
   } else if (result.skipped.length > 0) {
     toast.info(`${result.skipped.length} fichier(s) ignoré(s)`, {
@@ -174,7 +202,7 @@ export function useEnqueueFiles() {
 export function useEnqueueTitle() {
   const invalidate = useInvalidateAfterDownload();
   return useMutation({
-    mutationFn: (input: { titleId: number; season?: number | null }) =>
+    mutationFn: (input: { titleId: number; season?: number | null; episode?: number | null }) =>
       api<EnqueueResult>('/downloads/title', { method: 'POST', body: input }),
     onSuccess: (result) => {
       reportEnqueue(result);
@@ -330,6 +358,16 @@ export function useTestSource() {
       api<SourceTestResult>('/settings/test-source', {
         method: 'POST',
         body: path ? { path } : {},
+      }),
+  });
+}
+
+export function useTestAddon() {
+  return useMutation({
+    mutationFn: (url?: string) =>
+      api<AddonTestResult>('/settings/test-addon', {
+        method: 'POST',
+        body: url ? { url } : {},
       }),
   });
 }

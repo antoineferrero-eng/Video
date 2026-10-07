@@ -15,8 +15,11 @@ export type MetadataStatus = 'pending' | 'matched' | 'not_found' | 'disabled' | 
  */
 export type SourceStatus = 'present' | 'unknown' | 'missing';
 
-/** Origine du catalogue : liste complète de la source, ou TMDB (dossier cherché à la demande). */
-export type CatalogMode = 'listing' | 'tmdb';
+/**
+ * Origine du catalogue : liste complète de la source, TMDB (dossier cherché à la demande sur
+ * la source), ou TMDB avec les fichiers fournis par une extension Stremio.
+ */
+export type CatalogMode = 'listing' | 'tmdb' | 'addon';
 
 /** Informations techniques déduites du nom de fichier d'une release. */
 export interface ReleaseInfo {
@@ -58,6 +61,8 @@ export interface RemoteFile {
   episode: number | null;
   episodeEnd: number | null;
   availability: MediaAvailability;
+  /** Description donnée par l'extension Stremio (serveur, qualité…), null sinon. */
+  label: string | null;
 }
 
 /** Fichier de sous-titres disponible à côté des vidéos. */
@@ -125,6 +130,19 @@ export interface TitleDetails extends TitleSummary {
   seasons: SeasonEntry[];
   /** Dossiers essayés sur la source quand le titre y est introuvable. */
   sourceTried: string[];
+  /** Message de l'extension Stremio (limite de liens atteinte…), null sinon. */
+  sourceNotice: string | null;
+  /**
+   * Épisodes dont les liens sont demandés à l'extension à la lecture ou au téléchargement
+   * (pour ménager sa limite de liens) : `files` ne contient que les copies connues.
+   */
+  streamsOnDemand: boolean;
+}
+
+/** Fichiers proposés pour un épisode (extension Stremio). */
+export interface EpisodeFiles {
+  files: RemoteFile[];
+  notice: string | null;
 }
 
 export interface CatalogQuery {

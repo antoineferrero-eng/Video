@@ -4,18 +4,16 @@ import { PAGE_ENCODINGS, nodeRequest } from './node-http';
  * Transport HTTP vers la source.
  *
  * Beaucoup d'index de fichiers sont servis derrière Cloudflare, qui refuse (403) les clients
- * qui ne ressemblent pas à un navigateur. Trois transports sont donc disponibles :
+ * qui ne ressemblent pas à un navigateur. Deux transports sont donc disponibles :
  *   - « standard » : requête HTTP(S) de Node.js avec les en-têtes d'une navigation Chrome ;
  *   - « browser » : la bibliothèque `impit`, qui imite aussi l'empreinte réseau de Chrome
- *     (poignée de main TLS, HTTP/2, ordre des en-têtes), invisible au niveau des en-têtes ;
- *   - « real-browser » : le navigateur de l'utilisateur passe la vérification Cloudflare
- *     (« Just a moment… »), puis Lumière réutilise ce passage (voir browser/) ;
- *   - « zenrows » : service en ligne qui passe la vérification pour les pages de listing ;
- *   - « cdn » : point d'accès de lecture de 111477 (p.111477.xyz), pour les fichiers.
- * En mode automatique, le client de la source passe au suivant quand l'un est bloqué.
+ *     (poignée de main TLS, HTTP/2, ordre des en-têtes), invisible au niveau des en-têtes.
+ * En mode automatique, le client de la source bascule sur le second si le premier est bloqué.
+ * (Quand Cloudflare impose une vérification JavaScript, aucun des deux ne passe : Lumière
+ * obtient alors les fichiers par l'extension Stremio de la source, voir stremio/.)
  */
 
-export type TransportName = 'standard' | 'browser' | 'real-browser' | 'zenrows' | 'cdn';
+export type TransportName = 'standard' | 'browser';
 
 export interface SourceRequest {
   /** Page de listing (navigation) ou fichier (téléchargement, lecture). */
@@ -40,8 +38,6 @@ export interface SourceResponse {
 export interface Transport {
   readonly name: TransportName;
   fetch(url: string, request: SourceRequest): Promise<SourceResponse>;
-  /** Oublie l'état propre à la source (changement d'adresse ou de mode). */
-  reset?(): void;
 }
 
 /** Bocal à cookies minimal (par hôte) : Cloudflare dépose des cookies qu'un navigateur renvoie. */
@@ -200,16 +196,6 @@ export function looksBlocked(response: Pick<SourceResponse, 'status' | 'headers'
   if (response.status !== 503) return false;
   return (
     response.headers.has('cf-mitigated') || /cloudflare/i.test(response.headers.get('server') ?? '')
-  );
-}
-
-/** Réponse servie par Cloudflare (seul cas où passer par le vrai navigateur peut aider). */
-export function servedByCloudflare(response: Pick<SourceResponse, 'headers'>): boolean {
-  const { headers } = response;
-  return (
-    headers.has('cf-ray') ||
-    headers.has('cf-mitigated') ||
-    /cloudflare/i.test(headers.get('server') ?? '')
   );
 }
 

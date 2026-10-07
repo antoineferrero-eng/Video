@@ -88,6 +88,27 @@ export class AvailabilityService {
     return result;
   }
 
+  /**
+   * Chemins connus sous un préfixe (ex. le dossier d'un titre) : téléchargements,
+   * bibliothèque et, si demandé, fichiers déjà regardés en streaming.
+   */
+  knownPathsUnder(prefix: string, options: { watched?: boolean } = {}): string[] {
+    const like = `${prefix.replace(/[\\%_]/g, '\\$&')}%`;
+    const watched = options.watched
+      ? `UNION SELECT remote_path FROM watch_progress WHERE remote_path LIKE @like ESCAPE '\\'`
+      : '';
+    const rows = this.db
+      .prepare(
+        `SELECT remote_path FROM downloads
+           WHERE remote_path LIKE @like ESCAPE '\\' AND status != 'canceled'
+         UNION
+         SELECT remote_path FROM library_items WHERE remote_path LIKE @like ESCAPE '\\'
+         ${watched}`,
+      )
+      .all({ like }) as Array<{ remote_path: string }>;
+    return rows.map((row) => row.remote_path);
+  }
+
   progressFor(mediaKey: string): WatchState | null {
     return toWatchState(
       this.db.prepare('SELECT * FROM watch_progress WHERE media_key = ?').get(mediaKey) as

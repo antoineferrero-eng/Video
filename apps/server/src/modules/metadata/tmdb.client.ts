@@ -54,10 +54,20 @@ export interface TmdbMovie {
   vote_count: number | null;
 }
 
+export interface TmdbSeasonSummary {
+  season_number: number;
+  episode_count: number;
+  name: string;
+  air_date: string | null;
+  poster_path: string | null;
+  overview?: string | null;
+}
+
 export interface TmdbTvShow {
   id: number;
   name: string;
   original_name: string;
+  seasons?: TmdbSeasonSummary[];
   overview: string | null;
   tagline: string | null;
   episode_run_time: number[];
@@ -135,6 +145,11 @@ export class TmdbClient {
 
   tv(id: number, language: string): Promise<TmdbTvShow> {
     return this.get(`/tv/${id}`, { language });
+  }
+
+  /** Identifiants externes (IMDb « tt… ») d'un film ou d'une série. */
+  externalIds(kind: 'movie' | 'tv', id: number): Promise<{ imdb_id?: string | null }> {
+    return this.get(`/${kind}/${id}/external_ids`, {});
   }
 
   season(tvId: number, seasonNumber: number, language: string): Promise<TmdbSeason> {

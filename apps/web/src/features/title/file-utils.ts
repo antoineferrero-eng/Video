@@ -1,6 +1,11 @@
 import type { MediaRef, RemoteFile } from '@lumiere/shared';
 import { useDownloads } from '../../api/queries';
 
+/** Chemin « virtuel » d'un fichier fourni par l'extension Stremio (pas de dossier à parcourir). */
+export function isAddonPath(path: string): boolean {
+  return path.startsWith('/@stremio/');
+}
+
 export function mediaRefFor(file: RemoteFile): MediaRef {
   return file.availability.libraryItemId !== null
     ? { type: 'library', id: file.availability.libraryItemId }

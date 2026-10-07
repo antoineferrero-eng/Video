@@ -2,7 +2,8 @@
  * Serveur d'index HTTP de démonstration : reproduit un « autoindex » nginx
  * (listing <pre> avec dates et tailles) et sert les fichiers avec prise en charge
  * des requêtes Range. Le débit peut être bridé pour observer la progression des
- * téléchargements (DEMO_THROTTLE_KBPS, 0 = illimité).
+ * téléchargements (DEMO_THROTTLE_KBPS, 0 = illimité). Il héberge aussi un faux TMDB
+ * (/tmdb/3) et une fausse extension Stremio (/stremio/manifest.json).
  *
  *   npm run serve -w @lumiere/demo-source
  */
@@ -12,6 +13,7 @@ import path from 'node:path';
 import { Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { fileURLToPath } from 'node:url';
+import { FakeStremio, fakeStremioOptions } from './fake-stremio';
 import { handleFakeTmdb } from './fake-tmdb';
 
 export interface DemoServerOptions {
@@ -80,10 +82,14 @@ function throttle(kbps: number): Transform {
 
 export function createDemoServer(options: DemoServerOptions): http.Server {
   const root = path.resolve(options.root);
+  const addon = new FakeStremio(fakeStremioOptions(root));
   return http.createServer((request, response) => {
     void (async () => {
       const url = new URL(request.url ?? '/', 'http://localhost');
       if (handleFakeTmdb(url, request.headers, response, path.join(root, '.tmdb'))) return;
+      // Lien de l'extension : chemin du fichier à servir.
+      const addonFile = addon.handle(url, request, response);
+      if (addonFile === true) return;
       let urlPath: string;
       try {
         urlPath = decodeURIComponent(url.pathname);
@@ -91,7 +97,7 @@ export function createDemoServer(options: DemoServerOptions): http.Server {
         response.writeHead(400).end('Bad Request');
         return;
       }
-      const target = path.resolve(root, `.${urlPath}`);
+      const target = typeof addonFile === 'string' ? addonFile : path.resolve(root, `.${urlPath}`);
       if (target !== root && !target.startsWith(root + path.sep)) {
         response.writeHead(403).end('Forbidden');
         return;

@@ -8,8 +8,8 @@ import {
 } from '../../core/errors';
 import type { Logger } from '../../core/logger';
 import type { SettingsService } from '../settings/settings.service';
-import { CdnTransport, DEFAULT_CDN, type CdnOptions } from './cdn-transport';
 import { parseListing, type ListingFormat } from './listing-parser';
+import { nodeRequest } from './node-http';
 import { joinRemote, normalizeDirPath, normalizeRemotePath } from './remote-path';
 import {
   BrowserTransport,
@@ -17,33 +17,20 @@ import {
   StandardTransport,
   describeRefusal,
   looksBlocked,
-  servedByCloudflare,
   type SourceRequest,
   type SourceResponse,
   type Transport,
   type TransportName,
 } from './transport';
-import type { ZenRowsTransport } from './zenrows-transport';
+import type { AddonLink, StremioAddon } from './stremio/stremio-addon';
+import { isVirtualPath } from './stremio/virtual-path';
 
 export interface SourceClientOptions {
   /** Transport d'imitation de Chrome (impit), chargé à la première utilisation. */
   loadImpersonation?: (cookies: CookieJar) => Promise<Transport | null>;
-  /** Transport « navigateur réel » (vérification Cloudflare dans le navigateur). */
-  realBrowser?: ((cookies: CookieJar) => Transport) | null;
-  /** Pages de listing via ZenRows (service en ligne), si une clé est configurée. */
-  zenrows?: ZenRowsTransport | null;
-  /** Point d'accès de lecture de 111477, en secours pour les fichiers (null : jamais). */
-  cdn?: CdnOptions | null;
+  /** Extension Stremio qui fournit les fichiers désignés par un chemin virtuel. */
+  addon?: StremioAddon | null;
 }
-
-const ESCALATION_MESSAGES: Partial<Record<TransportName, string>> = {
-  browser:
-    'La source filtre les clients qui ne sont pas des navigateurs : imitation de Chrome activée',
-  'real-browser':
-    'Cloudflare exige une vérification de navigateur : passage par le navigateur de l’utilisateur activé',
-  zenrows: 'Cloudflare bloque les pages de listing : elles passent désormais par ZenRows',
-  cdn: 'Lien direct refusé : les fichiers passent par le point d’accès de lecture p.111477.xyz',
-};
 
 export interface RemoteEntry {
   name: string;
@@ -65,10 +52,7 @@ export interface DirectoryListing {
 }
 
 const LISTING_TTL_MS = 10 * 60_000;
-/** Pages payées (ZenRows) : conservées plus longtemps pour économiser des crédits. */
-const PAID_LISTING_TTL_MS = 6 * 60 * 60_000;
-/** Inclut le temps de passer une vérification Cloudflare dans le navigateur (≤ 3 min). */
-const LISTING_TIMEOUT_MS = 240_000;
+const LISTING_TIMEOUT_MS = 90_000;
 const HEADERS_TIMEOUT_MS = 30_000;
 const MAX_TEXT_BYTES = 8 * 1024 * 1024;
 
@@ -83,12 +67,10 @@ export class SourceClient {
   private readonly standard: StandardTransport;
   private impersonation: Promise<Transport | null> | null = null;
   private readonly loadImpersonation: () => Promise<Transport | null>;
-  private readonly realBrowser: Transport | null;
-  private readonly zenrows: ZenRowsTransport | null;
-  private readonly cdn: CdnTransport | null;
-  /** Transport retenu par origine et type de requête, après une bascule réussie. */
+  /** Origines pour lesquelles l'imitation de Chrome s'est révélée nécessaire. */
   private readonly preferred = new Map<string, TransportName>();
   private impersonationMissingWarned = false;
+  private readonly addon: StremioAddon | null;
 
   constructor(
     private readonly settings: SettingsService,
@@ -98,12 +80,7 @@ export class SourceClient {
     this.standard = new StandardTransport(() => this.userAgent, this.cookies);
     const load = options.loadImpersonation ?? BrowserTransport.load;
     this.loadImpersonation = () => load(this.cookies);
-    this.realBrowser = options.realBrowser?.(this.cookies) ?? null;
-    this.zenrows = options.zenrows ?? null;
-    const cdn = options.cdn === undefined ? DEFAULT_CDN : options.cdn;
-    this.cdn = cdn
-      ? new CdnTransport(cdn, async () => (await this.impersonationTransport()) ?? this.standard)
-      : null;
+    this.addon = options.addon ?? null;
     settings.onChange((next, previous) => {
       if (
         next.sourceBaseUrl !== previous.sourceBaseUrl ||
@@ -113,8 +90,6 @@ export class SourceClient {
         this.listings.clear();
         this.preferred.clear();
         this.cookies.clear();
-        this.realBrowser?.reset?.();
-        this.zenrows?.reset();
       }
     });
   }
@@ -145,23 +120,29 @@ export class SourceClient {
     options: { maxAgeMs?: number; force?: boolean } = {},
   ): Promise<DirectoryListing> {
     const dirPath = normalizeDirPath(remotePath);
+    // Dossier virtuel (extension Stremio) : rien à lister, les fichiers viennent de l'extension.
+    if (isVirtualPath(dirPath)) {
+      return {
+        path: dirPath,
+        url: '',
+        format: 'generic',
+        entries: [],
+        fetchedAt: Date.now(),
+        transport: 'standard',
+      };
+    }
     const cacheKey = `${this.baseUrl}${dirPath}`;
     if (!options.force) {
       const cached = this.listings.get(cacheKey);
-      const maxAge = options.maxAgeMs ?? this.ttlFor(cached?.transport);
-      if (cached && Date.now() - cached.fetchedAt <= maxAge) {
+      if (cached && Date.now() - cached.fetchedAt <= (options.maxAgeMs ?? LISTING_TTL_MS)) {
         return cached;
       }
     }
     return this.inflight.run(cacheKey, async () => {
       const listing = await this.fetchListing(dirPath);
-      this.listings.set(cacheKey, listing, this.ttlFor(listing.transport));
+      this.listings.set(cacheKey, listing);
       return listing;
     });
-  }
-
-  private ttlFor(transport: TransportName | undefined): number {
-    return transport === 'zenrows' ? PAID_LISTING_TTL_MS : LISTING_TTL_MS;
   }
 
   invalidate(remotePath: string): void {
@@ -174,66 +155,47 @@ export class SourceClient {
     return this.impersonation;
   }
 
-  /**
-   * Transports à essayer, dans l'ordre, selon le mode de connexion et le type de requête.
-   *   - pages : standard → imitation → ZenRows (si clé) ou, à défaut, navigateur réel ;
-   *   - fichiers : standard → imitation → p.111477.xyz (111477 seulement) → navigateur réel
-   *     (sauf si ZenRows est configuré : le navigateur n'est alors jamais ouvert).
-   */
-  private async transportsFor(url: string, kind: SourceRequest['kind']): Promise<Transport[]> {
+  /** Transports à essayer, dans l'ordre, selon le mode de connexion choisi. */
+  private async transportsFor(origin: string): Promise<Transport[]> {
     const mode = this.settings.get().sourceConnection;
     if (mode === 'standard') return [this.standard];
-    if (mode === 'real-browser') return [this.realBrowser ?? this.standard];
     const impersonation = await this.impersonationTransport();
-    if (!impersonation && !this.impersonationMissingWarned) {
-      this.impersonationMissingWarned = true;
-      this.logger.warn(
-        "Module d'imitation de navigateur (impit) indisponible sur cette plateforme",
-      );
+    if (!impersonation) {
+      if (!this.impersonationMissingWarned) {
+        this.impersonationMissingWarned = true;
+        this.logger.warn(
+          "Module d'imitation de navigateur (impit) indisponible sur cette plateforme",
+        );
+      }
+      return [this.standard];
     }
-    if (mode === 'browser') return [impersonation ?? this.standard];
-    const zenrows = mode === 'zenrows' || this.zenrows?.configured ? this.zenrows : null;
-    const chain: Array<Transport | null> = [this.standard, impersonation];
-    if (kind === 'document') chain.push(zenrows ?? this.realBrowser);
-    else chain.push(this.cdn?.appliesTo(url) ? this.cdn : null, zenrows ? null : this.realBrowser);
-    const transports = chain.filter((transport): transport is Transport => transport !== null);
-    const preferred = this.preferred.get(this.preferenceKey(url, kind));
-    const start = transports.findIndex((transport) => transport.name === preferred);
-    return start > 0 ? transports.slice(start) : transports;
-  }
-
-  private preferenceKey(url: string, kind: SourceRequest['kind']): string {
-    return `${new URL(url).origin}|${kind}`;
+    if (mode === 'browser' || this.preferred.get(origin) === 'browser') return [impersonation];
+    return [this.standard, impersonation];
   }
 
   /**
-   * Envoie une requête à la source. Une réponse de filtrage anti-robot (403, défi
-   * Cloudflare) déclenche un nouvel essai avec le transport suivant ; le navigateur réel
-   * n'est sollicité que si la source est servie par Cloudflare. Le transport qui passe est
+   * Envoie une requête à la source. En mode automatique, une réponse de filtrage anti-robot
+   * (403, défi Cloudflare) déclenche un nouvel essai en imitant Chrome ; s'il passe, il est
    * retenu pour la suite.
    */
   async request(
     url: string,
     request: SourceRequest,
   ): Promise<{ response: SourceResponse; transport: TransportName }> {
-    const key = this.preferenceKey(url, request.kind);
-    const transports = await this.transportsFor(url, request.kind);
-    let cloudflare = false;
+    const origin = new URL(url).origin;
+    const transports = await this.transportsFor(origin);
     for (const [index, transport] of transports.entries()) {
-      const next = transports[index + 1];
+      const last = index === transports.length - 1;
       const response = await transport.fetch(url, request);
-      cloudflare ||= servedByCloudflare(response);
-      // Le point d'accès de lecture échoue autrement que par un 403 (limite, page d'erreur…).
-      const blocked = transport.name === 'cdn' ? !response.ok : looksBlocked(response);
-      if (next && blocked && (next.name !== 'real-browser' || cloudflare)) {
+      if (!last && looksBlocked(response)) {
         await response.body?.cancel().catch(() => undefined);
         continue;
       }
-      if (index > 0 && !blocked && this.preferred.get(key) !== transport.name) {
-        this.preferred.set(key, transport.name);
+      if (index > 0 && !looksBlocked(response) && this.preferred.get(origin) !== transport.name) {
+        this.preferred.set(origin, transport.name);
         this.logger.info(
-          { origin: new URL(url).origin, kind: request.kind },
-          ESCALATION_MESSAGES[transport.name] ?? 'Transport changé',
+          { origin },
+          'La source filtre les clients qui ne sont pas des navigateurs : imitation de Chrome activée',
         );
       }
       return { response, transport: transport.name };
@@ -319,6 +281,7 @@ export class SourceClient {
       method?: 'GET' | 'HEAD';
     } = {},
   ): Promise<SourceResponse> {
+    if (isVirtualPath(remotePath)) return this.openAddonFile(remotePath, options);
     const url = this.urlFor(remotePath);
     let range = options.range;
     if (!range && (options.start !== undefined || options.end !== undefined)) {
@@ -346,6 +309,82 @@ export class SourceClient {
     } finally {
       clearTimeout(timer);
     }
+  }
+
+  /**
+   * Fichier fourni par l'extension Stremio : le lien est demandé à l'extension, puis lu
+   * comme le ferait un lecteur vidéo. Un lien refusé ou expiré est redemandé une fois.
+   */
+  private async openAddonFile(
+    remotePath: string,
+    options: {
+      start?: number;
+      end?: number;
+      range?: string;
+      signal?: AbortSignal;
+      method?: 'GET' | 'HEAD';
+    },
+  ): Promise<SourceResponse> {
+    const addon = this.addon;
+    if (!addon?.enabled) {
+      throw new UpstreamError('Aucune extension Stremio configurée pour lire ce fichier.');
+    }
+    let range = options.range;
+    if (!range && (options.start !== undefined || options.end !== undefined)) {
+      range = `bytes=${options.start ?? 0}-${options.end ?? ''}`;
+    }
+    const timeout = new AbortController();
+    const timer = setTimeout(
+      () => timeout.abort(new Error('délai de connexion dépassé')),
+      HEADERS_TIMEOUT_MS,
+    );
+    const signal = options.signal
+      ? AbortSignal.any([options.signal, timeout.signal])
+      : timeout.signal;
+    const method = options.method ?? 'GET';
+    try {
+      const link = await addon.resolve(remotePath);
+      const response = await this.fetchLink(link, { method, range, signal });
+      if (![401, 403, 404, 410].includes(response.status)) return response;
+      // Lien expiré ou refusé : on en demande un nouveau à l'extension.
+      await response.body?.cancel().catch(() => undefined);
+      const fresh = await addon.resolve(remotePath, { refresh: true });
+      return await this.fetchLink(fresh, { method, range, signal });
+    } catch (error) {
+      if (options.signal?.aborted && isAbortError(error)) throw error;
+      if (error instanceof AppError) throw error;
+      throw new UpstreamError(`Lien de l’extension injoignable : ${errorMessage(error)}`);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  private async fetchLink(
+    link: AddonLink,
+    request: { method: 'GET' | 'HEAD'; range?: string; signal: AbortSignal },
+  ): Promise<SourceResponse> {
+    const headers: Record<string, string> = {
+      'user-agent': this.userAgent,
+      accept: '*/*',
+      'accept-encoding': 'identity',
+      ...link.headers,
+    };
+    if (request.range) headers.range = request.range;
+    const response = await nodeRequest(link.url, {
+      method: request.method,
+      headers,
+      signal: request.signal,
+    });
+    if (!looksBlocked(response)) return response;
+    const impersonation = await this.impersonationTransport();
+    if (!impersonation) return response;
+    await response.body?.cancel().catch(() => undefined);
+    return impersonation.fetch(link.url, {
+      kind: 'file',
+      method: request.method,
+      range: request.range,
+      signal: request.signal,
+    });
   }
 
   /** Télécharge un petit fichier (sous-titres…) en mémoire. */

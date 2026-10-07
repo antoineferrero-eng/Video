@@ -31,7 +31,14 @@ import type { MetadataService } from '../metadata/metadata.service';
 import type { SettingsService } from '../settings/settings.service';
 import { normalizeRemotePath, remoteBaseName, remoteParent } from '../source/remote-path';
 import type { SourceClient } from '../source/source-client';
+import { parseVirtualPath } from '../source/stremio/virtual-path';
 import type { DownloadRow, DownloadsRepository, NewDownload } from './downloads.repository';
+import {
+  EpisodeQueue,
+  type BatchSummary,
+  type EpisodeOutcome,
+  type EpisodeTarget,
+} from './episode-queue';
 import { buildTargetPath } from './target-path';
 
 const MAX_ATTEMPTS = 6;
@@ -84,6 +91,8 @@ export class DownloadManager {
   private statsTimer: NodeJS.Timeout | null = null;
   private lastStatsActive = -1;
   private stopping = false;
+  /** Épisodes à demander à l'extension Stremio avant de les ajouter à la file. */
+  private readonly episodes: EpisodeQueue;
 
   constructor(
     private readonly repository: DownloadsRepository,
@@ -96,7 +105,13 @@ export class DownloadManager {
     private readonly settings: SettingsService,
     private readonly events: EventBus,
     private readonly logger: Logger,
-  ) {}
+  ) {
+    this.episodes = new EpisodeQueue(
+      (titleId, target) => this.addAddonEpisode(titleId, target),
+      (summary) => this.reportEpisodes(summary),
+      logger,
+    );
+  }
 
   // -------------------------------------------------------------------------
   // Cycle de vie
@@ -117,6 +132,7 @@ export class DownloadManager {
 
   async stop(): Promise<void> {
     this.stopping = true;
+    this.episodes.stop();
     if (this.statsTimer) clearInterval(this.statsTimer);
     const tasks = [...this.active.values()].map((state) => {
       state.stopReason = 'shutdown';
@@ -236,8 +252,15 @@ export class DownloadManager {
     return { created: this.toItems(created), skipped };
   }
 
-  /** Film : meilleure version selon les préférences. Série : un fichier par épisode. */
-  async enqueueTitle(titleId: number, season?: number | null): Promise<EnqueueResult> {
+  /**
+   * Film : meilleure version selon les préférences. Série : un fichier par épisode (toute la
+   * série, une saison, ou un épisode).
+   */
+  async enqueueTitle(
+    titleId: number,
+    season?: number | null,
+    episode?: number | null,
+  ): Promise<EnqueueResult> {
     const row = this.catalog.getRow(titleId);
     const { preferredQuality, preferredAudioLanguage } = this.settings.get();
     if (row.kind === 'movie') {
@@ -246,6 +269,8 @@ export class DownloadManager {
       if (!best) throw new NotFoundError('Aucun fichier vidéo pour ce film.');
       return this.enqueueFiles([{ path: best.path, size: best.size, titleId }]);
     }
+    if (this.catalog.addonMode)
+      return this.enqueueAddonEpisodes(row, season ?? null, episode ?? null);
     const structure = await this.catalog.seriesStructure(row);
     const seasons =
       season === undefined || season === null
@@ -253,13 +278,129 @@ export class DownloadManager {
         : structure.filter((item) => item.number === season);
     const files = seasons
       .flatMap((item) =>
-        item.episodes.map((episode) =>
-          pickPreferredFile(episode.files, preferredQuality, preferredAudioLanguage),
-        ),
+        item.episodes
+          .filter((entry) => episode === undefined || episode === null || entry.episode === episode)
+          .map((entry) => pickPreferredFile(entry.files, preferredQuality, preferredAudioLanguage)),
       )
       .filter((file): file is NonNullable<typeof file> => file !== null);
     if (files.length === 0) throw new NotFoundError('Aucun épisode trouvé.');
     return this.enqueueFiles(files.map((file) => ({ path: file.path, size: file.size, titleId })));
+  }
+
+  // -------------------------------------------------------------------------
+  // Épisodes fournis par l'extension Stremio
+  // -------------------------------------------------------------------------
+
+  /**
+   * Épisodes d'une série en mode extension : un épisode est demandé tout de suite ; une
+   * saison ou une série entière part dans la file des demandes (une à la fois, en
+   * arrière-plan), sans redemander les épisodes déjà téléchargés.
+   */
+  private async enqueueAddonEpisodes(
+    row: TitleRow,
+    season: number | null,
+    episode: number | null,
+  ): Promise<EnqueueResult> {
+    const outline = await this.catalog.episodeOutline(row.id);
+    const targets: EpisodeTarget[] = outline
+      .filter((item) => season === null || item.number === season)
+      .flatMap((item) => item.episodes)
+      .filter((item) => episode === null || item.episode === episode)
+      .map((item) => ({ season: item.season, episode: item.episode }));
+    if (targets.length === 0) throw new NotFoundError('Aucun épisode trouvé.');
+
+    if (episode !== null) {
+      const target = targets[0] as EpisodeTarget;
+      const picked = await this.pickAddonEpisode(row.id, target);
+      if ('reason' in picked) {
+        return { created: [], skipped: [{ path: episodeCode(target), reason: picked.reason }] };
+      }
+      return this.enqueueFiles([picked.file]);
+    }
+
+    const skipped: EnqueueResult['skipped'] = [];
+    const wanted: EpisodeTarget[] = [];
+    for (const target of targets) {
+      if (await this.hasEpisodeCopy(row.id, target)) {
+        skipped.push({ path: episodeCode(target), reason: 'Épisode déjà téléchargé ou en file.' });
+      } else {
+        wanted.push(target);
+      }
+    }
+    const label = season === null ? displayTitle(row) : `${displayTitle(row)} · saison ${season}`;
+    const pending = this.episodes.add(row.id, label, wanted);
+    if (wanted.length > 0 && pending === 0) {
+      skipped.push({ path: label, reason: 'Ces épisodes sont déjà en cours d’ajout.' });
+    }
+    return { created: [], skipped, pending };
+  }
+
+  private async hasEpisodeCopy(titleId: number, target: EpisodeTarget): Promise<boolean> {
+    if (this.library.findEpisode(titleId, target.season, target.episode)) return true;
+    const copies = await this.catalog.episodeCopies(titleId, target.season, target.episode);
+    return copies.length > 0;
+  }
+
+  /** Version préférée d'un épisode parmi celles que propose l'extension (une demande). */
+  private async pickAddonEpisode(
+    titleId: number,
+    target: EpisodeTarget,
+  ): Promise<{ file: EnqueueFile; limited: boolean } | { reason: string; limited: boolean }> {
+    if (await this.hasEpisodeCopy(titleId, target))
+      return { reason: 'Épisode déjà téléchargé ou en file.', limited: false };
+    const { files, notice, limited } = await this.catalog.episodeFiles(
+      titleId,
+      target.season,
+      target.episode,
+    );
+    const { preferredQuality, preferredAudioLanguage } = this.settings.get();
+    const best = pickPreferredFile(files, preferredQuality, preferredAudioLanguage);
+    if (!best) {
+      return {
+        reason: notice ?? 'L’extension Stremio ne propose aucun fichier pour cet épisode.',
+        limited,
+      };
+    }
+    return { file: { path: best.path, size: best.size, titleId }, limited };
+  }
+
+  private async addAddonEpisode(titleId: number, target: EpisodeTarget): Promise<EpisodeOutcome> {
+    const picked = await this.pickAddonEpisode(titleId, target);
+    if ('reason' in picked)
+      return { status: 'skipped', reason: picked.reason, limited: picked.limited };
+    const result = this.enqueueFiles([picked.file]);
+    if (result.created.length === 0) {
+      return {
+        status: 'skipped',
+        reason: result.skipped[0]?.reason ?? 'Épisode ignoré.',
+        limited: picked.limited,
+      };
+    }
+    return { status: 'added', limited: picked.limited };
+  }
+
+  private reportEpisodes({ label, added, skipped, abandoned }: BatchSummary): void {
+    const details: string[] = [];
+    if (abandoned > 0) {
+      details.push(
+        `${abandoned} épisode${abandoned > 1 ? 's' : ''} non demandé${abandoned > 1 ? 's' : ''} : l’extension a atteint sa limite de liens, relancez le téléchargement plus tard.`,
+      );
+    }
+    if (skipped.length > 0) {
+      const codes = skipped.map((item) => item.code);
+      details.push(
+        `${codes.slice(0, 6).join(', ')}${codes.length > 6 ? '…' : ''} : ${skipped[0]?.reason ?? ''}`,
+      );
+    }
+    this.events.publish({
+      type: 'downloads.notice',
+      level: added === 0 ? 'warning' : skipped.length > 0 || abandoned > 0 ? 'info' : 'success',
+      message:
+        added === 0
+          ? `${label} : aucun épisode ajouté`
+          : `${label} : ${added} épisode${added > 1 ? 's' : ''} ajouté${added > 1 ? 's' : ''} aux téléchargements`,
+      description: details.join(' ') || null,
+    });
   }
 
   async enqueueFolder(folderPath: string): Promise<EnqueueResult> {
@@ -278,7 +419,17 @@ export class DownloadManager {
     const kind: DownloadKind =
       title?.kind === 'series' ? 'episode' : title?.kind === 'movie' ? 'movie' : 'file';
     const parentFolder = remoteBaseName(remoteParent(remotePath) ?? '');
-    const ref = parseEpisode(fileName, parseSeasonFolder(parentFolder));
+    let ref = parseEpisode(fileName, parseSeasonFolder(parentFolder));
+    const virtual = parseVirtualPath(remotePath);
+    if (virtual?.season != null && virtual.episode != null) {
+      // Fichier d'extension : l'épisode demandé fait foi (le nom du fichier peut être muet).
+      const sameEpisode = ref.season === virtual.season && ref.episode === virtual.episode;
+      ref = {
+        season: virtual.season,
+        episode: virtual.episode,
+        episodeEnd: sameEpisode ? ref.episodeEnd : null,
+      };
+    }
     const isEpisode = kind === 'episode';
     const code = isEpisode ? formatEpisodeCode(ref.season, ref.episode, ref.episodeEnd) : null;
     const quality = [release.info.resolution, release.info.source].filter(Boolean).join(' ');
@@ -732,4 +883,8 @@ export class DownloadManager {
     this.lastStatsActive = this.active.size;
     this.events.publish({ type: 'downloads.stats', stats: this.stats() });
   }
+}
+
+function episodeCode(target: EpisodeTarget): string {
+  return formatEpisodeCode(target.season, target.episode) ?? `${target.episode}`;
 }

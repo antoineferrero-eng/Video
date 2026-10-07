@@ -1,3 +1,5 @@
+import fs from 'node:fs';
+import fsp from 'node:fs/promises';
 import path from 'node:path';
 import type { AppConfig } from './config/env';
 import { errorMessage } from './core/errors';
@@ -5,6 +7,7 @@ import { EventBus } from './core/event-bus';
 import type { Logger } from './core/logger';
 import { KeyValueCache, openDatabase, type Db } from './infra/database/database';
 import { AvailabilityService } from './modules/availability/availability.service';
+import { AddonCatalog } from './modules/catalog/addon-catalog';
 import { CatalogService } from './modules/catalog/catalog.service';
 import { SourceResolver } from './modules/catalog/source-resolver';
 import { TmdbCatalog } from './modules/catalog/tmdb-catalog';
@@ -22,12 +25,9 @@ import { PlaybackService } from './modules/playback/playback.service';
 import { ProgressRepository } from './modules/playback/progress.repository';
 import { PlaybackSessions } from './modules/playback/sessions';
 import { SettingsService } from './modules/settings/settings.service';
-import { BrowserSession } from './modules/source/browser/browser-session';
-import { locateBrowser } from './modules/source/browser/locate-browser';
-import { RealBrowserTransport } from './modules/source/browser/real-browser-transport';
 import { SourceClient } from './modules/source/source-client';
 import { SourceRelay } from './modules/source/source-relay';
-import { ZenRowsTransport } from './modules/source/zenrows-transport';
+import { StremioAddon } from './modules/source/stremio/stremio-addon';
 
 /** Racine de composition : instancie et relie tous les services (injection manuelle). */
 export interface Container {
@@ -36,8 +36,7 @@ export interface Container {
   db: Db;
   events: EventBus;
   settings: SettingsService;
-  browser: BrowserSession;
-  zenrows: ZenRowsTransport;
+  addon: StremioAddon;
   source: SourceClient;
   relay: SourceRelay;
   titles: TitlesRepository;
@@ -58,27 +57,13 @@ export function createContainer(config: AppConfig, logger: Logger): Container {
   const db = openDatabase(config.databaseFile, logger);
   const events = new EventBus();
   const settings = new SettingsService(db, config);
-  const sourceLogger = logger.child({ module: 'source' });
-  const browser = new BrowserSession({
-    profileDir: config.browserProfileDir,
-    locate: () => locateBrowser(config.browserPath),
-    logger: sourceLogger,
-    onEvent: (event) => events.publish({ type: 'source.verification', ...event }),
-  });
-  const zenrows = new ZenRowsTransport(
-    () => settings.getZenrowsApiKey(),
-    config.zenrows.apiUrl,
-    sourceLogger,
-  );
-  const source = new SourceClient(settings, sourceLogger, {
-    realBrowser: (cookies) => new RealBrowserTransport(browser, cookies, sourceLogger),
-    zenrows,
-  });
+  const kvCache = new KeyValueCache(db);
+  const addon = new StremioAddon(settings, kvCache, logger.child({ module: 'stremio' }));
+  const source = new SourceClient(settings, logger.child({ module: 'source' }), { addon });
   const relay = new SourceRelay(config);
   const titles = new TitlesRepository(db);
   const availability = new AvailabilityService(db);
   const tmdb = new TmdbClient(() => settings.getTmdbApiKey(), config.tmdb.apiBaseUrl);
-  const kvCache = new KeyValueCache(db);
   const metadata = new MetadataService(
     titles,
     tmdb,
@@ -100,6 +85,7 @@ export function createContainer(config: AppConfig, logger: Logger): Container {
     catalogLogger,
     new TmdbCatalog(titles, tmdb, settings, kvCache, catalogLogger),
     new SourceResolver(titles, tmdb, source, settings, catalogLogger),
+    new AddonCatalog(titles, tmdb, metadata, addon, settings, kvCache, catalogLogger),
   );
   const explorer = new ExplorerService(source, availability);
   const library = new LibraryService(
@@ -150,8 +136,7 @@ export function createContainer(config: AppConfig, logger: Logger): Container {
     db,
     events,
     settings,
-    browser,
-    zenrows,
+    addon,
     source,
     relay,
     titles,
@@ -170,6 +155,7 @@ export function createContainer(config: AppConfig, logger: Logger): Container {
 }
 
 export async function startServices(container: Container): Promise<void> {
+  removeLegacyBrowserProfile(container);
   await container.ffmpeg.detect();
   container.metadata.start();
   container.downloads.start();
@@ -181,11 +167,22 @@ export async function startServices(container: Container): Promise<void> {
     );
 }
 
+/** Profil du navigateur de l'ancienne vérification Cloudflare (fonction retirée). */
+function removeLegacyBrowserProfile({ config, logger }: Container): void {
+  const profile = path.join(config.dataDir, 'navigateur');
+  if (!fs.existsSync(profile)) return;
+  fsp
+    .rm(profile, { recursive: true, force: true })
+    .then(() => logger.info({ profile }, 'Ancien profil de navigateur supprimé'))
+    .catch((error) =>
+      logger.debug({ err: errorMessage(error) }, 'Ancien profil de navigateur non supprimé'),
+    );
+}
+
 export async function stopServices(container: Container): Promise<void> {
   container.catalog.stop();
   container.metadata.stop();
   container.sessions.closeAll();
   await container.downloads.stop();
-  await container.browser.close();
   container.db.close();
 }

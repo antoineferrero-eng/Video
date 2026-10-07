@@ -4,6 +4,7 @@ import { ReleaseBadges } from '../../components/media/ReleaseBadges';
 import { EmptyState } from '../../components/ui/States';
 import { formatBytes, formatDate } from '../../lib/format';
 import { DownloadState, PlayButton, WatchProgress, WatchedToggle } from './FileActions';
+import { isAddonPath } from './file-utils';
 
 const LANGUAGE_NAMES: Record<string, string> = {
   fr: 'Français',
@@ -20,7 +21,11 @@ export function MovieVersions({ title }: { title: TitleDetails }) {
       <EmptyState
         icon={<FileVideo />}
         title="Aucun fichier vidéo"
-        description="Le dossier de ce film ne contient pas de vidéo reconnue."
+        description={
+          isAddonPath(title.remotePath)
+            ? 'L’extension Stremio ne propose aucun fichier pour ce film pour le moment.'
+            : 'Le dossier de ce film ne contient pas de vidéo reconnue.'
+        }
       />
     );
   }
@@ -42,6 +47,11 @@ export function MovieVersions({ title }: { title: TitleDetails }) {
               <p className="mt-2 truncate font-mono text-xs text-zinc-300" title={file.name}>
                 {file.name}
               </p>
+              {file.label && (
+                <p className="mt-0.5 truncate text-xs text-zinc-500" title={file.label}>
+                  {file.label}
+                </p>
+              )}
               <p className="mt-1 text-xs text-zinc-400">
                 {formatBytes(file.size)}
                 {file.modifiedAt && ` · ajouté le ${formatDate(file.modifiedAt)}`}

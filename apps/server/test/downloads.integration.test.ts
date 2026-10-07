@@ -96,6 +96,8 @@ beforeAll(async () => {
   dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lumiere-test-'));
   const config = loadConfig({
     DATA_DIR: dataDir,
+    // Liste de la source lue directement (pas d'extension Stremio).
+    STREMIO_ADDON_URL: '',
     SOURCE_BASE_URL: baseUrl,
     LOG_LEVEL: 'silent',
     LOG_PRETTY: 'false',

@@ -12,9 +12,13 @@ interface DemoEpisode {
   overview: string;
 }
 
-interface DemoTitle {
+export interface DemoTitle {
   id: number;
   kind: 'movie' | 'tv';
+  /** Identifiant IMDb (fictif) : c'est lui qu'attend l'extension Stremio de démonstration. */
+  imdb: string;
+  /** Dossier du titre dans la source de démonstration (absent : pas de fichier). */
+  folder?: string;
   title: string;
   /** Titre anglais (requêtes en en-US), s'il diffère du titre affiché. */
   englishTitle?: string;
@@ -33,6 +37,8 @@ export const DEMO_TITLES: DemoTitle[] = [
   {
     id: 1001,
     kind: 'movie',
+    imdb: 'tt9100101',
+    folder: 'Big Buck Moon (2024)',
     title: 'Big Buck Moon',
     originalTitle: 'Big Buck Moon',
     date: '2024-06-12',
@@ -47,6 +53,8 @@ export const DEMO_TITLES: DemoTitle[] = [
   {
     id: 1002,
     kind: 'movie',
+    imdb: 'tt9100102',
+    folder: 'Le Voyage Imaginaire (2023)',
     title: 'Le Voyage imaginaire',
     originalTitle: 'Le Voyage Imaginaire',
     date: '2023-11-08',
@@ -61,6 +69,8 @@ export const DEMO_TITLES: DemoTitle[] = [
   {
     id: 1003,
     kind: 'movie',
+    imdb: 'tt9100103',
+    folder: 'COSMOS ODYSSEY (2025)',
     title: 'Cosmos Odyssey',
     originalTitle: 'Cosmos Odyssey',
     date: '2025-03-19',
@@ -75,6 +85,8 @@ export const DEMO_TITLES: DemoTitle[] = [
   {
     id: 1004,
     kind: 'movie',
+    imdb: 'tt9100104',
+    folder: 'Nuit Blanche (2022)',
     title: 'Nuit blanche',
     originalTitle: 'Nuit Blanche',
     date: '2022-07-06',
@@ -89,6 +101,8 @@ export const DEMO_TITLES: DemoTitle[] = [
   {
     id: 1005,
     kind: 'movie',
+    imdb: 'tt9100105',
+    folder: 'Le Dernier Train (2021)',
     title: 'Le Dernier Train',
     originalTitle: 'Le Dernier Train',
     date: '2021-02-17',
@@ -104,6 +118,7 @@ export const DEMO_TITLES: DemoTitle[] = [
     // Présent sur TMDB mais absent de la source : « Introuvable sur la source ».
     id: 1006,
     kind: 'movie',
+    imdb: 'tt9100106',
     title: 'L’Éclipse oubliée',
     englishTitle: 'The Forgotten Eclipse',
     originalTitle: 'The Forgotten Eclipse',
@@ -119,6 +134,8 @@ export const DEMO_TITLES: DemoTitle[] = [
   {
     id: 2001,
     kind: 'tv',
+    imdb: 'tt9100201',
+    folder: 'Les Explorateurs',
     title: 'Les Explorateurs',
     originalTitle: 'Les Explorateurs',
     date: '2023-03-10',
@@ -149,6 +166,8 @@ export const DEMO_TITLES: DemoTitle[] = [
   {
     id: 2002,
     kind: 'tv',
+    imdb: 'tt9100202',
+    folder: 'Orbite (2020)',
     title: 'Orbite',
     originalTitle: 'Orbite',
     date: '2020-09-15',
@@ -224,7 +243,18 @@ function details(title: DemoTitle, language: string) {
   const base = { ...summary(title, language), tagline: title.tagline, genres: genres(title) };
   return title.kind === 'movie'
     ? { ...base, runtime: title.runtime }
-    : { ...base, episode_run_time: [title.runtime] };
+    : {
+        ...base,
+        episode_run_time: [title.runtime],
+        seasons: Object.entries(title.seasons ?? {}).map(([number, episodes]) => ({
+          season_number: Number(number),
+          episode_count: episodes.length,
+          name: `Saison ${number}`,
+          air_date: title.date,
+          poster_path: `/${posterFile(title)}`,
+          overview: '',
+        })),
+      };
 }
 
 function season(title: DemoTitle, number: number) {
@@ -327,6 +357,15 @@ export function handleFakeTmdb(
     const title = DEMO_TITLES.find((item) => item.id === Number(seasonMatch[1]));
     const body = title ? season(title, Number(seasonMatch[2])) : null;
     if (body) send(response, 200, body);
+    else send(response, 404, { status_code: 34, status_message: 'Not found' });
+    return true;
+  }
+  const externalIds = /^\/(movie|tv)\/(\d+)\/external_ids$/.exec(route);
+  if (externalIds) {
+    const title = DEMO_TITLES.find(
+      (item) => item.id === Number(externalIds[2]) && item.kind === externalIds[1],
+    );
+    if (title) send(response, 200, { id: title.id, imdb_id: title.imdb });
     else send(response, 404, { status_code: 34, status_message: 'Not found' });
     return true;
   }

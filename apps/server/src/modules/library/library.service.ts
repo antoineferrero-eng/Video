@@ -72,6 +72,10 @@ export class LibraryService {
     return this.repository.findByRemotePath(remotePath);
   }
 
+  findEpisode(titleId: number, season: number, episode: number): LibraryRow | undefined {
+    return this.repository.findEpisode(titleId, season, episode);
+  }
+
   listEpisodes(row: LibraryRow): LibraryRow[] {
     return this.repository.listEpisodes(row.title, row.title_id);
   }

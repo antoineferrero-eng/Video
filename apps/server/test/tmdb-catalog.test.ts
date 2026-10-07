@@ -182,6 +182,8 @@ beforeAll(async () => {
   container = createContainer(
     loadConfig({
       DATA_DIR: dataDir,
+      // Liste de la source lue directement (pas d'extension Stremio).
+      STREMIO_ADDON_URL: '',
       SOURCE_BASE_URL: sourceUrl,
       TMDB_API_KEY: 'cle',
       TMDB_API_BASE_URL: `${tmdbUrl}/3`,

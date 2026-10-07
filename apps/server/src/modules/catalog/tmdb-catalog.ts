@@ -9,7 +9,7 @@ import type { TitlesRepository, TmdbTitleUpsert } from './titles.repository';
 
 /**
  * Catalogue construit à partir de TMDB, quand la liste complète de la source n'est pas
- * lisible (par exemple trop volumineuse pour ZenRows) : tendances, titres populaires, à
+ * lisible (bloquée, ou trop volumineuse) : tendances, titres populaires, à
  * l'affiche, mieux notés, et toute recherche. Le dossier de chaque titre sur la source
  * n'est cherché qu'à l'ouverture de sa fiche (voir SourceResolver).
  */

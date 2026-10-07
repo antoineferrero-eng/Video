@@ -142,4 +142,28 @@ export const MIGRATIONS: Migration[] = [
       ALTER TABLE catalog_sections ADD COLUMN note TEXT;
     `,
   },
+  {
+    id: 3,
+    name: 'retrait-navigateur-zenrows',
+    sql: /* sql */ `
+      -- La vérification dans le navigateur et ZenRows ont été retirés : on efface la clé
+      -- enregistrée et on remet les modes de connexion devenus invalides sur « auto ».
+      DELETE FROM settings WHERE key = 'zenrowsApiKey';
+      UPDATE settings SET value = '"auto"'
+        WHERE key = 'sourceConnection' AND value IN ('"real-browser"', '"zenrows"');
+    `,
+  },
+  {
+    id: 4,
+    name: 'extension-stremio',
+    sql: /* sql */ `
+      -- Identifiant IMDb d'un titre (demandé une fois à TMDB) : c'est lui qu'attend une
+      -- extension Stremio pour fournir les liens.
+      ALTER TABLE titles ADD COLUMN imdb_id TEXT;
+      -- Titres TMDB jugés introuvables d'après les dossiers du site : à revérifier (par
+      -- l'extension, ou par le site au prochain essai).
+      UPDATE titles SET source_status = 'unknown', source_note = NULL
+        WHERE origin = 'tmdb' AND source_status = 'missing';
+    `,
+  },
 ];

@@ -46,6 +46,7 @@ import type { SettingsService } from '../settings/settings.service';
 import { normalizeRemotePath, remoteBaseName, remoteParent } from '../source/remote-path';
 import type { SourceClient } from '../source/source-client';
 import type { SourceRelay } from '../source/source-relay';
+import { parseVirtualPath } from '../source/stremio/virtual-path';
 import type { Ffmpeg, ProbeResult, ProbeStream } from './ffmpeg';
 import { buildStreamArgs, buildSubtitleConvertArgs, buildSubtitleExtractArgs } from './ffmpeg-args';
 import { planPlayback, type PlaybackPlan } from './planner';
@@ -259,6 +260,7 @@ export class PlaybackService {
 
   private async resolveMedia(ref: MediaRef): Promise<ResolvedMedia> {
     if (ref.type === 'library') return this.fromLibraryRow(this.library.getRow(ref.id));
+    if (ref.type === 'episode') return this.resolveEpisode(ref.titleId, ref.season, ref.episode);
 
     const remotePath = normalizeRemotePath(ref.path);
     if (remotePath.endsWith('/')) throw new BadRequestError('Un dossier ne peut pas être lu.');
@@ -268,10 +270,20 @@ export class PlaybackService {
 
     const titleRow = this.titles.findContaining(remotePath) ?? null;
     const fileName = remoteBaseName(remotePath);
-    const ref2 =
+    const virtual = parseVirtualPath(remotePath);
+    let ref2 =
       titleRow?.kind === 'series'
         ? parseEpisode(fileName, parseSeasonFolder(remoteBaseName(remoteParent(remotePath) ?? '')))
         : null;
+    if (virtual?.season != null && virtual.episode != null) {
+      // Fichier d'extension : l'épisode demandé fait foi (le nom du fichier peut être muet).
+      const sameEpisode = ref2?.season === virtual.season && ref2.episode === virtual.episode;
+      ref2 = {
+        season: virtual.season,
+        episode: virtual.episode,
+        episodeEnd: sameEpisode ? (ref2?.episodeEnd ?? null) : null,
+      };
+    }
     return {
       // ffmpeg lit la source via le relais local (même transport que le reste de l'application).
       input: this.relay.urlFor(remotePath),
@@ -285,6 +297,29 @@ export class PlaybackService {
       episode: ref2?.episode ?? null,
       episodeEnd: ref2?.episodeEnd ?? null,
     };
+  }
+
+  /**
+   * Épisode demandé sans fichier précis (extension Stremio) : copie locale si elle existe,
+   * sinon la version préférée parmi celles que propose l'extension.
+   */
+  private async resolveEpisode(
+    titleId: number,
+    season: number,
+    episode: number,
+  ): Promise<ResolvedMedia> {
+    const local = this.library.findEpisode(titleId, season, episode);
+    if (local && fs.existsSync(local.file_path)) return this.fromLibraryRow(local);
+    const { files, notice } = await this.catalog.episodeFiles(titleId, season, episode);
+    const { preferredQuality, preferredAudioLanguage } = this.settings.get();
+    const file = pickPreferredFile(files, preferredQuality, preferredAudioLanguage);
+    if (!file) {
+      throw new NotFoundError(
+        notice ??
+          `L’extension Stremio ne propose aucun fichier pour l’épisode ${formatEpisodeCode(season, episode) ?? episode}.`,
+      );
+    }
+    return this.resolveMedia({ type: 'remote', path: file.path });
   }
 
   private fromLibraryRow(row: LibraryRow): ResolvedMedia {
@@ -451,7 +486,27 @@ export class PlaybackService {
         };
       }
     }
-    if (media.titleRow?.kind !== 'series' || !media.remotePath) return null;
+    if (media.titleRow?.kind !== 'series') return null;
+    if (this.catalog.addonMode) {
+      // Épisode suivant d'après TMDB : son fichier ne sera demandé qu'à la lecture.
+      if (media.season === null || media.episode === null) return null;
+      const next = await this.catalog.nextEpisode(
+        media.titleRow,
+        media.season,
+        media.episodeEnd ?? media.episode,
+      );
+      if (!next) return null;
+      return {
+        media: {
+          type: 'episode',
+          titleId: media.titleRow.id,
+          season: next.season,
+          episode: next.episode,
+        },
+        label: formatEpisodeCode(next.season, next.episode) ?? `Épisode ${next.episode}`,
+      };
+    }
+    if (!media.remotePath) return null;
     const structure = await this.catalog.seriesStructure(media.titleRow);
     const episodes = structure.flatMap((season) => season.episodes);
     const index = episodes.findIndex((episode) =>
@@ -758,6 +813,8 @@ export class PlaybackService {
       libraryRow = this.library.getRow(ref.id);
       mediaKey = mediaKeyForLibraryRow(libraryRow);
       remotePath = libraryRow.remote_path;
+    } else if (ref.type === 'episode') {
+      throw new BadRequestError('Choisissez une version de l’épisode pour la marquer comme vue.');
     } else {
       remotePath = normalizeRemotePath(ref.path);
       mediaKey = mediaKeyForRemote(remotePath);

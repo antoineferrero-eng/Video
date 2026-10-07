@@ -232,7 +232,12 @@ describe('bascule automatique vers l’imitation de navigateur', () => {
   beforeAll(() => {
     dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lumiere-transport-'));
     container = createContainer(
-      loadConfig({ DATA_DIR: dataDir, SOURCE_BASE_URL: baseUrl, LOG_LEVEL: 'silent' }),
+      loadConfig({
+        DATA_DIR: dataDir,
+        SOURCE_BASE_URL: baseUrl,
+        STREMIO_ADDON_URL: '',
+        LOG_LEVEL: 'silent',
+      }),
       createLogger({ level: 'silent', pretty: false }),
     );
   });
@@ -293,7 +298,12 @@ describe('relais local pour ffmpeg', () => {
   beforeAll(async () => {
     dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lumiere-relay-'));
     container = createContainer(
-      loadConfig({ DATA_DIR: dataDir, SOURCE_BASE_URL: baseUrl, LOG_LEVEL: 'silent' }),
+      loadConfig({
+        DATA_DIR: dataDir,
+        SOURCE_BASE_URL: baseUrl,
+        STREMIO_ADDON_URL: '',
+        LOG_LEVEL: 'silent',
+      }),
       createLogger({ level: 'silent', pretty: false }),
     );
     app = await buildApp(container);

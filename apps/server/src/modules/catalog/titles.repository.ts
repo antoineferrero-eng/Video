@@ -45,6 +45,7 @@ export interface TitleRow {
   source_checked_at: string | null;
   /** Dossiers essayés (JSON) quand le titre est introuvable sur la source. */
   source_note: string | null;
+  imdb_id: string | null;
 }
 
 /** Titre venu d'une liste ou d'une recherche TMDB (dossier sur la source encore inconnu). */
@@ -272,6 +273,10 @@ export class TitlesRepository {
         tmdbId: item.tmdbId,
       });
     return result.changes > 0 ? Number(result.lastInsertRowid) : null;
+  }
+
+  setImdbId(id: number, imdbId: string): void {
+    this.db.prepare('UPDATE titles SET imdb_id = ? WHERE id = ?').run(imdbId, id);
   }
 
   /** Résultat de la recherche d'un titre TMDB sur la source. */
