@@ -1,0 +1,17 @@
+{
+  "name": "@lumiere/demo-source",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Serveur d'index HTTP de démonstration (listing façon nginx + vidéos d'exemple générées avec ffmpeg).",
+  "type": "module",
+  "scripts": {
+    "generate": "tsx src/generate-media.ts",
+    "serve": "tsx src/server.ts",
+    "demo": "tsx src/run-demo.ts",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "devDependencies": {
+    "@types/node": "^22.19.0",
+    "tsx": "^4.23.15"
+  }
+}

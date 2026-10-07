@@ -1,0 +1,39 @@
+{
+  "name": "lumiere",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Lumière — parcourez, téléchargez et regardez vos films et séries depuis un index HTTP (a.111477.xyz par défaut).",
+  "type": "module",
+  "license": "UNLICENSED",
+  "workspaces": [
+    "packages/*",
+    "apps/*",
+    "tools/*"
+  ],
+  "engines": {
+    "node": ">=22.12"
+  },
+  "scripts": {
+    "dev": "node scripts/dev.mjs",
+    "build": "npm run build -w @lumiere/web && npm run build -w @lumiere/server",
+    "start": "npm run start -w @lumiere/server",
+    "test": "npm run test --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "check": "npm run typecheck && npm run lint && npm run test",
+    "demo:media": "npm run generate -w @lumiere/demo-source",
+    "demo": "npm run demo -w @lumiere/demo-source"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "eslint": "^10.12.0",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "eslint-plugin-react-refresh": "^0.5.7",
+    "globals": "^17.13.0",
+    "prettier": "^3.9.9",
+    "typescript": "~6.0.3",
+    "typescript-eslint": "^8.71.1"
+  }
+}

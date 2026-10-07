@@ -1,0 +1,27 @@
+# Dépendances
+node_modules/
+
+# Builds
+dist/
+*.tsbuildinfo
+coverage/
+
+# Données locales de l'application (base SQLite, caches, médias téléchargés)
+data/
+media/
+tools/demo-source/content/
+
+# Environnement
+.env
+.env.*
+!.env.example
+
+# Divers
+.DS_Store
+Thumbs.db
+*.log
+.vscode/*
+!.vscode/extensions.json
+.idea/
+playwright-report/
+test-results/

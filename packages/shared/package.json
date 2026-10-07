@@ -1,0 +1,13 @@
+{
+  "name": "@lumiere/shared",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Contrats d'API (types) partagés entre le serveur et l'interface web.",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json"
+  }
+}

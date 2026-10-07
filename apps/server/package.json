@@ -1,0 +1,36 @@
+{
+  "name": "@lumiere/server",
+  "version": "1.0.0",
+  "private": true,
+  "description": "API Lumière : catalogue, téléchargements, bibliothèque et streaming.",
+  "type": "module",
+  "main": "dist/main.js",
+  "scripts": {
+    "dev": "tsx watch --clear-screen=false src/main.ts",
+    "build": "node build.mjs",
+    "start": "node dist/main.js",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc -p tsconfig.json",
+    "probe": "tsx src/cli/probe-source.ts"
+  },
+  "dependencies": {
+    "@fastify/static": "^10.1.5",
+    "better-sqlite3": "^13.0.3",
+    "cheerio": "^1.2.0",
+    "domhandler": "^5.0.3",
+    "fastify": "^5.12.5",
+    "fastify-type-provider-zod": "^7.0.0",
+    "pino": "^10.4.0",
+    "pino-pretty": "^13.2.0",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@lumiere/shared": "*",
+    "@types/better-sqlite3": "^9.6.0",
+    "@types/node": "^22.19.0",
+    "esbuild": "^0.28.2",
+    "tsx": "^4.23.15",
+    "vitest": "^5.0.3"
+  }
+}

@@ -1,0 +1,8 @@
+node_modules
+dist
+data
+media
+coverage
+package-lock.json
+tools/demo-source/content
+apps/server/test/fixtures

@@ -1,0 +1,528 @@
+import {
+  CheckCircle2,
+  Cpu,
+  Database,
+  Download,
+  Globe,
+  KeyRound,
+  PlayCircle,
+  RefreshCw,
+  Save,
+  Server,
+  XCircle,
+} from 'lucide-react';
+import { useMemo, useState, type ReactNode } from 'react';
+import type { AppSettings, SettingsResponse, SettingsUpdate } from '@lumiere/shared';
+import {
+  useRefreshCatalog,
+  useSettings,
+  useSystemInfo,
+  useTestSource,
+  useTestTmdb,
+  useUpdateSettings,
+} from '../../api/queries';
+import { Badge } from '../../components/ui/Badge';
+import { Button } from '../../components/ui/Button';
+import { Field, Input, Select } from '../../components/ui/Field';
+import { PageLoader } from '../../components/ui/Spinner';
+import { ErrorState } from '../../components/ui/States';
+import { cn } from '../../lib/cn';
+import { formatBytes, formatRelativeDate } from '../../lib/format';
+
+const LANGUAGES = [
+  { value: 'fr', label: 'Français' },
+  { value: 'en', label: 'Anglais' },
+  { value: 'es', label: 'Espagnol' },
+  { value: 'de', label: 'Allemand' },
+  { value: 'it', label: 'Italien' },
+  { value: 'ja', label: 'Japonais' },
+];
+
+export function SettingsPage() {
+  const settings = useSettings();
+  if (settings.isPending) return <PageLoader />;
+  if (settings.isError)
+    return <ErrorState error={settings.error} onRetry={() => void settings.refetch()} />;
+  // Le formulaire est réinitialisé à chaque nouvelle version des paramètres enregistrés.
+  return <SettingsForm key={JSON.stringify(settings.data)} response={settings.data} />;
+}
+
+function SettingsForm({ response }: { response: SettingsResponse }) {
+  const update = useUpdateSettings();
+  const [draft, setDraft] = useState<AppSettings>(response.settings);
+  const [tmdbKey, setTmdbKey] = useState('');
+
+  const changes = useMemo(() => {
+    const patch: SettingsUpdate = {};
+    for (const key of Object.keys(draft) as Array<keyof AppSettings>) {
+      if (draft[key] !== response.settings[key])
+        (patch as Record<string, unknown>)[key] = draft[key];
+    }
+    if (tmdbKey.trim()) patch.tmdbApiKey = tmdbKey.trim();
+    return patch;
+  }, [draft, response.settings, tmdbKey]);
+  const dirty = Object.keys(changes).length > 0;
+
+  const set = <K extends keyof AppSettings>(key: K, value: AppSettings[K]) =>
+    setDraft({ ...draft, [key]: value });
+  const save = () => update.mutate(changes);
+
+  return (
+    <div className="mx-auto flex max-w-4xl flex-col gap-6 pt-2 pb-16">
+      <header>
+        <h1 className="text-3xl font-bold tracking-tight">Paramètres</h1>
+        <p className="mt-1 text-sm text-zinc-400">
+          Source des fichiers, téléchargements, lecture et métadonnées.
+        </p>
+      </header>
+
+      <Section
+        icon={<Globe />}
+        title="Source"
+        description="Index HTTP (listing de dossiers) depuis lequel les films et séries sont récupérés."
+      >
+        <Field label="Adresse de la source" description="Exemple : https://a.111477.xyz">
+          <Input
+            value={draft.sourceBaseUrl}
+            onChange={(event) => set('sourceBaseUrl', event.target.value)}
+            spellCheck={false}
+          />
+        </Field>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Field label="Dossier des films" description="Chemin relatif sur la source.">
+            <Input
+              value={draft.moviesPath}
+              onChange={(event) => set('moviesPath', event.target.value)}
+              spellCheck={false}
+            />
+          </Field>
+          <Field label="Dossier des séries">
+            <Input
+              value={draft.seriesPath}
+              onChange={(event) => set('seriesPath', event.target.value)}
+              spellCheck={false}
+            />
+          </Field>
+        </div>
+        <Field
+          label="User-Agent HTTP"
+          description="Identité envoyée à la source (un navigateur courant par défaut)."
+        >
+          <Input
+            value={draft.userAgent}
+            onChange={(event) => set('userAgent', event.target.value)}
+            spellCheck={false}
+            className="font-mono text-xs"
+          />
+        </Field>
+        <SourceTester />
+      </Section>
+
+      <Section icon={<Download />} title="Téléchargements">
+        <Field
+          label="Dossier de la bibliothèque"
+          description="Les films sont rangés dans « Films/ », les séries dans « Séries/<série>/Saison NN/ »."
+        >
+          <Input
+            value={draft.downloadDir}
+            onChange={(event) => set('downloadDir', event.target.value)}
+            spellCheck={false}
+            className="font-mono text-xs"
+          />
+        </Field>
+        <div className="grid gap-4 sm:grid-cols-3">
+          <Field label="Téléchargements simultanés">
+            <Select
+              value={draft.maxConcurrentDownloads}
+              onChange={(event) => set('maxConcurrentDownloads', Number(event.target.value))}
+            >
+              {[1, 2, 3, 4, 5, 6, 8, 10].map((value) => (
+                <option key={value} value={value}>
+                  {value}
+                </option>
+              ))}
+            </Select>
+          </Field>
+          <Field label="Limite de débit (Kio/s)" description="0 = illimité">
+            <Input
+              type="number"
+              min={0}
+              step={512}
+              value={draft.maxDownloadSpeedKbps}
+              onChange={(event) =>
+                set('maxDownloadSpeedKbps', Math.max(0, Number(event.target.value) || 0))
+              }
+            />
+          </Field>
+          <Field label="Qualité préférée" description="Utilisée pour les saisons complètes.">
+            <Select
+              value={draft.preferredQuality}
+              onChange={(event) =>
+                set('preferredQuality', event.target.value as AppSettings['preferredQuality'])
+              }
+            >
+              <option value="2160p">4K (2160p)</option>
+              <option value="1080p">Full HD (1080p)</option>
+              <option value="720p">HD (720p)</option>
+              <option value="smallest">La plus légère</option>
+            </Select>
+          </Field>
+        </div>
+      </Section>
+
+      <Section icon={<PlayCircle />} title="Lecture">
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Field
+            label="Langue audio préférée"
+            description="Sélectionnée automatiquement dans les fichiers multi-langues (MULTi)."
+          >
+            <Select
+              value={draft.preferredAudioLanguage}
+              onChange={(event) => set('preferredAudioLanguage', event.target.value)}
+            >
+              <option value="">Piste par défaut du fichier</option>
+              {LANGUAGES.map((language) => (
+                <option key={language.value} value={language.value}>
+                  {language.label}
+                </option>
+              ))}
+            </Select>
+          </Field>
+          <Field label="Sous-titres par défaut">
+            <Select
+              value={draft.preferredSubtitleLanguage}
+              onChange={(event) => set('preferredSubtitleLanguage', event.target.value)}
+            >
+              <option value="">Désactivés (sauf sous-titres forcés)</option>
+              {LANGUAGES.map((language) => (
+                <option key={language.value} value={language.value}>
+                  {language.label}
+                </option>
+              ))}
+            </Select>
+          </Field>
+          <Field
+            label="Conversion vidéo"
+            description="Utilisée quand le navigateur ne sait pas lire le fichier (HEVC, 10 bits…)."
+          >
+            <Select
+              value={draft.transcodePreset}
+              onChange={(event) =>
+                set('transcodePreset', event.target.value as AppSettings['transcodePreset'])
+              }
+            >
+              <option value="quality">Qualité maximale (plus de CPU)</option>
+              <option value="balanced">Équilibrée</option>
+              <option value="fast">Rapide (machines modestes)</option>
+            </Select>
+          </Field>
+          <Field label="Résolution maximale convertie">
+            <Select
+              value={draft.maxTranscodeHeight}
+              onChange={(event) => set('maxTranscodeHeight', Number(event.target.value))}
+            >
+              {[2160, 1440, 1080, 720, 480].map((value) => (
+                <option key={value} value={value}>
+                  {value}p
+                </option>
+              ))}
+            </Select>
+          </Field>
+        </div>
+      </Section>
+
+      <Section
+        icon={<KeyRound />}
+        title="Métadonnées (TMDB)"
+        description="Affiches, résumés, notes et titres d'épisodes proviennent de The Movie Database (clé gratuite)."
+      >
+        <div className="flex flex-wrap items-center gap-2 text-sm">
+          {response.tmdbApiKeyConfigured ? (
+            <Badge tone="success" icon={<CheckCircle2 className="size-3" />}>
+              Clé configurée{response.tmdbApiKeyFromEnv ? ' (variable d’environnement)' : ''}
+            </Badge>
+          ) : (
+            <Badge tone="warning">Aucune clé : les affiches sont générées automatiquement</Badge>
+          )}
+        </div>
+        <div className="grid gap-4 sm:grid-cols-[1fr_12rem]">
+          <Field
+            label={response.tmdbApiKeyConfigured ? 'Remplacer la clé API' : 'Clé API TMDB'}
+            description={
+              <>
+                Créez un compte sur{' '}
+                <a
+                  href="https://www.themoviedb.org/settings/api"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-brand-300 underline"
+                >
+                  themoviedb.org/settings/api
+                </a>{' '}
+                puis copiez la « clé d'API » (v3) ou le « jeton d'accès en lecture ».
+              </>
+            }
+          >
+            <Input
+              type="password"
+              value={tmdbKey}
+              onChange={(event) => setTmdbKey(event.target.value)}
+              placeholder="••••••••••••"
+              autoComplete="off"
+            />
+          </Field>
+          <Field label="Langue des métadonnées">
+            <Select
+              value={draft.metadataLanguage}
+              onChange={(event) => set('metadataLanguage', event.target.value)}
+            >
+              <option value="fr-FR">Français</option>
+              <option value="en-US">Anglais</option>
+              <option value="es-ES">Espagnol</option>
+              <option value="de-DE">Allemand</option>
+              <option value="it-IT">Italien</option>
+            </Select>
+          </Field>
+        </div>
+        <TmdbTester candidate={tmdbKey} />
+      </Section>
+
+      <CatalogSection
+        refreshHours={draft.catalogRefreshHours}
+        onRefreshHours={(value) => set('catalogRefreshHours', value)}
+      />
+      <SystemSection />
+
+      <div
+        className={cn(
+          'fixed inset-x-0 bottom-20 z-40 mx-auto flex w-[min(92vw,40rem)] items-center justify-between gap-4 rounded-2xl border border-brand-400/25 bg-ink-850/95 px-5 py-3 shadow-2xl backdrop-blur-xl transition lg:bottom-6 lg:left-64',
+          dirty ? 'translate-y-0 opacity-100' : 'pointer-events-none translate-y-6 opacity-0',
+        )}
+      >
+        <span className="text-sm text-zinc-300">Modifications non enregistrées</span>
+        <div className="flex gap-2">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => {
+              setDraft(response.settings);
+              setTmdbKey('');
+            }}
+          >
+            Annuler
+          </Button>
+          <Button
+            variant="primary"
+            size="sm"
+            icon={<Save className="size-4" />}
+            loading={update.isPending}
+            onClick={save}
+          >
+            Enregistrer
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Section({
+  icon,
+  title,
+  description,
+  children,
+}: {
+  icon: ReactNode;
+  title: string;
+  description?: string;
+  children: ReactNode;
+}) {
+  return (
+    <section className="surface flex flex-col gap-5 p-5 sm:p-6">
+      <div className="flex items-start gap-3">
+        <div className="rounded-xl bg-brand-400/10 p-2 text-brand-300 [&>svg]:size-5">{icon}</div>
+        <div>
+          <h2 className="text-lg font-semibold">{title}</h2>
+          {description && <p className="text-sm text-zinc-400">{description}</p>}
+        </div>
+      </div>
+      {children}
+    </section>
+  );
+}
+
+function SourceTester() {
+  const test = useTestSource();
+  const result = test.data;
+  return (
+    <div className="flex flex-col gap-3 rounded-xl bg-white/[0.03] p-4">
+      <div className="flex flex-wrap items-center gap-3">
+        <Button
+          size="sm"
+          icon={<Server className="size-4" />}
+          loading={test.isPending}
+          onClick={() => test.mutate(undefined)}
+        >
+          Tester la source enregistrée
+        </Button>
+        {result && (
+          <span
+            className={cn(
+              'flex items-center gap-1.5 text-sm',
+              result.ok ? 'text-emerald-300' : 'text-red-300',
+            )}
+          >
+            {result.ok ? <CheckCircle2 className="size-4" /> : <XCircle className="size-4" />}
+            {result.ok
+              ? `Source joignable · ${result.directories} dossier(s), ${result.files} fichier(s) · format ${result.format} · ${result.durationMs} ms`
+              : (result.error ?? 'Échec')}
+          </span>
+        )}
+      </div>
+      {result?.ok && result.sample.length > 0 && (
+        <ul className="grid gap-1 font-mono text-xs text-zinc-400 sm:grid-cols-2">
+          {result.sample.map((entry) => (
+            <li key={entry.path} className="truncate">
+              {entry.kind === 'directory' ? '📁' : '📄'} {entry.name}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+function TmdbTester({ candidate }: { candidate: string }) {
+  const test = useTestTmdb();
+  return (
+    <div className="flex flex-wrap items-center gap-3">
+      <Button
+        size="sm"
+        loading={test.isPending}
+        onClick={() => test.mutate(candidate.trim() || undefined)}
+      >
+        Tester la clé
+      </Button>
+      {test.data && (
+        <span
+          className={cn(
+            'flex items-center gap-1.5 text-sm',
+            test.data.ok ? 'text-emerald-300' : 'text-red-300',
+          )}
+        >
+          {test.data.ok ? <CheckCircle2 className="size-4" /> : <XCircle className="size-4" />}
+          {test.data.message}
+        </span>
+      )}
+    </div>
+  );
+}
+
+function CatalogSection({
+  refreshHours,
+  onRefreshHours,
+}: {
+  refreshHours: number;
+  onRefreshHours: (value: number) => void;
+}) {
+  const system = useSystemInfo();
+  const refresh = useRefreshCatalog();
+  return (
+    <Section
+      icon={<Database />}
+      title="Catalogue"
+      description="Liste des titres lue sur la source et mise en cache localement."
+    >
+      <div className="grid gap-3 sm:grid-cols-2">
+        {system.data?.catalog.map((section) => (
+          <div key={section.kind} className="rounded-xl bg-white/[0.03] p-4 text-sm">
+            <div className="flex items-center justify-between">
+              <span className="font-semibold">{section.kind === 'movie' ? 'Films' : 'Séries'}</span>
+              <Badge
+                tone={
+                  section.state === 'error'
+                    ? 'danger'
+                    : section.state === 'refreshing'
+                      ? 'brand'
+                      : 'success'
+                }
+              >
+                {section.state === 'error'
+                  ? 'Erreur'
+                  : section.state === 'refreshing'
+                    ? 'Actualisation…'
+                    : `${section.count} titres`}
+              </Badge>
+            </div>
+            <p className="mt-1 font-mono text-xs text-zinc-500">{section.path}</p>
+            <p className="mt-1 text-xs text-zinc-400">
+              {section.lastRefreshAt
+                ? `Actualisé ${formatRelativeDate(section.lastRefreshAt)}`
+                : 'Jamais actualisé'}
+            </p>
+            {section.lastError && <p className="mt-1 text-xs text-red-300">{section.lastError}</p>}
+          </div>
+        ))}
+      </div>
+      <div className="flex flex-wrap items-end gap-4">
+        <Field label="Actualisation automatique" className="w-56">
+          <Select
+            value={refreshHours}
+            onChange={(event) => onRefreshHours(Number(event.target.value))}
+          >
+            <option value={0}>Manuelle uniquement</option>
+            {[1, 3, 6, 12, 24, 48].map((value) => (
+              <option key={value} value={value}>
+                Toutes les {value} h
+              </option>
+            ))}
+          </Select>
+        </Field>
+        <Button
+          icon={<RefreshCw className="size-4" />}
+          loading={refresh.isPending}
+          onClick={() => refresh.mutate(undefined)}
+        >
+          Actualiser maintenant
+        </Button>
+      </div>
+    </Section>
+  );
+}
+
+function SystemSection() {
+  const system = useSystemInfo();
+  const info = system.data;
+  if (!info) return null;
+  const rows: Array<[string, ReactNode]> = [
+    ['Version', info.version],
+    ['Node.js', `${info.nodeVersion} (${info.platform})`],
+    [
+      'ffmpeg',
+      info.ffmpeg.available && info.ffmpeg.ffprobeAvailable ? (
+        <span className="text-emerald-300">Disponible ({info.ffmpeg.version})</span>
+      ) : (
+        <span className="text-amber-300">
+          Introuvable : installez ffmpeg pour lire tous les formats
+        </span>
+      ),
+    ],
+    [
+      'Espace disque',
+      info.disk ? `${formatBytes(info.disk.free)} libres sur ${formatBytes(info.disk.total)}` : '—',
+    ],
+    ['Données', <span className="font-mono text-xs">{info.dataDir}</span>],
+  ];
+  return (
+    <Section icon={<Cpu />} title="Système">
+      <dl className="grid gap-x-6 gap-y-3 text-sm sm:grid-cols-[10rem_1fr]">
+        {rows.map(([label, value]) => (
+          <div key={label} className="contents">
+            <dt className="text-zinc-500">{label}</dt>
+            <dd className="text-zinc-200">{value}</dd>
+          </div>
+        ))}
+      </dl>
+    </Section>
+  );
+}
