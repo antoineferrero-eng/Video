@@ -1,4 +1,12 @@
-import type { CatalogSectionStatus, CatalogSort, MetadataStatus, TitleKind } from '@lumiere/shared';
+import type {
+  CatalogMode,
+  CatalogSectionStatus,
+  CatalogSort,
+  MetadataStatus,
+  SourceStatus,
+  TitleKind,
+} from '@lumiere/shared';
+import { normalizeText as normalizeSearch, sortKey as sortKeyOf } from '../../core/text';
 import { scalar, transaction, type Db, type SqlParams } from '../../infra/database/database';
 
 export interface TitleRow {
@@ -31,6 +39,32 @@ export interface TitleRow {
   genres: string | null;
   runtime: number | null;
   release_date: string | null;
+  /** `listing` : vu dans la liste de la source ; `tmdb` : venu de TMDB. */
+  origin: 'listing' | 'tmdb';
+  source_status: SourceStatus;
+  source_checked_at: string | null;
+  /** Dossiers essayés (JSON) quand le titre est introuvable sur la source. */
+  source_note: string | null;
+}
+
+/** Titre venu d'une liste ou d'une recherche TMDB (dossier sur la source encore inconnu). */
+export interface TmdbTitleUpsert {
+  kind: TitleKind;
+  tmdbId: number;
+  title: string;
+  originalTitle: string | null;
+  year: number | null;
+  releaseDate: string | null;
+  overview: string | null;
+  posterPath: string | null;
+  backdropPath: string | null;
+  rating: number | null;
+  voteCount: number | null;
+  genres: string[];
+  language: string;
+  /** Dossier le plus probable, en attendant de le chercher sur la source. */
+  remotePath: string;
+  folderName: string;
 }
 
 export interface TitleUpsert {
@@ -133,7 +167,9 @@ export class TitlesRepository {
         sort_key = excluded.sort_key,
         remote_modified_at = excluded.remote_modified_at,
         remote_size = excluded.remote_size,
-        last_seen_at = excluded.last_seen_at
+        last_seen_at = excluded.last_seen_at,
+        origin = 'listing',
+        source_status = 'present'
     `);
     return transaction(this.db, () => {
       for (const item of items) {
@@ -151,12 +187,135 @@ export class TitlesRepository {
           seenAt,
         });
       }
+      // Seuls les titres issus de la liste disparaissent avec elle (pas ceux venus de TMDB).
       const removed = Number(
-        this.db.prepare('DELETE FROM titles WHERE kind = ? AND last_seen_at < ?').run(kind, seenAt)
-          .changes,
+        this.db
+          .prepare(`DELETE FROM titles WHERE kind = ? AND last_seen_at < ? AND origin = 'listing'`)
+          .run(kind, seenAt).changes,
       );
       const total = scalar<number>(this.db, 'SELECT COUNT(*) FROM titles WHERE kind = ?', kind);
       return { total, removed };
+    });
+  }
+
+  findByTmdbId(kind: TitleKind, tmdbId: number): TitleRow | undefined {
+    return this.db
+      .prepare('SELECT * FROM titles WHERE kind = ? AND tmdb_id = ? ORDER BY origin = ? LIMIT 1')
+      .get(kind, tmdbId, 'tmdb') as TitleRow | undefined;
+  }
+
+  findByRemotePath(remotePath: string): TitleRow | undefined {
+    return this.db.prepare('SELECT * FROM titles WHERE remote_path = ?').get(remotePath) as
+      TitleRow | undefined;
+  }
+
+  count(kind: TitleKind): number {
+    return scalar<number>(this.db, 'SELECT COUNT(*) FROM titles WHERE kind = ?', kind);
+  }
+
+  /**
+   * Ajoute un titre venu de TMDB, ou actualise ses informations s'il est déjà connu.
+   * Renvoie son identifiant (null si le dossier supposé appartient déjà à un autre titre).
+   */
+  upsertTmdb(item: TmdbTitleUpsert): number | null {
+    const now = new Date().toISOString();
+    const existing = this.findByTmdbId(item.kind, item.tmdbId);
+    const searchText = normalizeSearch(`${item.title} ${item.originalTitle ?? ''}`);
+    const params = {
+      title: item.title,
+      originalTitle: item.originalTitle,
+      year: item.year,
+      releaseDate: item.releaseDate,
+      overview: item.overview,
+      posterPath: item.posterPath,
+      backdropPath: item.backdropPath,
+      rating: item.rating,
+      voteCount: item.voteCount,
+      genres: JSON.stringify(item.genres),
+      searchText,
+      now,
+    };
+    if (existing) {
+      // Informations des listes TMDB : sans écraser le dossier trouvé ni les détails complets.
+      this.db
+        .prepare(
+          `UPDATE titles SET
+             tmdb_title = COALESCE(tmdb_title, @title), original_title = COALESCE(original_title, @originalTitle),
+             overview = COALESCE(overview, @overview), poster_path = COALESCE(poster_path, @posterPath),
+             backdrop_path = COALESCE(backdrop_path, @backdropPath), rating = @rating, vote_count = @voteCount,
+             meta_search_text = COALESCE(meta_search_text, @searchText), last_seen_at = @now
+           WHERE id = @id`,
+        )
+        .run({ ...params, id: existing.id });
+      return existing.id;
+    }
+    const result = this.db
+      .prepare(
+        `INSERT INTO titles (kind, remote_path, folder_name, is_file, parsed_title, year, search_text,
+                             meta_search_text, sort_key, remote_modified_at, first_seen_at, last_seen_at,
+                             metadata_status, metadata_language, metadata_updated_at, tmdb_id, tmdb_title,
+                             original_title, overview, poster_path, backdrop_path, rating, vote_count, genres,
+                             release_date, origin, source_status)
+         VALUES (@kind, @remotePath, @folderName, 0, @title, @year, @searchText, @searchText, @sortKey,
+                 @releaseDate, @now, @now, 'pending', @language, @now, @tmdbId, @title, @originalTitle,
+                 @overview, @posterPath, @backdropPath, @rating, @voteCount, @genres, @releaseDate,
+                 'tmdb', 'unknown')
+         ON CONFLICT (remote_path) DO NOTHING`,
+      )
+      .run({
+        ...params,
+        kind: item.kind,
+        remotePath: item.remotePath,
+        folderName: item.folderName,
+        sortKey: sortKeyOf(item.title),
+        language: item.language,
+        tmdbId: item.tmdbId,
+      });
+    return result.changes > 0 ? Number(result.lastInsertRowid) : null;
+  }
+
+  /** Résultat de la recherche d'un titre TMDB sur la source. */
+  setSource(
+    id: number,
+    update: {
+      status: SourceStatus;
+      remotePath?: string;
+      folderName?: string;
+      note?: string | null;
+    },
+  ): void {
+    this.db
+      .prepare(
+        `UPDATE titles SET source_status = @status, source_checked_at = @checkedAt, source_note = @note,
+           remote_path = COALESCE(@remotePath, remote_path), folder_name = COALESCE(@folderName, folder_name)
+         WHERE id = @id`,
+      )
+      .run({
+        id,
+        status: update.status,
+        checkedAt: new Date().toISOString(),
+        note: update.note ?? null,
+        remotePath: update.remotePath ?? null,
+        folderName: update.folderName ?? null,
+      });
+  }
+
+  /** Rattache les informations TMDB d'un titre à un autre (même dossier sur la source). */
+  mergeInto(fromId: number, intoId: number): void {
+    transaction(this.db, () => {
+      this.db
+        .prepare(
+          `UPDATE titles SET
+             (tmdb_id, tmdb_title, original_title, overview, tagline, poster_path, backdrop_path, rating,
+              vote_count, genres, runtime, release_date, meta_search_text, metadata_status, metadata_language,
+              metadata_updated_at) =
+             (SELECT tmdb_id, tmdb_title, original_title, overview, tagline, poster_path, backdrop_path, rating,
+                     vote_count, genres, runtime, release_date, meta_search_text, metadata_status,
+                     metadata_language, metadata_updated_at FROM titles WHERE id = @fromId)
+           WHERE id = @intoId`,
+        )
+        .run({ fromId, intoId });
+      this.db.prepare('DELETE FROM titles WHERE id = ?').run(fromId);
     });
   }
 
@@ -280,6 +439,8 @@ interface SectionRow {
   item_count: number;
   last_refresh_at: string | null;
   last_error: string | null;
+  mode: CatalogMode;
+  note: string | null;
 }
 
 export class CatalogSectionsRepository {
@@ -296,6 +457,8 @@ export class CatalogSectionsRepository {
         count: 0,
         lastRefreshAt: null,
         lastError: null,
+        mode: 'listing',
+        note: null,
       };
     }
     return {
@@ -305,17 +468,19 @@ export class CatalogSectionsRepository {
       count: row.item_count,
       lastRefreshAt: row.last_refresh_at,
       lastError: row.last_error,
+      mode: row.mode,
+      note: row.note,
     };
   }
 
   save(status: CatalogSectionStatus): void {
     this.db
       .prepare(
-        `INSERT INTO catalog_sections (kind, path, state, item_count, last_refresh_at, last_error)
-         VALUES (@kind, @path, @state, @count, @lastRefreshAt, @lastError)
+        `INSERT INTO catalog_sections (kind, path, state, item_count, last_refresh_at, last_error, mode, note)
+         VALUES (@kind, @path, @state, @count, @lastRefreshAt, @lastError, @mode, @note)
          ON CONFLICT (kind) DO UPDATE SET path = excluded.path, state = excluded.state,
            item_count = excluded.item_count, last_refresh_at = excluded.last_refresh_at,
-           last_error = excluded.last_error`,
+           last_error = excluded.last_error, mode = excluded.mode, note = excluded.note`,
       )
       .run(status);
   }

@@ -15,6 +15,7 @@ import {
 import { useMemo, useState, type ReactNode } from 'react';
 import type {
   AppSettings,
+  CatalogSource,
   SettingsResponse,
   SettingsUpdate,
   SourceConnection,
@@ -363,6 +364,8 @@ function SettingsForm({ response }: { response: SettingsResponse }) {
       <CatalogSection
         refreshHours={draft.catalogRefreshHours}
         onRefreshHours={(value) => set('catalogRefreshHours', value)}
+        catalogSource={draft.catalogSource}
+        onCatalogSource={(value) => set('catalogSource', value)}
       />
       <SystemSection />
 
@@ -666,12 +669,36 @@ function TmdbTester({ candidate }: { candidate: string }) {
   );
 }
 
+const CATALOG_SOURCES: Array<{ value: CatalogSource; label: string; description: string }> = [
+  {
+    value: 'auto',
+    label: 'Automatique (recommandé)',
+    description:
+      'Liste complète de la source si elle est lisible ; sinon films et séries de TMDB, cherchés sur la source à l’ouverture de leur fiche.',
+  },
+  {
+    value: 'listing',
+    label: 'Liste complète de la source',
+    description: 'Le catalogue reflète exactement les dossiers /movies/ et /tvs/ de la source.',
+  },
+  {
+    value: 'tmdb',
+    label: 'TMDB (recherche à la demande)',
+    description:
+      'Tendances, titres populaires et recherche viennent de TMDB ; le dossier de chaque titre est cherché sur la source quand vous ouvrez sa fiche (clé TMDB requise).',
+  },
+];
+
 function CatalogSection({
   refreshHours,
   onRefreshHours,
+  catalogSource,
+  onCatalogSource,
 }: {
   refreshHours: number;
   onRefreshHours: (value: number) => void;
+  catalogSource: CatalogSource;
+  onCatalogSource: (value: CatalogSource) => void;
 }) {
   const system = useSystemInfo();
   const refresh = useRefreshCatalog();
@@ -687,21 +714,24 @@ function CatalogSection({
           <div key={section.kind} className="rounded-[1rem] bg-white/[0.05] p-4 text-sm">
             <div className="flex items-center justify-between">
               <span className="font-semibold">{section.kind === 'movie' ? 'Films' : 'Séries'}</span>
-              <Badge
-                tone={
-                  section.state === 'error'
-                    ? 'danger'
+              <div className="flex items-center gap-1.5">
+                {section.mode === 'tmdb' && <Badge tone="info">TMDB</Badge>}
+                <Badge
+                  tone={
+                    section.state === 'error'
+                      ? 'danger'
+                      : section.state === 'refreshing'
+                        ? 'brand'
+                        : 'success'
+                  }
+                >
+                  {section.state === 'error'
+                    ? 'Erreur'
                     : section.state === 'refreshing'
-                      ? 'brand'
-                      : 'success'
-                }
-              >
-                {section.state === 'error'
-                  ? 'Erreur'
-                  : section.state === 'refreshing'
-                    ? 'Actualisation…'
-                    : `${section.count} titres`}
-              </Badge>
+                      ? 'Actualisation…'
+                      : `${section.count} titres`}
+                </Badge>
+              </div>
             </div>
             <p className="mt-1 font-mono text-xs text-zinc-400">{section.path}</p>
             <p className="mt-1 text-xs text-zinc-400">
@@ -710,9 +740,27 @@ function CatalogSection({
                 : 'Jamais actualisé'}
             </p>
             {section.lastError && <p className="mt-1 text-xs text-red-300">{section.lastError}</p>}
+            {section.note && (
+              <p className="mt-1 text-xs leading-relaxed text-zinc-400">{section.note}</p>
+            )}
           </div>
         ))}
       </div>
+      <Field
+        label="Source du catalogue"
+        description={CATALOG_SOURCES.find((item) => item.value === catalogSource)?.description}
+      >
+        <Select
+          value={catalogSource}
+          onChange={(event) => onCatalogSource(event.target.value as CatalogSource)}
+        >
+          {CATALOG_SOURCES.map((item) => (
+            <option key={item.value} value={item.value}>
+              {item.label}
+            </option>
+          ))}
+        </Select>
+      </Field>
       <div className="flex flex-wrap items-end gap-4">
         <Field label="Actualisation automatique" className="w-56">
           <Select

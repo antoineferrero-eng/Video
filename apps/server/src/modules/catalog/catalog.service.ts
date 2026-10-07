@@ -1,4 +1,5 @@
 import type {
+  CatalogMode,
   CatalogQuery,
   CatalogSectionStatus,
   EpisodeEntry,
@@ -41,6 +42,8 @@ import {
   type GroupedEpisode,
   type GroupedSeason,
 } from './series-structure';
+import type { SourceResolver } from './source-resolver';
+import type { TmdbCatalog } from './tmdb-catalog';
 import type {
   CatalogSectionsRepository,
   TitleRow,
@@ -66,15 +69,32 @@ export class CatalogService {
     private readonly availability: AvailabilityService,
     private readonly events: EventBus,
     private readonly logger: Logger,
+    private readonly tmdbCatalog: TmdbCatalog,
+    private readonly resolver: SourceResolver,
   ) {
     sections.resetInterrupted();
     settings.onChange((next, previous) => {
-      const sourceChanged = next.sourceBaseUrl !== previous.sourceBaseUrl;
+      const sourceChanged =
+        next.sourceBaseUrl !== previous.sourceBaseUrl ||
+        next.catalogSource !== previous.catalogSource;
       if (sourceChanged || next.moviesPath !== previous.moviesPath)
         this.refreshInBackground('movie');
       if (sourceChanged || next.seriesPath !== previous.seriesPath)
         this.refreshInBackground('series');
     });
+  }
+
+  /**
+   * Le catalogue vient-il de TMDB (choisi, ou repli automatique quand la liste complète de
+   * la source est illisible) ? La recherche interroge alors aussi TMDB.
+   */
+  tmdbActive(kind?: TitleKind): boolean {
+    if (!this.metadata.isEnabled()) return false;
+    const source = this.settings.get().catalogSource;
+    if (source !== 'auto') return source === 'tmdb';
+    return KINDS.filter((item) => !kind || item === kind).some(
+      (item) => this.status(item).mode === 'tmdb',
+    );
   }
 
   // -------------------------------------------------------------------------
@@ -147,6 +167,74 @@ export class CatalogService {
       type: 'catalog.updated',
       status: { ...previous, path, state: 'refreshing' },
     });
+    const source = this.settings.get().catalogSource;
+    if (source === 'tmdb') return this.refreshFromTmdb(kind, path, previous, null);
+    try {
+      return await this.refreshFromListing(kind, path, previous);
+    } catch (error) {
+      // Repli : la liste complète est illisible (trop volumineuse, bloquée…) → TMDB.
+      if (source === 'auto' && this.metadata.isEnabled())
+        return this.refreshFromTmdb(kind, path, previous, error);
+      throw error;
+    }
+  }
+
+  private async refreshFromTmdb(
+    kind: TitleKind,
+    path: string,
+    previous: CatalogSectionStatus,
+    listingError: unknown,
+  ): Promise<CatalogSectionStatus> {
+    const started = Date.now();
+    const mode: CatalogMode = 'tmdb';
+    try {
+      if (!this.metadata.isEnabled()) {
+        throw new Error(
+          'Le catalogue TMDB nécessite une clé TMDB (Paramètres → Métadonnées), gratuite.',
+        );
+      }
+      const seen = await this.tmdbCatalog.importLists(kind);
+      const reason = listingError
+        ? `La liste complète de ${path} n’a pas pu être lue (${errorMessage(listingError).slice(0, 180)}). `
+        : '';
+      const status: CatalogSectionStatus = {
+        kind,
+        path,
+        state: 'idle',
+        count: this.titles.count(kind),
+        lastRefreshAt: new Date().toISOString(),
+        lastError: null,
+        mode,
+        note: `${reason}Catalogue issu de TMDB : chaque titre est cherché sur la source à l’ouverture de sa fiche.`,
+      };
+      this.sections.save(status);
+      this.events.publish({ type: 'catalog.updated', status });
+      this.metadata.kick();
+      this.logger.info(
+        { kind, seen, total: status.count, ms: Date.now() - started },
+        'Catalogue TMDB actualisé',
+      );
+      return status;
+    } catch (error) {
+      const status: CatalogSectionStatus = {
+        ...previous,
+        path,
+        state: 'error',
+        lastError: errorMessage(error),
+        mode,
+        note: null,
+      };
+      this.sections.save(status);
+      this.events.publish({ type: 'catalog.updated', status });
+      throw error;
+    }
+  }
+
+  private async refreshFromListing(
+    kind: TitleKind,
+    path: string,
+    previous: CatalogSectionStatus,
+  ): Promise<CatalogSectionStatus> {
     const started = Date.now();
     try {
       const listing = await this.source.list(path, { force: true });
@@ -167,6 +255,8 @@ export class CatalogService {
         count: total,
         lastRefreshAt: seenAt,
         lastError: null,
+        mode: 'listing',
+        note: null,
       };
       this.sections.save(status);
       this.events.publish({ type: 'catalog.updated', status });
@@ -182,9 +272,13 @@ export class CatalogService {
         path,
         state: 'error',
         lastError: errorMessage(error),
+        mode: 'listing',
+        note: null,
       };
-      this.sections.save(status);
-      this.events.publish({ type: 'catalog.updated', status });
+      if (this.settings.get().catalogSource === 'listing' || !this.metadata.isEnabled()) {
+        this.sections.save(status);
+        this.events.publish({ type: 'catalog.updated', status });
+      }
       throw error;
     }
   }
@@ -228,7 +322,16 @@ export class CatalogService {
     return rows.map((row) => toTitleSummary(row, enabled, counts.get(row.id) ?? 0));
   }
 
-  search(query: CatalogQuery): Page<TitleSummary> {
+  async search(query: CatalogQuery): Promise<Page<TitleSummary>> {
+    const text = query.q?.trim() ?? '';
+    if (text.length >= 2 && (query.page ?? 1) === 1 && this.tmdbActive(query.kind)) {
+      // Catalogue TMDB : la recherche couvre tous les films et séries, pas seulement les listes.
+      await this.tmdbCatalog
+        .search(text, query.kind)
+        .catch((error) =>
+          this.logger.warn({ err: errorMessage(error), query: text }, 'Recherche TMDB impossible'),
+        );
+    }
     const page = Math.max(1, query.page ?? 1);
     const pageSize = Math.min(100, Math.max(1, query.pageSize ?? 40));
     const { rows, total } = this.titles.search({
@@ -270,7 +373,8 @@ export class CatalogService {
   }
 
   async details(id: number): Promise<TitleDetails> {
-    const row = await this.metadata.ensure(this.getRow(id));
+    // Titre venu de TMDB : son dossier est cherché sur la source à la première ouverture.
+    const row = await this.resolver.ensure(await this.metadata.ensure(this.getRow(id)));
     const enabled = this.metadata.isEnabled();
     const [summary] = this.summaries([row]);
     const base: TitleDetails = {
@@ -285,7 +389,9 @@ export class CatalogService {
       files: [],
       subtitles: [],
       seasons: [],
+      sourceTried: [],
     };
+    if (row.source_status === 'missing') return { ...base, sourceTried: parseTried(row) };
     if (row.kind === 'movie') {
       const { files, subtitles } = await this.movieFiles(row);
       return { ...base, files, subtitles };
@@ -408,6 +514,15 @@ export class CatalogService {
         ),
       };
     });
+  }
+}
+
+function parseTried(row: TitleRow): string[] {
+  try {
+    const value = JSON.parse(row.source_note ?? '[]') as unknown;
+    return Array.isArray(value) ? value.filter((item) => typeof item === 'string') : [];
+  } catch {
+    return [];
   }
 }
 

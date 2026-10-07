@@ -9,6 +9,15 @@ export type CatalogSort = 'recent' | 'title' | 'year' | 'rating';
 /** État de la récupération des métadonnées (TMDB) d'un titre. */
 export type MetadataStatus = 'pending' | 'matched' | 'not_found' | 'disabled' | 'error';
 
+/**
+ * Présence d'un titre sur la source : vu dans la liste ou retrouvé (`present`), venu de TMDB
+ * et pas encore cherché (`unknown`), ou cherché sans succès (`missing`).
+ */
+export type SourceStatus = 'present' | 'unknown' | 'missing';
+
+/** Origine du catalogue : liste complète de la source, ou TMDB (dossier cherché à la demande). */
+export type CatalogMode = 'listing' | 'tmdb';
+
 /** Informations techniques déduites du nom de fichier d'une release. */
 export interface ReleaseInfo {
   resolution: string | null;
@@ -74,6 +83,7 @@ export interface TitleSummary {
   addedAt: string | null;
   /** Nombre de fichiers déjà présents dans la bibliothèque locale. */
   libraryCount: number;
+  sourceStatus: SourceStatus;
 }
 
 export interface EpisodeEntry {
@@ -113,6 +123,8 @@ export interface TitleDetails extends TitleSummary {
   subtitles: RemoteSubtitle[];
   /** Saisons et épisodes (séries uniquement). */
   seasons: SeasonEntry[];
+  /** Dossiers essayés sur la source quand le titre y est introuvable. */
+  sourceTried: string[];
 }
 
 export interface CatalogQuery {
@@ -141,6 +153,10 @@ export interface CatalogSectionStatus {
   count: number;
   lastRefreshAt: string | null;
   lastError: string | null;
+  /** D'où vient le catalogue de cette section. */
+  mode: CatalogMode;
+  /** Explication à afficher (par ex. pourquoi le catalogue vient de TMDB). */
+  note: string | null;
 }
 
 export interface HomeFeed {

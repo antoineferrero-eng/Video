@@ -24,6 +24,7 @@ const SettingsUpdateSchema = z
     preferredAudioLanguage: LanguageCode,
     preferredSubtitleLanguage: LanguageCode,
     catalogRefreshHours: z.number().int().min(0).max(720),
+    catalogSource: z.enum(['auto', 'listing', 'tmdb']),
     transcodePreset: z.enum(['quality', 'balanced', 'fast']),
     maxTranscodeHeight: z.union([
       z.literal(2160),

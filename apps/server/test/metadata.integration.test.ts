@@ -200,7 +200,7 @@ describe('enrichissement TMDB', () => {
   });
 
   it('récupère les métadonnées d’un film (titre localisé, genres, affiche)', async () => {
-    const [title] = container.catalog.search({ kind: 'movie', q: 'matrix' }).items;
+    const [title] = (await container.catalog.search({ kind: 'movie', q: 'matrix' })).items;
     const details = await container.catalog.details(title!.id);
     expect(details).toMatchObject({
       title: 'Matrix',
@@ -214,19 +214,19 @@ describe('enrichissement TMDB', () => {
       posterUrl: '/api/images/w342/matrix.jpg',
     });
     // La recherche fonctionne aussi sur le titre TMDB.
-    expect(container.catalog.search({ q: 'monde reel' }).items).toHaveLength(0);
-    expect(container.catalog.search({ q: 'matrix' }).items[0]?.title).toBe('Matrix');
+    expect((await container.catalog.search({ q: 'monde reel' })).items).toHaveLength(0);
+    expect((await container.catalog.search({ q: 'matrix' })).items[0]?.title).toBe('Matrix');
   });
 
   it('marque « introuvable » un titre sans correspondance', async () => {
-    const [title] = container.catalog.search({ kind: 'movie', q: 'inconnu' }).items;
+    const [title] = (await container.catalog.search({ kind: 'movie', q: 'inconnu' })).items;
     const details = await container.catalog.details(title!.id);
     expect(details.metadataStatus).toBe('not_found');
     expect(details.posterUrl).toBeNull();
   });
 
   it('enrichit les épisodes d’une série et met les images en cache', async () => {
-    const [series] = container.catalog.search({ kind: 'series' }).items;
+    const [series] = (await container.catalog.search({ kind: 'series' })).items;
     const details = await container.catalog.details(series!.id);
     expect(details.title).toBe('Dark');
     expect(details.seasons[0]).toMatchObject({ name: 'Saison 1', overview: 'Winden, 2019.' });

@@ -16,6 +16,8 @@ interface DemoTitle {
   id: number;
   kind: 'movie' | 'tv';
   title: string;
+  /** Titre anglais (requêtes en en-US), s'il diffère du titre affiché. */
+  englishTitle?: string;
   originalTitle: string;
   date: string;
   overview: string;
@@ -99,6 +101,22 @@ export const DEMO_TITLES: DemoTitle[] = [
     colors: ['0x7c2d12', '0xfde68a'],
   },
   {
+    // Présent sur TMDB mais absent de la source : « Introuvable sur la source ».
+    id: 1006,
+    kind: 'movie',
+    title: 'L’Éclipse oubliée',
+    englishTitle: 'The Forgotten Eclipse',
+    originalTitle: 'The Forgotten Eclipse',
+    date: '2024-10-02',
+    overview:
+      'Une astronome amateur photographie une éclipse que personne d’autre n’a vue. Les archives, elles, gardent la trace d’une autre, survenue cent ans plus tôt jour pour jour.',
+    tagline: 'Le ciel se souvient.',
+    genres: ['Mystère', 'Science-Fiction'],
+    runtime: 104,
+    rating: 6.9,
+    colors: ['0x0c0a09', '0xf59e0b'],
+  },
+  {
     id: 2001,
     kind: 'tv',
     title: 'Les Explorateurs',
@@ -163,11 +181,20 @@ const normalize = (text: string) =>
     .replace(/[^a-z0-9]+/g, ' ')
     .trim();
 
+/** Genres numérotés une fois pour toutes (comme `/genre/movie/list`). */
+const GENRE_IDS = new Map(
+  [...new Set(DEMO_TITLES.flatMap((title) => title.genres))].map((name, index) => [
+    name,
+    100 + index,
+  ]),
+);
+
 function genres(title: DemoTitle) {
-  return title.genres.map((name, index) => ({ id: title.id * 10 + index, name }));
+  return title.genres.map((name) => ({ id: GENRE_IDS.get(name) ?? 0, name }));
 }
 
-function summary(title: DemoTitle) {
+function summary(title: DemoTitle, language = 'fr-FR') {
+  const shown = language.startsWith('en') && title.englishTitle ? title.englishTitle : title.title;
   const common = {
     id: title.id,
     overview: title.overview,
@@ -176,24 +203,25 @@ function summary(title: DemoTitle) {
     vote_average: title.rating,
     vote_count: 1000 + title.id,
     popularity: 50,
+    genre_ids: title.genres.map((name) => GENRE_IDS.get(name) ?? 0),
   };
   return title.kind === 'movie'
     ? {
         ...common,
-        title: title.title,
+        title: shown,
         original_title: title.originalTitle,
         release_date: title.date,
       }
     : {
         ...common,
-        name: title.title,
+        name: shown,
         original_name: title.originalTitle,
         first_air_date: title.date,
       };
 }
 
-function details(title: DemoTitle) {
-  const base = { ...summary(title), tagline: title.tagline, genres: genres(title) };
+function details(title: DemoTitle, language: string) {
+  const base = { ...summary(title, language), tagline: title.tagline, genres: genres(title) };
   return title.kind === 'movie'
     ? { ...base, runtime: title.runtime }
     : { ...base, episode_run_time: [title.runtime] };
@@ -268,8 +296,30 @@ export function handleFakeTmdb(
         (normalize(title.title).includes(query) ||
           normalize(title.originalTitle).includes(query)) &&
         (!year || title.date.startsWith(year)),
-    ).map(summary);
+    ).map((title) => summary(title, url.searchParams.get('language') ?? 'fr-FR'));
     send(response, 200, { page: 1, results, total_results: results.length, total_pages: 1 });
+    return true;
+  }
+  // Listes (tendances, populaires…) : tous les titres du genre demandé, sur une page.
+  const list =
+    /^\/trending\/(movie|tv)\/(?:day|week)$/.exec(route) ??
+    /^\/(movie)\/(?:popular|now_playing|top_rated|upcoming)$/.exec(route) ??
+    /^\/(tv)\/(?:popular|on_the_air|top_rated|airing_today)$/.exec(route);
+  if (list) {
+    const results = DEMO_TITLES.filter((title) => title.kind === list[1]).map((title) =>
+      summary(title, url.searchParams.get('language') ?? 'fr-FR'),
+    );
+    send(response, 200, { page: 1, results, total_results: results.length, total_pages: 1 });
+    return true;
+  }
+  const genreList = /^\/genre\/(movie|tv)\/list$/.exec(route);
+  if (genreList) {
+    const names = new Set(
+      DEMO_TITLES.filter((title) => title.kind === genreList[1]).flatMap((title) => title.genres),
+    );
+    send(response, 200, {
+      genres: [...names].map((name) => ({ id: GENRE_IDS.get(name) ?? 0, name })),
+    });
     return true;
   }
   const seasonMatch = /^\/tv\/(\d+)\/season\/(\d+)$/.exec(route);
@@ -285,7 +335,7 @@ export function handleFakeTmdb(
     const title = DEMO_TITLES.find(
       (item) => item.id === Number(detail[2]) && item.kind === detail[1],
     );
-    if (title) send(response, 200, details(title));
+    if (title) send(response, 200, details(title, url.searchParams.get('language') ?? 'fr-FR'));
     else send(response, 404, { status_code: 34, status_message: 'Not found' });
     return true;
   }

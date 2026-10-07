@@ -336,6 +336,25 @@ Chromium, avec et sans fenêtre). L'application complète a aussi été vérifi�
 dernier : catalogue, téléchargement (fichier identique à l'octet près) et lecture convertie
 par ffmpeg à travers le relais et la page du navigateur.
 
+### Catalogue TMDB quand la liste complète est illisible
+
+Avec ZenRows, la racine du site passait (1 crédit), mais `/movies/` échouait : « Response
+data is bigger than the maximum allowed download size for your plan » (RESP005). La page
+qui liste tous les films est trop lourde pour l'offre de l'utilisateur. Sur sa proposition,
+le catalogue peut donc venir de **TMDB** au lieu de la liste de la source :
+
+| Élément            | Choix                                                                                                                                                                                                                                                                                                                             | Pourquoi                                                                                                                                                                              |
+| ------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Liste des titres   | Tendances, populaires, à l'affiche et mieux notés de TMDB (≈ 150 films et 150 séries), plus **toute recherche** (interroge TMDB en direct et ajoute les résultats)                                                                                                                                                                | Le catalogue se parcourt comme avant (affiches, genres, tri) sans jamais lire la grosse liste de la source.                                                                           |
+| Dossier d'un titre | Cherché à l'**ouverture de sa fiche** : noms probables construits selon les conventions de Radarr (« Titre (Année) ») et Sonarr (« Titre », puis « Titre (Année) »), à partir des titres anglais, original et traduit de TMDB ; deux-points et caractères interdits remplacés, variante en capitales, année ±1 ; 8 essais au plus | Les exemples de la source (« Ready Player One (2018) », « Spider-Noir ») suivent exactement ces conventions. Chaque essai est une petite page (1 crédit ZenRows en mode automatique). |
+| Mémorisation       | Dossier trouvé gardé en base (fiche suivante instantanée) ; titre introuvable marqué comme tel, avec les noms essayés, et cherché à nouveau après 24 h                                                                                                                                                                            | Ne pas repayer les mêmes essais ; montrer à l'utilisateur ce qui a été tenté.                                                                                                         |
+| Choix du mode      | **Paramètres → Catalogue → Source du catalogue** : « Automatique » (liste complète si elle passe, sinon TMDB), « Liste complète », « TMDB »                                                                                                                                                                                       | Le repli est automatique, et explicable : la section du catalogue dit pourquoi elle vient de TMDB.                                                                                    |
+
+La suite est inchangée : une fois le dossier connu, versions, saisons, téléchargement et
+lecture fonctionnent comme avec la liste complète. Validé par des tests (`folder-names`,
+`tmdb-catalog`) et dans le navigateur sur la démonstration (« COSMOS ODYSSEY (2025) » trouvé
+en deux essais, film absent signalé, série « Orbite (2020) »).
+
 ### Limites
 
 - La vérification dans le navigateur demande un navigateur Chromium installé et un écran :
@@ -348,6 +367,9 @@ par ffmpeg à travers le relais et la page du navigateur.
   catalogue en lit deux par actualisation, puis une par fiche ou dossier ouvert (mise en cache
   6 h). Si les liens directs des fichiers sont eux aussi bloqués, il reste `p.111477.xyz`,
   limité par ses jetons.
+- Catalogue TMDB : un dossier qui s'écarte des conventions de nommage (titre différent de
+  celui de TMDB, année décalée de plus d'un an…) n'est pas trouvé ; un titre absent des listes
+  TMDB n'apparaît qu'après une recherche.
 - Un blocage par adresse IP ou par pays (erreur 1020) ne se contourne pas côté application.
 - Les services annexes de 111477 ne remplacent pas le listing : l'extension Stremio
   (`st.111477.xyz`) ne fournit que des liens de lecture titre par titre, puisés dans un

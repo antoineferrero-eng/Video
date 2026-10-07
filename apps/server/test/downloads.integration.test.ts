@@ -114,12 +114,12 @@ describe('catalogue + téléchargements', () => {
   it('indexe la section films', async () => {
     const status = await container.catalog.refresh('movie');
     expect(status.count).toBe(1);
-    const page = container.catalog.search({ kind: 'movie', q: 'test movie' });
+    const page = await container.catalog.search({ kind: 'movie', q: 'test movie' });
     expect(page.items[0]).toMatchObject({ title: 'Test Movie', year: 2024 });
   });
 
   it('télécharge, met en pause, reprend (Range) et produit un fichier intact', async () => {
-    const [title] = container.catalog.search({ kind: 'movie' }).items;
+    const [title] = (await container.catalog.search({ kind: 'movie' })).items;
     const result = await container.downloads.enqueueTitle(title!.id);
     expect(result.created).toHaveLength(1);
     const id = (result.created[0] as DownloadItem).id;
@@ -162,8 +162,8 @@ describe('catalogue + téléchargements', () => {
     expect(library[0]).toMatchObject({ kind: 'movie', title: 'Test Movie', exists: true });
   });
 
-  it('refuse de re-télécharger un fichier déjà présent', () => {
-    const [title] = container.catalog.search({ kind: 'movie' }).items;
+  it('refuse de re-télécharger un fichier déjà présent', async () => {
+    const [title] = (await container.catalog.search({ kind: 'movie' })).items;
     const result = container.downloads.enqueueFiles([
       { path: `/movies/Test Movie (2024)/${FILE_NAME}`, titleId: title!.id },
     ]);

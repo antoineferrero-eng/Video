@@ -20,7 +20,21 @@ export interface TmdbSearchResponse {
   total_results: number;
 }
 
-interface TmdbGenre {
+/** Élément d'une liste TMDB (tendances, populaires…) ou d'un résultat de recherche. */
+export interface TmdbListItem extends TmdbSearchResult {
+  overview?: string | null;
+  genre_ids?: number[];
+  vote_average?: number | null;
+  adult?: boolean;
+}
+
+export interface TmdbListResponse {
+  page: number;
+  results: TmdbListItem[];
+  total_pages: number;
+}
+
+export interface TmdbGenre {
   id: number;
   name: string;
 }
@@ -104,6 +118,15 @@ export class TmdbClient {
       language,
       include_adult: 'false',
     });
+  }
+
+  /** Liste TMDB : `/trending/movie/week`, `/movie/popular`, `/tv/top_rated`… */
+  list(path: string, language: string, page = 1): Promise<TmdbListResponse> {
+    return this.get(path, { language, page });
+  }
+
+  genres(kind: 'movie' | 'tv', language: string): Promise<{ genres: TmdbGenre[] }> {
+    return this.get(`/genre/${kind}/list`, { language });
   }
 
   movie(id: number, language: string): Promise<TmdbMovie> {

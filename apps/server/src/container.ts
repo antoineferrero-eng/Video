@@ -6,6 +6,8 @@ import type { Logger } from './core/logger';
 import { KeyValueCache, openDatabase, type Db } from './infra/database/database';
 import { AvailabilityService } from './modules/availability/availability.service';
 import { CatalogService } from './modules/catalog/catalog.service';
+import { SourceResolver } from './modules/catalog/source-resolver';
+import { TmdbCatalog } from './modules/catalog/tmdb-catalog';
 import { CatalogSectionsRepository, TitlesRepository } from './modules/catalog/titles.repository';
 import { DownloadManager } from './modules/downloads/download-manager';
 import { DownloadsRepository } from './modules/downloads/downloads.repository';
@@ -76,14 +78,16 @@ export function createContainer(config: AppConfig, logger: Logger): Container {
   const titles = new TitlesRepository(db);
   const availability = new AvailabilityService(db);
   const tmdb = new TmdbClient(() => settings.getTmdbApiKey(), config.tmdb.apiBaseUrl);
+  const kvCache = new KeyValueCache(db);
   const metadata = new MetadataService(
     titles,
     tmdb,
     settings,
-    new KeyValueCache(db),
+    kvCache,
     events,
     logger.child({ module: 'metadata' }),
   );
+  const catalogLogger = logger.child({ module: 'catalog' });
   const images = new ImageCache(path.join(config.cacheDir, 'images'), config.tmdb.imageBaseUrl);
   const catalog = new CatalogService(
     titles,
@@ -93,7 +97,9 @@ export function createContainer(config: AppConfig, logger: Logger): Container {
     metadata,
     availability,
     events,
-    logger.child({ module: 'catalog' }),
+    catalogLogger,
+    new TmdbCatalog(titles, tmdb, settings, kvCache, catalogLogger),
+    new SourceResolver(titles, tmdb, source, settings, catalogLogger),
   );
   const explorer = new ExplorerService(source, availability);
   const library = new LibraryService(

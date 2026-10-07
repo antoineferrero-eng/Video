@@ -101,6 +101,11 @@ serveurs HTTP).
    inséré/actualisé en une transaction ; les titres disparus sont retirés.
 3. `MetadataService` enrichit progressivement les titres (TMDB) en arrière-plan, et à la
    demande lorsqu'une affiche ou une fiche est affichée.
+   Si la liste complète est illisible (trop volumineuse pour ZenRows…) ou si l'utilisateur le
+   choisit, le catalogue vient de **TMDB** (`tmdb-catalog.ts` : tendances, populaires,
+   recherche) et `source-resolver.ts` cherche le dossier d'un titre sur la source à
+   l'ouverture de sa fiche, d'après les conventions « Titre (Année) » / « Titre »
+   (`domain/folder-names.ts`) ; le résultat est mémorisé (`titles.source_status`).
 4. La structure d'une série (saisons/épisodes) est calculée à l'ouverture de la fiche, en
    explorant les dossiers de saison en parallèle (`series-structure.ts`).
 

@@ -176,6 +176,14 @@ export class ZenRowsTransport implements Transport {
     };
     this.lastAttempts.push(attempt);
 
+    const headers = new Headers({
+      'content-type': response.headers.get('content-type') ?? 'text/html; charset=utf-8',
+    });
+    const finalUrl = response.headers.get('zr-final-url') ?? target;
+    const page = pageResponse(response.status, response.statusText, finalUrl, headers, body);
+    // Dossier absent : réponse définitive, inutile de payer une configuration plus robuste.
+    if (response.status === 404) return { kind: 'page', response: page };
+
     const zenError = parseError(body);
     if (zenError) {
       attempt.error = describeZenRowsError(zenError);
@@ -187,11 +195,6 @@ export class ZenRowsTransport implements Transport {
       return { kind: 'retry', response: null };
     }
 
-    const headers = new Headers({
-      'content-type': response.headers.get('content-type') ?? 'text/html; charset=utf-8',
-    });
-    const finalUrl = response.headers.get('zr-final-url') ?? target;
-    const page = pageResponse(response.status, response.statusText, finalUrl, headers, body);
     if (response.ok && !stillChallenged(body)) {
       this.totals.pages += 1;
       if (attempt.credits !== null) this.totals.credits += attempt.credits;
@@ -201,7 +204,6 @@ export class ZenRowsTransport implements Transport {
       );
       return { kind: 'page', response: page };
     }
-    if (response.status === 404) return { kind: 'page', response: page };
     attempt.error = response.ok
       ? 'page de vérification Cloudflare renvoyée'
       : `statut ${response.status}`;

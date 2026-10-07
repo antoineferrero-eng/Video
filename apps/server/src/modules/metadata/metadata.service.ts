@@ -181,12 +181,11 @@ export class MetadataService {
   private async resolve(row: TitleRow): Promise<TitleRow> {
     const language = this.settings.get().metadataLanguage;
     try {
-      const metadata = await this.lookup(
-        row.kind,
-        stripBracketedTags(row.parsed_title),
-        row.year,
-        language,
-      );
+      // Titre venu de TMDB : son identifiant est connu, inutile de le rechercher par nom.
+      const metadata =
+        row.origin === 'tmdb' && row.tmdb_id !== null
+          ? await this.byId(row.kind, row.tmdb_id, language)
+          : await this.lookup(row.kind, stripBracketedTags(row.parsed_title), row.year, language);
       if (metadata) this.titles.updateMetadata(row.id, metadata);
       else this.titles.setMetadataStatus(row.id, 'not_found', language);
     } catch (error) {
@@ -221,12 +220,16 @@ export class MetadataService {
     let match = pickBestMatch((await search(year)).results, title, year);
     if (!match && year !== null) match = pickBestMatch((await search(null)).results, title, year);
     if (!match) return null;
+    return this.byId(kind, match.id, language);
+  }
 
+  /** Détails TMDB complets d'un titre dont l'identifiant est connu. */
+  private async byId(kind: TitleKind, id: number, language: string): Promise<TitleMetadata> {
     if (kind === 'movie') {
-      const movie = await this.tmdb.movie(match.id, language);
+      const movie = await this.tmdb.movie(id, language);
       let overview = movie.overview?.trim() || null;
       if (!overview && !language.startsWith('en')) {
-        overview = (await this.tmdb.movie(match.id, 'en-US')).overview?.trim() || null;
+        overview = (await this.tmdb.movie(id, 'en-US')).overview?.trim() || null;
       }
       return {
         status: 'matched',
@@ -247,10 +250,10 @@ export class MetadataService {
       };
     }
 
-    const show = await this.tmdb.tv(match.id, language);
+    const show = await this.tmdb.tv(id, language);
     let overview = show.overview?.trim() || null;
     if (!overview && !language.startsWith('en')) {
-      overview = (await this.tmdb.tv(match.id, 'en-US')).overview?.trim() || null;
+      overview = (await this.tmdb.tv(id, 'en-US')).overview?.trim() || null;
     }
     return {
       status: 'matched',

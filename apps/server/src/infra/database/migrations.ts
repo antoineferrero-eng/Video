@@ -127,4 +127,19 @@ export const MIGRATIONS: Migration[] = [
       );
     `,
   },
+  {
+    id: 2,
+    name: 'catalogue-tmdb',
+    sql: /* sql */ `
+      -- Titres venus de TMDB : leur dossier est cherché sur la source à l'ouverture.
+      ALTER TABLE titles ADD COLUMN origin TEXT NOT NULL DEFAULT 'listing';
+      ALTER TABLE titles ADD COLUMN source_status TEXT NOT NULL DEFAULT 'present';
+      ALTER TABLE titles ADD COLUMN source_checked_at TEXT;
+      ALTER TABLE titles ADD COLUMN source_note TEXT;
+      CREATE INDEX idx_titles_tmdb ON titles (kind, tmdb_id);
+
+      ALTER TABLE catalog_sections ADD COLUMN mode TEXT NOT NULL DEFAULT 'listing';
+      ALTER TABLE catalog_sections ADD COLUMN note TEXT;
+    `,
+  },
 ];

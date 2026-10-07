@@ -7,6 +7,7 @@
  *   npm run diagnose
  *   npm run diagnose -- https://a.111477.xyz/tvs/
  *   npm run diagnose -- --zenrows=CLÉ          (clé ZenRows, sinon celle des Paramètres)
+ *   npm run diagnose -- --dossier=URL          (dossier d'un titre, si la liste complète échoue)
  *   npm run diagnose -- --navigateur           (essaie aussi la vérification dans le navigateur)
  */
 import { spawn } from 'node:child_process';
@@ -341,6 +342,7 @@ async function main(): Promise<void> {
   // Z. Pages de listing via ZenRows (service en ligne), si une clé est disponible.
   const zenrowsKey = zenrowsKeyFrom(args, config);
   let viaZenRows: Attempt | null = null;
+  let titleFolder: Attempt | null = null;
   console.log('');
   if (zenrowsKey) {
     const zenrows = new ZenRowsTransport(() => zenrowsKey, config.zenrows.apiUrl, silent);
@@ -362,20 +364,39 @@ async function main(): Promise<void> {
         `    · ${attempt.strategy} : ${attempt.status}${credits}${error} · ${attempt.ms} ms`,
       );
     }
+    const viaZenRowsFetch = async (target: URL) =>
+      read(
+        await zenrows.fetch(target.toString(), {
+          kind: 'document',
+          signal: AbortSignal.timeout(180_000),
+        }),
+      );
     if (viaZenRows.ok && page) {
       // Un seul dossier exploré pour trouver un fichier : chaque page coûte des crédits.
-      fileUrl = await findVideo(
-        listOfItems(page, url),
-        url,
-        async (folder) =>
-          read(
-            await zenrows.fetch(folder.toString(), {
-              kind: 'document',
-              signal: AbortSignal.timeout(180_000),
-            }),
-          ),
-        1,
-      );
+      fileUrl = await findVideo(listOfItems(page, url), url, viaZenRowsFetch, 1);
+    } else {
+      // Liste complète illisible (trop volumineuse…) : le catalogue TMDB n'a besoin que du
+      // dossier de chaque titre. On en essaie un.
+      const flag = args.find((arg) => arg.startsWith('--dossier='))?.slice('--dossier='.length);
+      const folder = flag
+        ? new URL(flag.endsWith('/') ? flag : `${flag}/`)
+        : is111477
+          ? new URL('/movies/Ready%20Player%20One%20(2018)/', url.origin)
+          : null;
+      if (folder) {
+        let folderPage: Fetched | null = null;
+        titleFolder = await evaluate(
+          `Z2. dossier d’un titre via ZenRows (${decodeURIComponent(folder.pathname)})`,
+          folder,
+          async () => {
+            folderPage = await viaZenRowsFetch(folder);
+            return folderPage;
+          },
+        );
+        print(titleFolder);
+        if (titleFolder.ok && folderPage)
+          fileUrl = await findVideo(listOfItems(folderPage, folder), folder, viaZenRowsFetch, 1);
+      }
     }
     console.log(`    crédits ZenRows utilisés par ce diagnostic : ${zenrows.usage().credits}`);
   } else {
@@ -538,7 +559,12 @@ async function main(): Promise<void> {
     console.log(
       "  La source filtre l'empreinte réseau des clients : Lumière bascule automatiquement sur\n  l'imitation de Chrome (mode « Automatique » ou « Imitation de navigateur »).",
     );
-  } else if (viaZenRows?.ok) {
+  } else if (viaZenRows?.ok || titleFolder?.ok) {
+    if (!viaZenRows?.ok) {
+      console.log(
+        '  La liste complète est illisible via ZenRows (trop volumineuse pour l’offre ?), mais le\n  dossier d’un titre passe : le catalogue TMDB (Paramètres → Catalogue → « Automatique » ou\n  « TMDB ») fonctionnera, avec une clé TMDB.',
+      );
+    }
     if (directFile) {
       console.log(
         '  Les pages passent par ZenRows et les fichiers se téléchargent directement : choisissez\n  « ZenRows » (ou « Automatique ») dans Paramètres → Source.',

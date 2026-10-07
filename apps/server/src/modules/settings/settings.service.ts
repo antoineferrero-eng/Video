@@ -27,6 +27,7 @@ export function defaultSettings(config: AppConfig): AppSettings {
     preferredAudioLanguage: 'fr',
     preferredSubtitleLanguage: '',
     catalogRefreshHours: 12,
+    catalogSource: 'auto',
     transcodePreset: 'balanced',
     maxTranscodeHeight: 1080,
   };
@@ -119,6 +120,7 @@ export class SettingsService {
       'preferredAudioLanguage',
       'preferredSubtitleLanguage',
       'catalogRefreshHours',
+      'catalogSource',
       'transcodePreset',
       'maxTranscodeHeight',
     ] as const) {

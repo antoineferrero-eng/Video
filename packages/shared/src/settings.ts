@@ -7,6 +7,12 @@ export type PreferredQuality = '2160p' | '1080p' | '720p' | 'smallest';
  */
 export type SourceConnection = 'auto' | 'standard' | 'browser' | 'real-browser' | 'zenrows';
 export type TranscodePreset = 'quality' | 'balanced' | 'fast';
+/**
+ * Origine du catalogue : liste complète de la source, catalogue TMDB (le dossier de chaque
+ * titre est cherché sur la source à l'ouverture de sa fiche), ou automatique (la liste
+ * complète si elle est accessible, sinon TMDB).
+ */
+export type CatalogSource = 'auto' | 'listing' | 'tmdb';
 
 export interface AppSettings {
   /** URL racine de l'index HTTP (ex. https://a.111477.xyz). */
@@ -29,6 +35,7 @@ export interface AppSettings {
   /** Code langue ISO 639-1 préféré pour les sous-titres, vide = désactivés. */
   preferredSubtitleLanguage: string;
   catalogRefreshHours: number;
+  catalogSource: CatalogSource;
   transcodePreset: TranscodePreset;
   maxTranscodeHeight: number;
 }

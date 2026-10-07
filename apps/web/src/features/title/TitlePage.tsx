@@ -1,11 +1,11 @@
-import { Clock, Download, FolderOpen, Info, Play, Star } from 'lucide-react';
+import { Clock, Download, FolderOpen, Info, Play, SearchX, Star } from 'lucide-react';
 import { Link, useNavigate, useParams } from 'react-router';
 import type { RemoteFile, TitleDetails } from '@lumiere/shared';
 import { useEnqueueTitle, useTitle } from '../../api/queries';
 import { Backdrop, Poster } from '../../components/media/Poster';
 import { Badge } from '../../components/ui/Badge';
 import { Button, ButtonLink } from '../../components/ui/Button';
-import { ErrorState, Skeleton } from '../../components/ui/States';
+import { EmptyState, ErrorState, Skeleton } from '../../components/ui/States';
 import { useAmbient } from '../../design/ambient/ambient';
 import { formatClock, formatDuration, formatRating, episodeCode } from '../../lib/format';
 import { explorerUrl, playerUrl } from '../../lib/routes';
@@ -132,36 +132,39 @@ export function TitlePage() {
             {title.overview && (
               <p className="max-w-3xl leading-relaxed text-zinc-200">{title.overview}</p>
             )}
-            <div className="mt-1 flex flex-wrap gap-3">
-              {primary && (
+            {/* Rien à lire ni à télécharger quand le titre est introuvable sur la source. */}
+            {title.sourceStatus !== 'missing' && (
+              <div className="mt-1 flex flex-wrap gap-3">
+                {primary && (
+                  <Button
+                    variant="primary"
+                    size="lg"
+                    icon={<Play className="size-5 fill-current" />}
+                    onClick={() => navigate(playerUrl(mediaRefFor(primary.file)))}
+                  >
+                    {primary.label}
+                  </Button>
+                )}
                 <Button
-                  variant="primary"
+                  variant="glass"
                   size="lg"
-                  icon={<Play className="size-5 fill-current" />}
-                  onClick={() => navigate(playerUrl(mediaRefFor(primary.file)))}
+                  icon={<Download className="size-5" />}
+                  loading={enqueue.isPending}
+                  onClick={() => enqueue.mutate({ titleId: title.id })}
                 >
-                  {primary.label}
+                  {title.kind === 'movie' ? 'Télécharger' : 'Tout télécharger'}
                 </Button>
-              )}
-              <Button
-                variant="glass"
-                size="lg"
-                icon={<Download className="size-5" />}
-                loading={enqueue.isPending}
-                onClick={() => enqueue.mutate({ titleId: title.id })}
-              >
-                {title.kind === 'movie' ? 'Télécharger' : 'Tout télécharger'}
-              </Button>
-              <ButtonLink
-                to={explorerUrl(title.remotePath)}
-                variant="glass"
-                size="icon-lg"
-                title="Ouvrir le dossier source dans l'explorateur"
-                aria-label="Dossier source"
-              >
-                <FolderOpen className="size-5" />
-              </ButtonLink>
-            </div>
+                <ButtonLink
+                  to={explorerUrl(title.remotePath)}
+                  variant="glass"
+                  size="icon-lg"
+                  title="Ouvrir le dossier source dans l'explorateur"
+                  aria-label="Dossier source"
+                >
+                  <FolderOpen className="size-5" />
+                </ButtonLink>
+              </div>
+            )}
           </div>
         </div>
       </section>
@@ -182,12 +185,44 @@ export function TitlePage() {
         </div>
       )}
 
-      {title.kind === 'movie' ? (
+      {title.sourceStatus === 'missing' ? (
+        <SourceMissing title={title} />
+      ) : title.kind === 'movie' ? (
         <MovieVersions title={title} />
       ) : (
         <SeriesSeasons title={title} initialSeason={primary?.seasonKey} />
       )}
     </div>
+  );
+}
+
+/** Titre venu de TMDB que la source ne propose pas (sous les noms de dossier essayés). */
+function SourceMissing({ title }: { title: TitleDetails }) {
+  return (
+    <EmptyState
+      icon={<SearchX />}
+      title="Introuvable sur la source"
+      description={
+        <>
+          <p>
+            {title.kind === 'movie' ? 'Ce film' : 'Cette série'} n’a pas été trouvé sur la source.
+            Il n’y est peut-être pas, ou son dossier porte un autre nom. Nouvel essai automatique
+            dans 24 h.
+          </p>
+          {title.sourceTried.length > 0 && (
+            <p className="mt-3 text-xs text-zinc-500">
+              Dossiers essayés :{' '}
+              {title.sourceTried.map((folder, index) => (
+                <span key={folder}>
+                  {index > 0 && ', '}
+                  <span className="font-mono text-zinc-400">{folder}</span>
+                </span>
+              ))}
+            </p>
+          )}
+        </>
+      }
+    />
   );
 }
 

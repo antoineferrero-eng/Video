@@ -97,6 +97,7 @@ async function startFakes(): Promise<Fakes> {
     };
     if (params.apikey === 'empty') return fail(402, 'AUTH004', 'Usage Exceeded');
     if (params.apikey !== 'good') return fail(401, 'AUTH002', 'Invalid API Key');
+    if (params.url?.endsWith('/absent/')) return fail(404, 'RESP008', 'Not Found');
     if (params.mode === 'auto' && state.autoFails)
       return fail(422, 'RESP001', 'Could not get content');
     const target = await fetch(params.url ?? '', { headers: { 'x-zenrows': '1' } });
@@ -206,6 +207,13 @@ describe('transport ZenRows', () => {
     const zenrows = new ZenRowsTransport(() => 'good', fakes.zenrows, silent);
     const missing = await zenrows.fetch(`${fakes.source}/nope/`, { kind: 'document' });
     expect(missing.status).toBe(404);
+    // 404 au format d'erreur de ZenRows : dossier absent, sans essai plus coûteux.
+    fakes.zenrowsCalls.length = 0;
+    fakes.autoFails = true;
+    const absent = await zenrows.fetch(`${fakes.source}/absent/`, { kind: 'document' });
+    expect(absent.status).toBe(404);
+    expect(fakes.zenrowsCalls).toHaveLength(1);
+    fakes.autoFails = false;
 
     const invalid = new ZenRowsTransport(() => 'bad', fakes.zenrows, silent);
     await expect(invalid.fetch(`${fakes.source}/movies/`, { kind: 'document' })).rejects.toThrow(

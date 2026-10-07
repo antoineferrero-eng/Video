@@ -13,13 +13,24 @@ export function PosterCard({ title, className }: { title: TitleSummary; classNam
       className={cn('group flex flex-col gap-2.5 rounded-tile outline-none', className)}
       title={title.title}
     >
-      <div className="media-frame" data-glow>
+      <div
+        className={cn('media-frame', title.sourceStatus === 'missing' && 'opacity-45 saturate-50')}
+        data-glow
+      >
         <Poster
           url={title.posterUrl}
           title={title.title}
           year={title.year}
           kind={title.kind}
         />
+        {title.sourceStatus === 'missing' && (
+          <span
+            className="absolute top-2 left-2 z-[3] rounded-full bg-black/65 px-2 py-0.5 text-[11px] font-semibold text-zinc-100 backdrop-blur-md"
+            title="Ce titre n’a pas été trouvé sur la source"
+          >
+            Introuvable
+          </span>
+        )}
         {title.libraryCount > 0 && (
           <span
             className="absolute top-2 right-2 z-[3] flex size-6 items-center justify-center rounded-full bg-emerald-400 text-ink-950 shadow-[inset_0_1px_0_rgb(255_255_255/0.6),0_4px_10px_rgb(0_0_0/0.4)]"
