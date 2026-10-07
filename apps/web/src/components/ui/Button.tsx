@@ -1,6 +1,7 @@
-import type { ComponentProps } from 'react';
+import { useRef, type ComponentProps } from 'react';
 import { Link, type LinkProps } from 'react-router';
-import { buttonClasses, type ButtonStyleProps } from './button-styles';
+import { useLens } from '../../design/glass/useLens';
+import { buttonClasses, isGlassVariant, type ButtonStyleProps } from './button-styles';
 import { Spinner } from './Spinner';
 
 export function Button({
@@ -14,8 +15,11 @@ export function Button({
   type = 'button',
   ...props
 }: ButtonStyleProps & ComponentProps<'button'>) {
+  const ref = useRef<HTMLButtonElement>(null);
+  useLens(ref, isGlassVariant(variant) ? {} : false);
   return (
     <button
+      ref={ref}
       type={type}
       className={buttonClasses({ variant, size }, className)}
       disabled={disabled || loading}
@@ -35,8 +39,10 @@ export function ButtonLink({
   children,
   ...props
 }: ButtonStyleProps & LinkProps) {
+  const ref = useRef<HTMLAnchorElement>(null);
+  useLens(ref, isGlassVariant(variant) ? {} : false);
   return (
-    <Link className={buttonClasses({ variant, size }, className)} {...props}>
+    <Link ref={ref} className={buttonClasses({ variant, size }, className)} {...props}>
       {icon}
       {children}
     </Link>

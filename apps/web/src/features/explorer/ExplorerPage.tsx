@@ -22,6 +22,7 @@ import { Button } from '../../components/ui/Button';
 import { Dialog } from '../../components/ui/Dialog';
 import { PageLoader } from '../../components/ui/Spinner';
 import { EmptyState, ErrorState } from '../../components/ui/States';
+import { Glass } from '../../design/glass/Glass';
 import { cn } from '../../lib/cn';
 import { formatBytes, formatDate } from '../../lib/format';
 import { explorerUrl, playerUrl } from '../../lib/routes';
@@ -57,55 +58,73 @@ export function ExplorerPage() {
   };
 
   return (
-    <div className="flex flex-col gap-5 pt-2">
-      <header className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-        <div className="min-w-0">
-          <h1 className="text-3xl font-bold tracking-tight">Explorateur</h1>
-          <nav
-            className="mt-2 flex flex-wrap items-center gap-1 text-sm text-zinc-400"
-            aria-label="Fil d'Ariane"
-          >
-            <Link
-              to={explorerUrl('/')}
-              className="flex items-center gap-1 rounded-md px-1.5 py-0.5 hover:bg-white/5 hover:text-white"
+    <div className="flex flex-col gap-5">
+      <header className="flex flex-col gap-4">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+          <h1 className="large-title">Explorateur</h1>
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="relative min-w-56 flex-1 sm:flex-none">
+              <Search className="pointer-events-none absolute top-1/2 left-4 size-4 -translate-y-1/2 text-zinc-400" />
+              <input
+                value={filter}
+                onChange={(event) => setFilter(event.target.value)}
+                placeholder="Filtrer ce dossier…"
+                aria-label="Filtrer ce dossier"
+                className="input pl-10 sm:w-60"
+              />
+            </div>
+            <Button
+              variant="glass"
+              size="icon"
+              className="size-11"
+              aria-label="Actualiser le dossier"
+              title="Actualiser"
+              onClick={() => void refresh()}
             >
-              <Home className="size-3.5" /> Racine
-            </Link>
-            {listing.data?.breadcrumbs.map((crumb) => (
-              <span key={crumb.path} className="flex items-center gap-1">
-                <ChevronRight className="size-3.5 text-zinc-600" />
-                <Link
-                  to={explorerUrl(crumb.path)}
-                  className="max-w-64 truncate rounded-md px-1.5 py-0.5 hover:bg-white/5 hover:text-white"
-                >
-                  {crumb.name}
-                </Link>
-              </span>
-            ))}
-          </nav>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <div className="relative">
-            <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-zinc-500" />
-            <input
-              value={filter}
-              onChange={(event) => setFilter(event.target.value)}
-              placeholder="Filtrer ce dossier…"
-              className="input h-10 w-56 pl-9"
-            />
-          </div>
-          <Button
-            icon={<RefreshCw className={cn('size-4', refreshing && 'animate-spin')} />}
-            onClick={() => void refresh()}
-          >
-            Actualiser
-          </Button>
-          {path !== '/' && (
-            <Button icon={<FolderDown className="size-4" />} onClick={() => setConfirmFolder(path)}>
-              Télécharger le dossier
+              <RefreshCw className={cn('size-4', refreshing && 'animate-spin')} />
             </Button>
-          )}
+            {path !== '/' && (
+              <Button
+                variant="glass"
+                className="h-11"
+                icon={<FolderDown className="size-4" />}
+                onClick={() => setConfirmFolder(path)}
+              >
+                Télécharger le dossier
+              </Button>
+            )}
+          </div>
         </div>
+        {/* Barre de chemin en verre (comme celle du Finder). */}
+        <Glass
+          as="nav"
+          aria-label="Fil d'Ariane"
+          className="scrollbar-none flex max-w-full items-center gap-0.5 self-start overflow-x-auto rounded-full p-1 text-sm"
+        >
+          <Link
+            to={explorerUrl('/')}
+            className="flex shrink-0 items-center gap-1.5 rounded-full px-3 py-1.5 text-zinc-200 transition hover:bg-white/10 hover:text-white"
+          >
+            <Home className="size-3.5" /> Racine
+          </Link>
+          {listing.data?.breadcrumbs.map((crumb, position, all) => (
+            <span key={crumb.path} className="flex shrink-0 items-center gap-0.5">
+              <ChevronRight className="size-3.5 text-zinc-400" />
+              <Link
+                to={explorerUrl(crumb.path)}
+                aria-current={position === all.length - 1 ? 'page' : undefined}
+                className={cn(
+                  'max-w-64 truncate rounded-full px-3 py-1.5 transition hover:bg-white/10 hover:text-white',
+                  position === all.length - 1
+                    ? 'bg-white/[0.12] font-medium text-white'
+                    : 'text-zinc-200',
+                )}
+              >
+                {crumb.name}
+              </Link>
+            </span>
+          ))}
+        </Glass>
       </header>
 
       {listing.isPending ? (
@@ -118,14 +137,19 @@ export function ExplorerPage() {
           title={filter ? 'Aucun élément ne correspond au filtre' : 'Dossier vide'}
         />
       ) : (
-        <div className={cn('surface overflow-hidden', listing.isPlaceholderData && 'opacity-60')}>
-          <div className="hidden grid-cols-[1fr_7rem_10rem_auto] gap-4 border-b border-white/5 px-4 py-2.5 text-xs font-medium tracking-wide text-zinc-500 uppercase md:grid">
+        <div
+          className={cn(
+            'fill overflow-hidden rounded-card',
+            listing.isPlaceholderData && 'opacity-60',
+          )}
+        >
+          <div className="hidden grid-cols-[1fr_7rem_10rem_auto] gap-4 border-b border-white/[0.07] px-4 py-2.5 text-xs font-semibold text-zinc-400 md:grid">
             <span>Nom</span>
             <span className="text-right">Taille</span>
             <span>Modifié</span>
             <span className="w-28" />
           </div>
-          <ul className="divide-y divide-white/5">
+          <ul className="divide-y divide-white/[0.06]">
             {entries.map((entry) => (
               <EntryRow
                 key={entry.path}
@@ -137,7 +161,7 @@ export function ExplorerPage() {
         </div>
       )}
       {listing.data && (
-        <p className="text-xs text-zinc-600">
+        <p className="px-1 text-xs text-zinc-400">
           {listing.data.entries.length} élément(s) · format de listing détecté :{' '}
           {listing.data.format} · <span className="font-mono">{listing.data.sourceUrl}</span>
         </p>
@@ -166,8 +190,9 @@ export function ExplorerPage() {
           </>
         }
       >
-        Toutes les vidéos de <span className="font-mono text-zinc-100">{confirmFolder}</span> (et de
-        ses sous-dossiers) seront ajoutées à la file de téléchargement.
+        Toutes les vidéos de{' '}
+        <span className="font-mono break-all text-zinc-100">{confirmFolder}</span> (et de ses
+        sous-dossiers) seront ajoutées à la file de téléchargement.
       </Dialog>
     </div>
   );
@@ -199,7 +224,7 @@ function EntryRow({
             ? 'text-brand-300'
             : entry.kind === 'video'
               ? 'text-sky-300'
-              : 'text-zinc-500',
+              : 'text-zinc-400',
         )}
       />
       <div className="min-w-0 flex-1">
@@ -216,7 +241,7 @@ function EntryRow({
   );
 
   return (
-    <li className="grid grid-cols-[1fr_auto] items-center gap-4 px-4 py-2.5 transition hover:bg-white/[0.03] md:grid-cols-[1fr_7rem_10rem_auto]">
+    <li className="grid grid-cols-[1fr_auto] items-center gap-4 px-4 py-2.5 transition hover:bg-white/[0.05] md:grid-cols-[1fr_7rem_10rem_auto]">
       {entry.kind === 'directory' ? (
         <Link to={explorerUrl(entry.path)} className="flex min-w-0 items-center gap-3">
           {content}
@@ -224,10 +249,10 @@ function EntryRow({
       ) : (
         <div className="flex min-w-0 items-center gap-3">{content}</div>
       )}
-      <span className="hidden text-right text-sm text-zinc-400 tabular-nums md:block">
+      <span className="hidden text-right text-sm text-zinc-300 tabular-nums md:block">
         {entry.kind === 'directory' ? '—' : formatBytes(entry.size)}
       </span>
-      <span className="hidden text-sm text-zinc-500 md:block">{formatDate(entry.modifiedAt)}</span>
+      <span className="hidden text-sm text-zinc-400 md:block">{formatDate(entry.modifiedAt)}</span>
       <div className="flex w-28 items-center justify-end gap-1">
         {entry.kind === 'directory' && (
           <Button

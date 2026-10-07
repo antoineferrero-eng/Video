@@ -1,4 +1,4 @@
-import { ArrowLeft, Clock, Download, FolderOpen, Info, Play, Star } from 'lucide-react';
+import { Clock, Download, FolderOpen, Info, Play, Star } from 'lucide-react';
 import { Link, useNavigate, useParams } from 'react-router';
 import type { RemoteFile, TitleDetails } from '@lumiere/shared';
 import { useEnqueueTitle, useTitle } from '../../api/queries';
@@ -6,6 +6,7 @@ import { Backdrop, Poster } from '../../components/media/Poster';
 import { Badge } from '../../components/ui/Badge';
 import { Button, ButtonLink } from '../../components/ui/Button';
 import { ErrorState, Skeleton } from '../../components/ui/States';
+import { useAmbient } from '../../design/ambient/ambient';
 import { formatClock, formatDuration, formatRating, episodeCode } from '../../lib/format';
 import { explorerUrl, playerUrl } from '../../lib/routes';
 import { mediaRefFor } from './file-utils';
@@ -53,6 +54,7 @@ export function TitlePage() {
   const navigate = useNavigate();
   const query = useTitle(Number(id));
   const enqueue = useEnqueueTitle();
+  useAmbient(query.data?.backdropUrl ?? query.data?.posterUrl, query.data?.title);
 
   if (query.isPending) return <TitleSkeleton />;
   if (query.isError) return <ErrorState error={query.error} onRetry={() => void query.refetch()} />;
@@ -64,42 +66,36 @@ export function TitlePage() {
 
   return (
     <div className="flex flex-col gap-10">
-      <section className="relative -mx-4 -mt-4 overflow-hidden sm:-mx-8">
-        <Backdrop url={title.backdropUrl} seed={title.title} className="opacity-60" />
-        <div className="absolute inset-0 bg-gradient-to-t from-ink-950 via-ink-950/80 to-ink-950/30" />
-        <div className="absolute inset-0 bg-gradient-to-r from-ink-950/90 via-ink-950/40 to-transparent" />
+      <section className="bleed bleed-top relative overflow-hidden">
+        <div className="absolute inset-0 [mask-image:linear-gradient(to_bottom,#000_50%,transparent)]">
+          <Backdrop url={title.backdropUrl} seed={title.title} className="opacity-75" />
+          <div className="absolute inset-0 bg-[linear-gradient(to_right,rgb(0_0_0/0.3),rgb(0_0_0/0.78)_var(--inset-left),rgb(0_0_0/0.4)_65%,rgb(0_0_0/0.1))]" />
+          <div className="absolute inset-x-0 top-0 h-40 bg-gradient-to-b from-black/50 to-transparent" />
+        </div>
 
-        <div className="relative flex flex-col gap-6 px-4 pt-6 pb-10 sm:px-8 md:flex-row md:items-end md:gap-10 md:pt-16">
-          <Button
-            variant="glass"
-            size="icon"
-            className="absolute top-4 left-4 sm:left-8"
-            onClick={() => navigate(-1)}
-            aria-label="Retour"
-          >
-            <ArrowLeft className="size-5" />
-          </Button>
-          <Poster
-            url={title.posterUrl}
-            title={title.title}
-            year={title.year}
-            kind={title.kind}
-            eager
-            className="mt-10 w-40 shrink-0 rounded-2xl shadow-2xl shadow-black/60 ring-1 ring-white/10 sm:w-52 md:mt-0 lg:w-60"
-          />
-          <div className="flex min-w-0 flex-1 animate-fade-in flex-col gap-4">
-            <div className="flex flex-wrap items-center gap-2 text-sm text-zinc-300">
+        <div className="relative flex flex-col gap-6 pt-[calc(var(--inset-top)+0.5rem)] pb-4 md:flex-row md:items-end md:gap-10 md:pt-[calc(var(--inset-top)+3rem)]">
+          <div className="media-frame w-40 shrink-0 shadow-[0_30px_60px_-24px_rgb(0_0_0/0.9)] sm:w-52 lg:w-60">
+            <Poster
+              url={title.posterUrl}
+              title={title.title}
+              year={title.year}
+              kind={title.kind}
+              eager
+            />
+          </div>
+          <div className="text-shadow-legible flex min-w-0 flex-1 animate-fade-in flex-col gap-4">
+            <div className="flex flex-wrap items-center gap-2 text-sm text-zinc-200">
               <Badge tone="neutral">{title.kind === 'movie' ? 'Film' : 'Série'}</Badge>
               {title.year && <span>{title.year}</span>}
               {rating && (
                 <span className="flex items-center gap-1">
                   <Star className="size-4 fill-brand-400 text-brand-400" />
                   <span className="font-semibold text-white">{rating}</span>
-                  <span className="text-zinc-500">/10</span>
+                  <span className="text-zinc-400">/10</span>
                 </span>
               )}
               {title.runtime && (
-                <span className="flex items-center gap-1 text-zinc-400">
+                <span className="flex items-center gap-1 text-zinc-300">
                   <Clock className="size-3.5" />
                   {title.kind === 'movie'
                     ? formatDuration(title.runtime * 60)
@@ -107,7 +103,7 @@ export function TitlePage() {
                 </span>
               )}
               {title.kind === 'series' && (
-                <span className="text-zinc-400">
+                <span className="text-zinc-300">
                   {title.seasons.length} saison(s) · {episodeCount} épisode(s)
                 </span>
               )}
@@ -116,14 +112,14 @@ export function TitlePage() {
               {title.title}
             </h1>
             {title.originalTitle && title.originalTitle !== title.title && (
-              <p className="-mt-2 text-sm text-zinc-400">Titre original : {title.originalTitle}</p>
+              <p className="-mt-2 text-sm text-zinc-300">Titre original : {title.originalTitle}</p>
             )}
             {title.genres.length > 0 && (
               <div className="flex flex-wrap gap-2">
                 {title.genres.map((genre) => (
                   <span
                     key={genre}
-                    className="rounded-full bg-white/[0.07] px-3 py-1 text-xs text-zinc-300 ring-1 ring-white/10 ring-inset"
+                    className="fill rounded-full px-3 py-1 text-xs font-medium text-zinc-100"
                   >
                     {genre}
                   </span>
@@ -131,10 +127,10 @@ export function TitlePage() {
               </div>
             )}
             {title.tagline && (
-              <p className="text-lg font-medium text-brand-200/90 italic">« {title.tagline} »</p>
+              <p className="text-lg font-medium text-brand-200 italic">« {title.tagline} »</p>
             )}
             {title.overview && (
-              <p className="max-w-3xl leading-relaxed text-zinc-300">{title.overview}</p>
+              <p className="max-w-3xl leading-relaxed text-zinc-200">{title.overview}</p>
             )}
             <div className="mt-1 flex flex-wrap gap-3">
               {primary && (
@@ -148,7 +144,7 @@ export function TitlePage() {
                 </Button>
               )}
               <Button
-                variant="secondary"
+                variant="glass"
                 size="lg"
                 icon={<Download className="size-5" />}
                 loading={enqueue.isPending}
@@ -158,12 +154,12 @@ export function TitlePage() {
               </Button>
               <ButtonLink
                 to={explorerUrl(title.remotePath)}
-                variant="ghost"
-                size="lg"
-                icon={<FolderOpen className="size-5" />}
-                title="Ouvrir le dossier dans l'explorateur"
+                variant="glass"
+                size="icon-lg"
+                title="Ouvrir le dossier source dans l'explorateur"
+                aria-label="Dossier source"
               >
-                Dossier source
+                <FolderOpen className="size-5" />
               </ButtonLink>
             </div>
           </div>
@@ -171,7 +167,7 @@ export function TitlePage() {
       </section>
 
       {title.metadataStatus === 'disabled' && (
-        <div className="flex items-start gap-3 rounded-2xl border border-white/5 bg-white/[0.03] p-4 text-sm text-zinc-400">
+        <div className="fill flex items-start gap-3 rounded-card p-4 text-sm text-zinc-300">
           <Info className="mt-0.5 size-4 shrink-0 text-brand-300" />
           <p>
             Ajoutez une clé TMDB (gratuite) dans les{' '}
@@ -198,7 +194,7 @@ export function TitlePage() {
 function TitleSkeleton() {
   return (
     <div className="flex flex-col gap-8 pt-16 md:flex-row md:items-end">
-      <Skeleton className="aspect-[2/3] w-52 rounded-2xl" />
+      <Skeleton className="aspect-[2/3] w-52 rounded-tile" />
       <div className="flex flex-1 flex-col gap-4">
         <Skeleton className="h-4 w-40" />
         <Skeleton className="h-12 w-2/3" />

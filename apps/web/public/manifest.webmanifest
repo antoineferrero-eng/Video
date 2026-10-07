@@ -4,8 +4,8 @@
   "description": "Vos films et séries, à télécharger et à regarder.",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#08080c",
-  "theme_color": "#08080c",
+  "background_color": "#050508",
+  "theme_color": "#050508",
   "lang": "fr",
   "icons": [{ "src": "/favicon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }]
 }

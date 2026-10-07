@@ -13,6 +13,7 @@ import { useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router';
 import type { LibraryItem } from '@lumiere/shared';
 import { useLibrary, useRemoveLibraryItem, useScanLibrary, useSystemInfo } from '../../api/queries';
+import { PlayBadge } from '../../components/media/ContinueCard';
 import { Poster } from '../../components/media/Poster';
 import { ReleaseBadges } from '../../components/media/ReleaseBadges';
 import { Badge } from '../../components/ui/Badge';
@@ -46,10 +47,10 @@ export function LibraryPage() {
   const current = byKind(tab);
 
   return (
-    <div className="flex flex-col gap-6 pt-2">
+    <div className="flex flex-col gap-6">
       <header className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight">Ma bibliothèque</h1>
+          <h1 className="large-title">Ma bibliothèque</h1>
           <p className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-zinc-400">
             <span>
               {plural(items.length, 'fichier')} · {formatBytes(totalSize)}
@@ -62,21 +63,24 @@ export function LibraryPage() {
             )}
           </p>
           {system.data && (
-            <p className="mt-1 truncate font-mono text-xs text-zinc-500">
+            <p className="mt-1 truncate font-mono text-xs text-zinc-400">
               {system.data.downloadDir}
             </p>
           )}
         </div>
         <Button
+          variant="glass"
           icon={<ScanSearch className="size-4" />}
           loading={scan.isPending}
           onClick={() => scan.mutate()}
+          className="self-start lg:self-auto"
         >
           Analyser le dossier
         </Button>
       </header>
 
       <Tabs<Tab>
+        label="Type de contenu"
         value={tab}
         onChange={setTab}
         items={[
@@ -116,34 +120,34 @@ export function LibraryPage() {
 function MovieTile({ item, onDelete }: { item: LibraryItem; onDelete: () => void }) {
   const progress = item.watch?.duration ? item.watch.position / item.watch.duration : null;
   return (
-    <div className="group flex flex-col gap-2">
+    <div className="group flex flex-col gap-2.5">
       <Link
         to={playerUrl({ type: 'library', id: item.id })}
-        className="relative overflow-hidden rounded-xl ring-1 ring-white/[0.06] transition hover:ring-brand-400/50"
+        className="rounded-tile outline-none"
+        aria-label={`Lire ${item.title}`}
       >
-        <Poster url={item.posterUrl} title={item.title} year={item.year} />
-        <div className="absolute inset-0 flex items-center justify-center bg-black/50 opacity-0 transition group-hover:opacity-100">
-          <span className="flex size-14 items-center justify-center rounded-full bg-white/90 text-ink-950">
-            <Play className="ml-0.5 size-6 fill-current" />
-          </span>
+        <div className="media-frame" data-glow>
+          <Poster url={item.posterUrl} title={item.title} year={item.year} />
+          <PlayBadge />
+          {!item.exists && (
+            <Badge tone="danger" className="absolute top-2 left-2 z-[3]">
+              Fichier introuvable
+            </Badge>
+          )}
+          {item.watch && (
+            <ProgressBar
+              label="Progression du visionnage"
+              value={item.watch.completed ? 1 : progress}
+              tone={item.watch.completed ? 'success' : 'brand'}
+              className="absolute inset-x-0 bottom-0 z-[3] h-1 rounded-none"
+            />
+          )}
         </div>
-        {!item.exists && (
-          <Badge tone="danger" className="absolute top-2 left-2">
-            Fichier introuvable
-          </Badge>
-        )}
-        {item.watch && (
-          <ProgressBar
-            value={item.watch.completed ? 1 : progress}
-            tone={item.watch.completed ? 'success' : 'brand'}
-            className="absolute inset-x-0 bottom-0 h-1 rounded-none"
-          />
-        )}
       </Link>
-      <div className="flex items-start justify-between gap-2 px-0.5">
+      <div className="flex items-start justify-between gap-2 px-1">
         <div className="min-w-0">
-          <p className="truncate text-sm font-medium">{item.title}</p>
-          <p className="truncate text-xs text-zinc-500">
+          <p className="truncate text-sm font-semibold">{item.title}</p>
+          <p className="truncate text-xs text-zinc-400">
             {[item.year, item.release.resolution, formatBytes(item.size)]
               .filter(Boolean)
               .join(' · ')}
@@ -162,7 +166,8 @@ function ItemMenu({ item, onDelete }: { item: LibraryItem; onDelete: () => void 
         href={`/api/library/${item.id}/file`}
         download={item.fileName}
         title="Enregistrer sur cet appareil"
-        className="rounded-lg p-1.5 text-zinc-500 transition hover:bg-white/5 hover:text-zinc-200"
+        aria-label={`Enregistrer ${item.fileName} sur cet appareil`}
+        className="rounded-full p-2 text-zinc-400 transition hover:bg-white/10 hover:text-white"
       >
         <MonitorDown className="size-4" />
       </a>
@@ -170,7 +175,8 @@ function ItemMenu({ item, onDelete }: { item: LibraryItem; onDelete: () => void 
         type="button"
         onClick={onDelete}
         title="Supprimer"
-        className="rounded-lg p-1.5 text-zinc-500 transition hover:bg-red-500/10 hover:text-red-300"
+        aria-label={`Supprimer ${item.fileName}`}
+        className="rounded-full p-2 text-zinc-400 transition hover:bg-red-500/15 hover:text-red-200"
       >
         <Trash2 className="size-4" />
       </button>
@@ -203,16 +209,19 @@ function SeriesGroups({
       {groups.map((episodes) => {
         const first = episodes[0] as LibraryItem;
         return (
-          <section key={`${first.titleId}-${first.title}`} className="surface overflow-hidden">
-            <div className="flex items-center gap-4 border-b border-white/5 p-4">
+          <section
+            key={`${first.titleId}-${first.title}`}
+            className="fill overflow-hidden rounded-card"
+          >
+            <div className="flex items-center gap-4 border-b border-white/[0.07] p-4">
               <Poster
                 url={first.posterUrl}
                 title={first.title}
                 kind="series"
-                className="w-14 shrink-0 rounded-lg [&_p]:text-[8px] [&_svg]:hidden"
+                className="w-14 shrink-0 rounded-[0.625rem] shadow-[0_8px_18px_-10px_rgb(0_0_0/0.9)] [&_p]:text-[8px] [&_svg]:hidden"
               />
               <div className="min-w-0 flex-1">
-                <h2 className="truncate text-lg font-semibold">{first.title}</h2>
+                <h2 className="truncate text-lg font-bold tracking-tight">{first.title}</h2>
                 <p className="text-sm text-zinc-400">
                   {plural(episodes.length, 'épisode')} ·{' '}
                   {formatBytes(episodes.reduce((sum, item) => sum + item.size, 0))}
@@ -221,13 +230,13 @@ function SeriesGroups({
               {first.titleId !== null && (
                 <Link
                   to={`/titre/${first.titleId}`}
-                  className="text-sm font-medium text-brand-300 hover:text-brand-200"
+                  className="rounded-full px-2 py-1 text-sm font-semibold text-brand-300 hover:text-brand-200"
                 >
                   Voir la série
                 </Link>
               )}
             </div>
-            <div className="flex flex-col divide-y divide-white/5">
+            <div className="flex flex-col divide-y divide-white/[0.07]">
               {episodes.map((item) => (
                 <ItemRow key={item.id} item={item} onDelete={() => onDelete(item)} flat />
               ))}
@@ -255,7 +264,9 @@ function ItemRow({
   const progress = item.watch?.duration ? item.watch.position / item.watch.duration : null;
   return (
     <div
-      className={flat ? 'flex items-center gap-3 px-4 py-3' : 'surface flex items-center gap-3 p-3'}
+      className={
+        flat ? 'flex items-center gap-3 px-4 py-3' : 'fill flex items-center gap-3 rounded-card p-3'
+      }
     >
       <Button
         variant="primary"
@@ -271,7 +282,7 @@ function ItemRow({
           {code && <span className="mr-2 text-brand-300">{code}</span>}
           {showTitle ? item.title : item.fileName}
         </p>
-        <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-zinc-500">
+        <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-zinc-400">
           <ReleaseBadges release={item.release} compact />
           <span>{formatBytes(item.size)}</span>
           <span>· ajouté {formatRelativeDate(item.addedAt)}</span>
@@ -279,7 +290,11 @@ function ItemRow({
           {!item.exists && <Badge tone="danger">Fichier introuvable</Badge>}
         </div>
         {item.watch && !item.watch.completed && (
-          <ProgressBar value={progress} className="mt-2 h-1 max-w-xs" />
+          <ProgressBar
+            value={progress}
+            label="Progression du visionnage"
+            className="mt-2 h-1 max-w-xs"
+          />
         )}
       </div>
       <ItemMenu item={item} onDelete={onDelete} />
@@ -324,7 +339,7 @@ function DeleteDialog({ item, onClose }: { item: LibraryItem | null; onClose: ()
     >
       {item && (
         <div className="flex items-start gap-3">
-          <LibraryIcon className="mt-0.5 size-5 shrink-0 text-zinc-500" />
+          <LibraryIcon className="mt-0.5 size-5 shrink-0 text-zinc-400" />
           <p>
             <span className="font-medium text-zinc-100">{item.fileName}</span> (
             {formatBytes(item.size)}). « Supprimer le fichier » libère l'espace disque ; « Retirer

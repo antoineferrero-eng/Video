@@ -2,9 +2,11 @@
 
 **Lumière** est une application pour parcourir, télécharger et regarder vos films et séries
 depuis l'index de fichiers [a.111477.xyz](https://a.111477.xyz) (ou tout autre index HTTP du
-même type), avec une interface soignée façon plateforme de streaming.
+même type), avec une interface au design **Liquid Glass** inspiré d'Apple : barres et
+commandes en verre qui flottent au-dessus du contenu, réfraction de la lumière sur les bords,
+reflets qui suivent le pointeur, ambiance colorée par les affiches.
 
-![Accueil de Lumière](docs/captures/accueil.png)
+![Accueil de Lumière](docs/captures/accueil.jpg)
 
 ---
 
@@ -31,14 +33,20 @@ même type), avec une interface soignée façon plateforme de streaming.
   raccourcis clavier. On peut regarder **sans télécharger** (streaming depuis le site) ou
   depuis la copie locale.
 - **Explorateur** pour naviguer librement dans l'arborescence du site.
+- **Design Liquid Glass** : barre latérale flottante sous laquelle les illustrations
+  s'étendent, barre d'onglets mobile qui se réduit au défilement (comme iOS 26), menus et
+  dialogues en verre, contrôles segmentés à goutte « liquide », lecteur aux commandes
+  flottantes. Réglage **Apparence** (Transparent, Teinté, Opaque) et respect des réglages
+  d'accessibilité du système (transparence et animations réduites, contraste élevé).
 - Interface **100 % en français**, thème sombre, adaptée au **mobile**, installable comme
   application (PWA), mise à jour **en temps réel**.
 
-|                                                       |                                                        |
-| ----------------------------------------------------- | ------------------------------------------------------ |
-| ![Catalogue](docs/captures/films.png)                 | ![Fiche d'une série](docs/captures/serie.png)          |
-| ![Téléchargements](docs/captures/telechargements.png) | ![Lecteur avec sous-titres](docs/captures/lecteur.png) |
-| ![Fiche d'un film](docs/captures/film.png)            | ![Bibliothèque](docs/captures/bibliotheque.png)        |
+|                                                                |                                                               |
+| -------------------------------------------------------------- | ------------------------------------------------------------- |
+| ![Catalogue](docs/captures/films.jpg)                          | ![Fiche d'une série](docs/captures/serie.jpg)                 |
+| ![Téléchargements en cours](docs/captures/telechargements.jpg) | ![Lecteur avec sous-titres](docs/captures/lecteur.jpg)        |
+| ![Fiche d'un film](docs/captures/film.jpg)                     | ![Réglages d'apparence](docs/captures/apparence.jpg)          |
+| ![Mobile : accueil](docs/captures/mobile.jpg)                  | ![Mobile : fiche d'une série](docs/captures/mobile-serie.jpg) |
 
 > Les captures proviennent de la démonstration hors ligne incluse (`npm run demo`) : vidéos
 > et affiches de test générées par ffmpeg.
@@ -101,8 +109,8 @@ une source locale qui imite le site, un faux service TMDB, puis l'application su
 
 ## Configuration
 
-La plupart des réglages se font dans l'interface (**Paramètres**) : adresse et dossiers de la
-source, dossier de téléchargement, téléchargements simultanés, limite de débit, qualité
+La plupart des réglages se font dans l'interface (**Paramètres**) : apparence du verre
+(propre à chaque appareil), adresse et dossiers de la source, dossier de téléchargement, téléchargements simultanés, limite de débit, qualité
 préférée, langue audio et sous-titres par défaut, qualité de conversion, clé et langue TMDB,
 fréquence d'actualisation du catalogue, test de connexion à la source.
 
@@ -156,17 +164,17 @@ npm install
 npm run dev        # API (port 8484, rechargement à chaud) + interface Vite (http://localhost:5173)
 ```
 
-| Commande                                    | Rôle                                                                |
-| ------------------------------------------- | ------------------------------------------------------------------- |
-| `npm run build`                             | Compile l'interface (Vite) puis le serveur (esbuild).               |
-| `npm start`                                 | Démarre le serveur de production (sert aussi l'interface compilée). |
-| `npm test`                                  | Tests unitaires et d'intégration (Vitest).                          |
-| `npm run typecheck`                         | Vérification TypeScript de tous les paquets.                        |
-| `npm run lint` / `npm run format`           | ESLint / Prettier.                                                  |
-| `npm run check`                             | Types + lint + tests.                                               |
-| `npm run demo:media`                        | (Re)génère les vidéos et affiches de démonstration.                 |
-| `npm run demo`                              | Démonstration complète hors ligne.                                  |
-| `npm run probe -w @lumiere/server -- <url>` | Affiche ce que l'analyseur comprend d'une page de listing.          |
+| Commande                                    | Rôle                                                                    |
+| ------------------------------------------- | ----------------------------------------------------------------------- |
+| `npm run build`                             | Compile l'interface (Vite) puis le serveur (esbuild).                   |
+| `npm start`                                 | Démarre le serveur de production (sert aussi l'interface compilée).     |
+| `npm test`                                  | Tests unitaires et d'intégration du serveur et de l'interface (Vitest). |
+| `npm run typecheck`                         | Vérification TypeScript de tous les paquets.                            |
+| `npm run lint` / `npm run format`           | ESLint / Prettier.                                                      |
+| `npm run check`                             | Types + lint + tests.                                                   |
+| `npm run demo:media`                        | (Re)génère les vidéos et affiches de démonstration.                     |
+| `npm run demo`                              | Démonstration complète hors ligne.                                      |
+| `npm run probe -w @lumiere/server -- <url>` | Affiche ce que l'analyseur comprend d'une page de listing.              |
 
 Structure du dépôt :
 
@@ -175,11 +183,12 @@ apps/server         API Fastify, catalogue, téléchargements, lecture (TypeScri
 apps/web            interface React + Vite + Tailwind CSS
 packages/shared     types partagés entre serveur et interface (contrats d'API)
 tools/demo-source   source de démonstration (index HTTP, vidéos ffmpeg, faux TMDB)
-docs/               architecture et captures d'écran
+docs/               architecture, design system et captures d'écran
 ```
 
-Les choix techniques sont détaillés dans **[CHOIX_TECHNIQUES.md](CHOIX_TECHNIQUES.md)** et
-l'architecture dans **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**.
+Les choix techniques sont détaillés dans **[CHOIX_TECHNIQUES.md](CHOIX_TECHNIQUES.md)**,
+l'architecture dans **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** et le design system
+Liquid Glass dans **[docs/DESIGN.md](docs/DESIGN.md)**.
 
 ---
 
@@ -191,6 +200,8 @@ l'architecture dans **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**.
 | « La source a répondu 403 »                          | Le site filtre peut-être les robots : essayez un autre User-Agent dans les paramètres.                                                                                                                                  |
 | Une vidéo ne se lance pas                            | Vérifiez que ffmpeg est détecté (**Paramètres → Système**). Le lecteur bascule automatiquement en conversion en cas d'échec.                                                                                            |
 | Pas d'affiches                                       | Ajoutez/testez la clé TMDB dans les paramètres.                                                                                                                                                                         |
+| Défilement saccadé                                   | **Paramètres → Apparence** : désactivez la réfraction ou choisissez « Teinté » ou « Opaque » (la réfraction se coupe d'elle-même si l'affichage saccade).                                                               |
+| Pas d'effet de réfraction                            | Normal hors Chrome, Edge, Brave ou Opera : Safari et Firefox affichent un verre dépoli.                                                                                                                                 |
 | « Le port 8484 est déjà utilisé »                    | `PORT=8585 npm start`                                                                                                                                                                                                   |
 
 ---

@@ -163,9 +163,14 @@ au redémarrage, les téléchargements interrompus repartent de l'octet où ils 
 
 ```
 main.tsx, router.tsx    point d'entrée, routes (pages chargées à la demande)
+styles/                 jetons de design, matériau Liquid Glass, fond d'ambiance
+design/glass/           moteur du verre : préférences d'apparence, réfraction (cartes de
+                        déplacement + filtres SVG), lumière dynamique, garde-fou de fluidité
+design/ambient/         palette extraite des illustrations, fond d'ambiance
 api/                    client HTTP typé, hooks TanStack Query, abonnement SSE
-components/ui/          boutons, badges, barres de progression, dialogues, onglets…
-components/layout/      barre latérale, en-tête, navigation mobile
+components/ui/          boutons, badges, barres de progression, dialogues, menus, contrôles
+                        segmentés, interrupteurs…
+components/layout/      barre latérale flottante, barre d'outils, barre d'onglets mobile
 components/media/       affiches, rangées défilantes, badges de release
 features/               une page par dossier : home, catalog, title, downloads, library,
                         explorer, settings, search, player
@@ -175,3 +180,8 @@ lib/                    formatage (tailles, durées), codecs du navigateur, WebV
 Le cache TanStack Query est la source de vérité côté client ; le flux SSE y injecte la
 progression des téléchargements et invalide les vues concernées (bibliothèque, fiches,
 catalogue) quand le serveur signale un changement.
+
+Le design system (couches, matériaux, jetons, accessibilité, prise en charge des navigateurs)
+est décrit dans [DESIGN.md](DESIGN.md). Les fonctions pures de l'interface (réfraction,
+détection des navigateurs, préférences, palette, navigation) sont couvertes par des tests
+Vitest (`apps/web/src/**/*.test.ts`).

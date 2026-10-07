@@ -9,6 +9,7 @@ import {
   RefreshCw,
   Save,
   Server,
+  Sparkles,
   XCircle,
 } from 'lucide-react';
 import { useMemo, useState, type ReactNode } from 'react';
@@ -26,6 +27,10 @@ import { Button } from '../../components/ui/Button';
 import { Field, Input, Select } from '../../components/ui/Field';
 import { PageLoader } from '../../components/ui/Spinner';
 import { ErrorState } from '../../components/ui/States';
+import { Switch } from '../../components/ui/Switch';
+import { Tabs } from '../../components/ui/Tabs';
+import { setAppearance, useAppearance, type GlassMaterial } from '../../design/glass/appearance';
+import { Glass } from '../../design/glass/Glass';
 import { cn } from '../../lib/cn';
 import { formatBytes, formatRelativeDate } from '../../lib/format';
 
@@ -68,15 +73,18 @@ function SettingsForm({ response }: { response: SettingsResponse }) {
   const save = () => update.mutate(changes);
 
   return (
-    <div className="mx-auto flex max-w-4xl flex-col gap-6 pt-2 pb-16">
+    <div className="mx-auto flex max-w-4xl flex-col gap-6 pb-16">
       <header>
-        <h1 className="text-3xl font-bold tracking-tight">Paramètres</h1>
+        <h1 className="large-title">Paramètres</h1>
         <p className="mt-1 text-sm text-zinc-400">
-          Source des fichiers, téléchargements, lecture et métadonnées.
+          Apparence, source des fichiers, téléchargements, lecture et métadonnées.
         </p>
       </header>
 
+      <AppearanceSection />
+
       <Section
+        tone="blue"
         icon={<Globe />}
         title="Source"
         description="Index HTTP (listing de dossiers) depuis lequel les films et séries sont récupérés."
@@ -118,7 +126,7 @@ function SettingsForm({ response }: { response: SettingsResponse }) {
         <SourceTester />
       </Section>
 
-      <Section icon={<Download />} title="Téléchargements">
+      <Section tone="green" icon={<Download />} title="Téléchargements">
         <Field
           label="Dossier de la bibliothèque"
           description="Les films sont rangés dans « Films/ », les séries dans « Séries/<série>/Saison NN/ »."
@@ -170,7 +178,7 @@ function SettingsForm({ response }: { response: SettingsResponse }) {
         </div>
       </Section>
 
-      <Section icon={<PlayCircle />} title="Lecture">
+      <Section tone="red" icon={<PlayCircle />} title="Lecture">
         <div className="grid gap-4 sm:grid-cols-2">
           <Field
             label="Langue audio préférée"
@@ -232,6 +240,7 @@ function SettingsForm({ response }: { response: SettingsResponse }) {
       </Section>
 
       <Section
+        tone="teal"
         icon={<KeyRound />}
         title="Métadonnées (TMDB)"
         description="Affiches, résumés, notes et titres d'épisodes proviennent de The Movie Database (clé gratuite)."
@@ -255,7 +264,7 @@ function SettingsForm({ response }: { response: SettingsResponse }) {
                   href="https://www.themoviedb.org/settings/api"
                   target="_blank"
                   rel="noreferrer"
-                  className="text-brand-300 underline"
+                  className="font-medium text-brand-300 underline underline-offset-2"
                 >
                   themoviedb.org/settings/api
                 </a>{' '}
@@ -293,17 +302,23 @@ function SettingsForm({ response }: { response: SettingsResponse }) {
       />
       <SystemSection />
 
-      <div
+      {/* Barre d'enregistrement flottante en verre épais (couche fonctionnelle). */}
+      <Glass
+        variant="thick"
+        role="region"
+        aria-label="Modifications non enregistrées"
+        aria-hidden={!dirty}
         className={cn(
-          'fixed inset-x-0 bottom-20 z-40 mx-auto flex w-[min(92vw,40rem)] items-center justify-between gap-4 rounded-2xl border border-brand-400/25 bg-ink-850/95 px-5 py-3 shadow-2xl backdrop-blur-xl transition lg:bottom-6 lg:left-64',
-          dirty ? 'translate-y-0 opacity-100' : 'pointer-events-none translate-y-6 opacity-0',
+          'fixed right-0 bottom-[calc(env(safe-area-inset-bottom)+5.75rem)] left-0 z-40 mx-auto flex w-[min(92vw,40rem)] items-center justify-between gap-4 rounded-full py-2 pr-2 pl-5 transition duration-500 ease-spring lg:bottom-6 lg:left-[var(--sidebar-width)]',
+          dirty ? 'translate-y-0 opacity-100' : 'pointer-events-none translate-y-8 opacity-0',
         )}
       >
-        <span className="text-sm text-zinc-300">Modifications non enregistrées</span>
-        <div className="flex gap-2">
+        <span className="text-sm font-medium text-zinc-100">Modifications non enregistrées</span>
+        <div className="flex gap-1.5">
           <Button
             variant="ghost"
             size="sm"
+            tabIndex={dirty ? undefined : -1}
             onClick={() => {
               setDraft(response.settings);
               setTmdbKey('');
@@ -316,33 +331,130 @@ function SettingsForm({ response }: { response: SettingsResponse }) {
             size="sm"
             icon={<Save className="size-4" />}
             loading={update.isPending}
+            tabIndex={dirty ? undefined : -1}
             onClick={save}
           >
             Enregistrer
           </Button>
         </div>
-      </div>
+      </Glass>
     </div>
   );
 }
+
+const MATERIALS: Array<{ value: GlassMaterial; label: string; description: string }> = [
+  {
+    value: 'clear',
+    label: 'Transparent',
+    description:
+      'Liquid Glass : le verre laisse transparaître le contenu et réfracte la lumière sur ses bords.',
+  },
+  {
+    value: 'tinted',
+    label: 'Teinté',
+    description: 'Verre plus opaque et plus contrasté, pour une lecture plus confortable.',
+  },
+  {
+    value: 'solid',
+    label: 'Opaque',
+    description: 'Surfaces givrées sans transparence (équivalent de « Réduire la transparence »).',
+  },
+];
+
+/** Réglages d'apparence propres à l'appareil (stockés localement, appliqués immédiatement). */
+function AppearanceSection() {
+  const appearance = useAppearance();
+  const { preferences, system, refractionSupported } = appearance;
+  const current = MATERIALS.find((item) => item.value === preferences.material) ?? MATERIALS[0];
+  return (
+    <Section
+      tone="violet"
+      icon={<Sparkles />}
+      title="Apparence"
+      description="Réglages propres à cet appareil, appliqués immédiatement."
+    >
+      <div className="flex flex-col gap-2">
+        <span className="px-1 text-sm font-medium text-zinc-200">Matériau des barres et menus</span>
+        <Tabs<GlassMaterial>
+          kind="radio"
+          label="Matériau des barres et menus"
+          items={MATERIALS.map(({ value, label }) => ({ value, label }))}
+          value={preferences.material}
+          onChange={(material) => setAppearance({ material })}
+        />
+        <p className="px-1 text-xs leading-relaxed text-zinc-400">
+          {system.reducedTransparency
+            ? '« Réduire la transparence » est activé sur cet appareil : les surfaces restent opaques.'
+            : current?.description}
+        </p>
+      </div>
+      <div className="flex flex-col gap-5 border-t border-white/[0.07] pt-5">
+        <Switch
+          label="Réfraction des bords (effet lentille)"
+          description={
+            !refractionSupported
+              ? 'Nécessite un navigateur basé sur Chromium (Chrome, Edge, Brave, Opera) ; ailleurs, le verre reste dépoli.'
+              : appearance.refractionThrottled
+                ? 'Désactivée automatiquement : l’affichage était saccadé sur cet appareil. Réactivez-la pour forcer l’effet.'
+                : 'Le verre courbe la lumière sur ses contours. À désactiver sur une machine modeste.'
+          }
+          checked={refractionSupported && preferences.refraction && !appearance.refractionThrottled}
+          disabled={!refractionSupported || appearance.material === 'solid'}
+          onChange={(refraction) => setAppearance({ refraction })}
+        />
+        <Switch
+          label="Reflets dynamiques"
+          description={
+            system.reducedMotion
+              ? '« Réduire les animations » est activé sur cet appareil : reflets fixes.'
+              : "Les reflets suivent le pointeur ou l'inclinaison de l'appareil."
+          }
+          checked={appearance.lightActive}
+          disabled={system.reducedMotion || appearance.material === 'solid'}
+          onChange={(dynamicLight) => setAppearance({ dynamicLight })}
+        />
+      </div>
+    </Section>
+  );
+}
+
+/** Pastilles d'icônes colorées, à la manière des Réglages d'iOS. */
+const TONES = {
+  violet: 'from-violet-400 to-violet-600',
+  blue: 'from-sky-400 to-blue-600',
+  green: 'from-emerald-400 to-green-600',
+  red: 'from-rose-400 to-red-600',
+  teal: 'from-teal-300 to-cyan-600',
+  indigo: 'from-indigo-400 to-indigo-600',
+  gray: 'from-zinc-400 to-zinc-600',
+} as const;
 
 function Section({
   icon,
   title,
   description,
+  tone = 'gray',
   children,
 }: {
   icon: ReactNode;
   title: string;
   description?: string;
+  tone?: keyof typeof TONES;
   children: ReactNode;
 }) {
   return (
-    <section className="surface flex flex-col gap-5 p-5 sm:p-6">
-      <div className="flex items-start gap-3">
-        <div className="rounded-xl bg-brand-400/10 p-2 text-brand-300 [&>svg]:size-5">{icon}</div>
+    <section className="fill flex flex-col gap-5 rounded-card p-5 sm:p-6">
+      <div className="flex items-start gap-3.5">
+        <div
+          className={cn(
+            'flex size-9 shrink-0 items-center justify-center rounded-[0.625rem] bg-gradient-to-b text-white shadow-[inset_0_1px_0_rgb(255_255_255/0.4),0_6px_14px_-6px_rgb(0_0_0/0.7)] [&>svg]:size-5',
+            TONES[tone],
+          )}
+        >
+          {icon}
+        </div>
         <div>
-          <h2 className="text-lg font-semibold">{title}</h2>
+          <h2 className="text-lg font-bold tracking-tight">{title}</h2>
           {description && <p className="text-sm text-zinc-400">{description}</p>}
         </div>
       </div>
@@ -355,10 +467,11 @@ function SourceTester() {
   const test = useTestSource();
   const result = test.data;
   return (
-    <div className="flex flex-col gap-3 rounded-xl bg-white/[0.03] p-4">
+    <div className="flex flex-col gap-3 rounded-[1rem] bg-white/[0.05] p-4">
       <div className="flex flex-wrap items-center gap-3">
         <Button
           size="sm"
+          variant="glass"
           icon={<Server className="size-4" />}
           loading={test.isPending}
           onClick={() => test.mutate(undefined)}
@@ -398,6 +511,7 @@ function TmdbTester({ candidate }: { candidate: string }) {
     <div className="flex flex-wrap items-center gap-3">
       <Button
         size="sm"
+        variant="glass"
         loading={test.isPending}
         onClick={() => test.mutate(candidate.trim() || undefined)}
       >
@@ -429,13 +543,14 @@ function CatalogSection({
   const refresh = useRefreshCatalog();
   return (
     <Section
+      tone="indigo"
       icon={<Database />}
       title="Catalogue"
       description="Liste des titres lue sur la source et mise en cache localement."
     >
       <div className="grid gap-3 sm:grid-cols-2">
         {system.data?.catalog.map((section) => (
-          <div key={section.kind} className="rounded-xl bg-white/[0.03] p-4 text-sm">
+          <div key={section.kind} className="rounded-[1rem] bg-white/[0.05] p-4 text-sm">
             <div className="flex items-center justify-between">
               <span className="font-semibold">{section.kind === 'movie' ? 'Films' : 'Séries'}</span>
               <Badge
@@ -454,7 +569,7 @@ function CatalogSection({
                     : `${section.count} titres`}
               </Badge>
             </div>
-            <p className="mt-1 font-mono text-xs text-zinc-500">{section.path}</p>
+            <p className="mt-1 font-mono text-xs text-zinc-400">{section.path}</p>
             <p className="mt-1 text-xs text-zinc-400">
               {section.lastRefreshAt
                 ? `Actualisé ${formatRelativeDate(section.lastRefreshAt)}`
@@ -479,6 +594,8 @@ function CatalogSection({
           </Select>
         </Field>
         <Button
+          variant="glass"
+          className="h-11"
           icon={<RefreshCw className="size-4" />}
           loading={refresh.isPending}
           onClick={() => refresh.mutate(undefined)}
@@ -514,11 +631,11 @@ function SystemSection() {
     ['Données', <span className="font-mono text-xs">{info.dataDir}</span>],
   ];
   return (
-    <Section icon={<Cpu />} title="Système">
+    <Section tone="gray" icon={<Cpu />} title="Système">
       <dl className="grid gap-x-6 gap-y-3 text-sm sm:grid-cols-[10rem_1fr]">
         {rows.map(([label, value]) => (
           <div key={label} className="contents">
-            <dt className="text-zinc-500">{label}</dt>
+            <dt className="text-zinc-400">{label}</dt>
             <dd className="text-zinc-200">{value}</dd>
           </div>
         ))}

@@ -55,7 +55,7 @@ export function DownloadState({
 
   if (libraryItemId !== null) {
     return (
-      <span className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-emerald-400/10 px-3 text-xs font-semibold text-emerald-300 ring-1 ring-emerald-400/25 ring-inset">
+      <span className="inline-flex h-8 items-center gap-1.5 rounded-full bg-emerald-400/15 px-3 text-xs font-semibold text-emerald-200 ring-1 ring-emerald-300/30 ring-inset">
         <Check className="size-3.5" strokeWidth={3} />
         {!compact && 'Téléchargé'}
       </span>
@@ -69,7 +69,7 @@ export function DownloadState({
     return (
       <Link
         to="/telechargements"
-        className="flex h-8 min-w-36 flex-col justify-center gap-1 rounded-lg bg-white/[0.05] px-3 ring-1 ring-white/10 ring-inset hover:bg-white/10"
+        className="fill flex h-8 min-w-36 flex-col justify-center gap-1 rounded-full px-3.5 transition hover:bg-white/[0.12]"
         title="Voir les téléchargements"
       >
         <span className="flex items-center gap-1.5 text-[11px] font-semibold text-zinc-200">
@@ -82,9 +82,10 @@ export function DownloadState({
             : live.status === 'paused'
               ? 'En pause'
               : 'Téléchargement'}
-          {percent !== null && <span className="ml-auto text-zinc-400">{percent} %</span>}
+          {percent !== null && <span className="ml-auto text-zinc-300">{percent} %</span>}
         </span>
         <ProgressBar
+          label="Progression du téléchargement"
           value={live.progress}
           className="h-1"
           tone={live.status === 'paused' ? 'muted' : 'brand'}
@@ -141,6 +142,7 @@ export function WatchProgress({ file, className }: { file: RemoteFile; className
   const value = watch.completed ? 1 : watch.duration ? watch.position / watch.duration : null;
   return (
     <ProgressBar
+      label="Progression du visionnage"
       value={value}
       tone={watch.completed ? 'success' : 'brand'}
       className={cn('h-1', className)}

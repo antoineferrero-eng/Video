@@ -1,4 +1,5 @@
-function hash(seed: string): number {
+/** Empreinte stable d'une chaîne (FNV-1a), pour dériver des couleurs d'un titre. */
+export function hashSeed(seed: string): number {
   let value = 2166136261;
   for (let index = 0; index < seed.length; index += 1) {
     value ^= seed.charCodeAt(index);
@@ -9,7 +10,7 @@ function hash(seed: string): number {
 
 /** Dégradé déterministe pour les affiches générées (titres sans illustration). */
 export function gradientFor(seed: string): string {
-  const value = hash(seed);
+  const value = hashSeed(seed);
   const hue = value % 360;
   const second = (hue + 35 + ((value >> 9) % 70)) % 360;
   return `radial-gradient(120% 90% at 20% 0%, hsl(${hue} 70% 42% / 0.85), transparent 60%),

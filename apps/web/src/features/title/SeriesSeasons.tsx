@@ -38,6 +38,7 @@ export function SeriesSeasons({
   return (
     <section className="flex flex-col gap-5">
       <Tabs
+        label="Saisons"
         items={title.seasons.map((item) => ({
           value: item.key,
           label: item.name,
@@ -78,17 +79,22 @@ function SeasonHeader({
   return (
     <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
       <div>
-        <h2 className="text-xl font-semibold">{season.name}</h2>
+        <h2 className="text-xl font-bold tracking-tight">{season.name}</h2>
         <p className="text-sm text-zinc-400">
           {plural(season.episodes.length, 'épisode')}
           {size > 0 && ` · environ ${formatBytes(size)}`}
         </p>
         {season.overview && (
-          <p className="mt-2 max-w-3xl text-sm text-zinc-400">{season.overview}</p>
+          <p className="mt-2 max-w-3xl text-sm text-zinc-300">{season.overview}</p>
         )}
       </div>
       {season.episodes.length > 0 && (
-        <Button icon={<Download className="size-4" />} onClick={onDownload} loading={downloading}>
+        <Button
+          variant="glass"
+          icon={<Download className="size-4" />}
+          onClick={onDownload}
+          loading={downloading}
+        >
           Télécharger la saison
         </Button>
       )}
@@ -113,11 +119,11 @@ function EpisodeRow({
   const watched = file.availability.watch?.completed ?? false;
 
   return (
-    <article className="surface group flex flex-col gap-3 p-3 sm:flex-row sm:items-center sm:gap-4">
+    <article className="fill group flex flex-col gap-3 rounded-card p-2.5 sm:flex-row sm:items-center sm:gap-4">
       <button
         type="button"
         onClick={() => navigate(playerUrl(mediaRefFor(file)))}
-        className="relative aspect-video w-full shrink-0 overflow-hidden rounded-xl sm:w-44"
+        className="relative aspect-video w-full shrink-0 overflow-hidden rounded-[0.75rem] shadow-[0_10px_24px_-14px_rgb(0_0_0/0.9)] sm:w-48"
         aria-label={`Lire ${episode.title}`}
       >
         <div
@@ -138,18 +144,20 @@ function EpisodeRow({
             {pad2(episode.episode)}
           </span>
         )}
-        <span className="absolute inset-0 flex items-center justify-center bg-black/40 opacity-0 transition group-hover:opacity-100">
-          <Play className="size-8 fill-white text-white" />
+        <span className="absolute inset-0 flex items-center justify-center bg-black/25 opacity-0 transition group-hover:opacity-100">
+          <span className="glass glass-clear flex size-12 items-center justify-center rounded-full">
+            <Play className="ml-0.5 size-5 fill-white text-white" />
+          </span>
         </span>
         <WatchProgress file={file} className="absolute inset-x-0 bottom-0 rounded-none" />
       </button>
 
-      <div className="min-w-0 flex-1">
-        <h3 className={cn('font-semibold', watched ? 'text-zinc-400' : 'text-zinc-100')}>
-          {episode.episode !== null && <span className="text-zinc-500">{episode.episode}. </span>}
+      <div className="min-w-0 flex-1 px-1 sm:px-0">
+        <h3 className={cn('font-semibold', watched ? 'text-zinc-400' : 'text-white')}>
+          {episode.episode !== null && <span className="text-zinc-400">{episode.episode}. </span>}
           {episode.title}
         </h3>
-        <p className="mt-0.5 text-xs text-zinc-500">
+        <p className="mt-0.5 text-xs text-zinc-400">
           {[
             episode.airDate && formatDate(episode.airDate),
             episode.runtime && `${episode.runtime} min`,
@@ -159,7 +167,7 @@ function EpisodeRow({
             .join(' · ')}
         </p>
         {episode.overview && (
-          <p className="mt-1.5 line-clamp-2 text-sm text-zinc-400">{episode.overview}</p>
+          <p className="mt-1.5 line-clamp-2 text-sm text-zinc-300">{episode.overview}</p>
         )}
         <div className="mt-2">
           <ReleaseBadges release={file.release} compact />
@@ -179,7 +187,7 @@ function EpisodeRow({
             {episode.files.map((version) => (
               <div
                 key={version.path}
-                className="flex flex-wrap items-center gap-2 rounded-lg bg-white/[0.03] p-2"
+                className="flex flex-wrap items-center gap-2 rounded-[0.875rem] bg-white/[0.05] p-2"
               >
                 <span
                   className="min-w-0 flex-1 truncate font-mono text-[11px] text-zinc-400"
@@ -187,7 +195,7 @@ function EpisodeRow({
                 >
                   {version.name}
                 </span>
-                <span className="text-xs text-zinc-500">{formatBytes(version.size)}</span>
+                <span className="text-xs text-zinc-400">{formatBytes(version.size)}</span>
                 <DownloadState file={version} titleId={titleId} compact />
                 <PlayButton file={version} label={null} />
               </div>
@@ -196,7 +204,7 @@ function EpisodeRow({
         )}
       </div>
 
-      <div className="flex items-center gap-2 self-end sm:self-center">
+      <div className="flex items-center gap-2 self-end pr-1.5 pb-1 sm:self-center sm:pb-0">
         <WatchedToggle file={file} />
         <DownloadState file={file} titleId={titleId} />
         <PlayButton file={file} />

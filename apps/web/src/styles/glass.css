@@ -1,0 +1,430 @@
+/*
+ * Liquid Glass — matériau de la couche fonctionnelle (navigation et commandes).
+ *
+ * Empilement, de l'arrière vers l'avant :
+ *   1. arrière-plan : flou + réfraction des bords (filtre SVG, Chromium) + saturation + atténuation ;
+ *   2. teinte : voile sombre et léger dégradé de volume ;
+ *   3. lueur interne au toucher/survol (::before, sous le contenu) ;
+ *   4. arêtes spéculaires orientées selon la lumière (::after) ;
+ *   5. ombre portée qui détache l'élément du contenu.
+ *
+ * Variantes (HIG « Materials ») : normale (par défaut), claire (sur des médias, avec voile),
+ * épaisse (menus, feuilles) et proéminente (teintée, actions principales uniquement).
+ * Les réglages d'accessibilité et les préférences d'apparence ne font que modifier les variables.
+ */
+
+/*
+ * Valeurs mesurées pour le pire cas (contenu blanc sous le verre) : texte blanc ≥ 4,5:1 sur le
+ * verre normal et épais ; ≥ 3:1 (icônes, grands textes) sur le verre clair, toujours posé sur
+ * un voile d'atténuation. L'atténuation (brightness) n'assombrit que les fonds clairs.
+ */
+:root {
+  --lg-tint: 22 22 30;
+  --lg-alpha: 0.44;
+  --lg-clear-alpha: 0.16;
+  --lg-thick-alpha: 0.58;
+  --lg-blur: 16px;
+  --lg-clear-blur: 4px;
+  --lg-thick-blur: 30px;
+  --lg-saturate: 1.8;
+  --lg-dim: 0.68;
+  --lg-clear-dim: 0.66;
+  --lg-edge: 0.55;
+  --lg-light-angle: 135deg;
+  --lg-shadow: 0 18px 40px -18px rgb(0 0 0 / 0.7), 0 4px 12px -4px rgb(0 0 0 / 0.35);
+  --lg-thick-shadow: 0 34px 80px -24px rgb(0 0 0 / 0.8), 0 10px 24px -8px rgb(0 0 0 / 0.45);
+}
+
+/* « Teinté » (iOS 26.1) : verre plus opaque et plus contrasté. */
+:root[data-glass='tinted'] {
+  --lg-alpha: 0.74;
+  --lg-clear-alpha: 0.6;
+  --lg-thick-alpha: 0.86;
+  --lg-blur: 24px;
+  --lg-clear-blur: 16px;
+  --lg-dim: 0.62;
+  --lg-clear-dim: 0.7;
+  --lg-edge: 0.4;
+}
+
+/* « Opaque » ou « Réduire la transparence » : surfaces givrées, sans transparence. */
+:root[data-glass='solid'] {
+  --lg-alpha: 0.97;
+  --lg-clear-alpha: 0.94;
+  --lg-thick-alpha: 0.99;
+  --lg-backdrop: none;
+  --lg-edge: 0.3;
+}
+
+@layer components {
+  .glass {
+    --_alpha: var(--lg-alpha);
+    --_blur: var(--lg-blur);
+    --_dim: var(--lg-dim);
+    position: relative;
+    isolation: isolate;
+    background:
+      linear-gradient(
+        180deg,
+        rgb(255 255 255 / 0.085),
+        rgb(255 255 255 / 0.02) 42%,
+        rgb(255 255 255 / 0.04)
+      ),
+      rgb(var(--lg-tint) / var(--_alpha));
+    -webkit-backdrop-filter: var(
+      --lg-backdrop,
+      blur(var(--_blur)) saturate(var(--lg-saturate)) brightness(var(--_dim))
+    );
+    backdrop-filter: var(
+      --lg-backdrop,
+      blur(var(--_blur)) var(--lg-refraction,) saturate(var(--lg-saturate)) brightness(var(--_dim))
+    );
+    box-shadow:
+      inset 0 1px 0 0 rgb(255 255 255 / calc(var(--lg-edge) * 0.5)),
+      inset 0 -1px 0 0 rgb(255 255 255 / calc(var(--lg-edge) * 0.12)),
+      inset 0 0 0 1px rgb(255 255 255 / 0.06),
+      inset 0 0 24px 0 rgb(255 255 255 / 0.035),
+      var(--lg-shadow);
+  }
+
+  /* Arêtes spéculaires : la lumière glisse le long du contour selon --lg-light-angle. */
+  .glass::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    padding: 1px;
+    border-radius: inherit;
+    background: linear-gradient(
+      var(--lg-light-angle),
+      rgb(255 255 255 / var(--lg-edge)) 0%,
+      rgb(255 255 255 / calc(var(--lg-edge) * 0.18)) 20%,
+      rgb(255 255 255 / 0) 42%,
+      rgb(255 255 255 / 0) 58%,
+      rgb(255 255 255 / calc(var(--lg-edge) * 0.14)) 80%,
+      rgb(255 255 255 / calc(var(--lg-edge) * 0.62)) 100%
+    );
+    -webkit-mask:
+      linear-gradient(#000 0 0) content-box,
+      linear-gradient(#000 0 0);
+    -webkit-mask-composite: xor;
+    mask:
+      linear-gradient(#000 0 0) content-box exclude,
+      linear-gradient(#000 0 0);
+    pointer-events: none;
+  }
+
+  /* Variante claire : très translucide, réservée aux commandes posées sur des images/vidéos. */
+  .glass-clear {
+    --_alpha: var(--lg-clear-alpha);
+    --_blur: var(--lg-clear-blur);
+    --_dim: var(--lg-clear-dim);
+  }
+
+  /* Grandes surfaces (menus, feuilles) : matériau plus épais, ombre plus profonde. */
+  .glass-thick {
+    --_alpha: var(--lg-thick-alpha);
+    --_blur: var(--lg-thick-blur);
+    --lg-shadow: var(--lg-thick-shadow);
+  }
+
+  /* Verre proéminent (teinté) : la couleur d'accent, pour l'action principale uniquement. */
+  .glass-prominent {
+    color: var(--color-ink-950);
+    background:
+      linear-gradient(
+        180deg,
+        rgb(255 255 255 / 0.38),
+        rgb(255 255 255 / 0.08) 45%,
+        rgb(255 255 255 / 0) 60%,
+        rgb(255 255 255 / 0.12)
+      ),
+      rgb(251 191 36 / 0.94);
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+    box-shadow:
+      inset 0 1px 0 0 rgb(255 255 255 / 0.6),
+      inset 0 -1px 0 0 rgb(120 53 15 / 0.25),
+      inset 0 0 0 1px rgb(255 255 255 / 0.12),
+      0 10px 28px -10px rgb(245 158 11 / 0.55),
+      0 3px 8px -2px rgb(0 0 0 / 0.35);
+  }
+
+  .glass-prominent::after {
+    --lg-edge: 0.75;
+  }
+
+  /*
+   * Interaction : le verre s'illumine de l'intérieur depuis le point de contact puis
+   * « se soulève » avec une élasticité de gel (HIG : flexing, illumination).
+   */
+  .glass-interactive {
+    transition:
+      transform 0.5s var(--ease-spring),
+      background-color 0.2s ease,
+      box-shadow 0.3s ease;
+  }
+
+  .glass-interactive::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    border-radius: inherit;
+    background: radial-gradient(
+      140% 140% at var(--lg-px, 50%) var(--lg-py, 0%),
+      rgb(255 255 255 / 0.2),
+      rgb(255 255 255 / 0.04) 45%,
+      transparent 70%
+    );
+    opacity: 0;
+    transition: opacity 0.35s var(--ease-fluid);
+    pointer-events: none;
+  }
+
+  .glass-interactive:hover::before {
+    opacity: 0.55;
+  }
+
+  .glass-interactive:active::before {
+    opacity: 1;
+    transition-duration: 0.06s;
+  }
+
+  .glass-interactive:active {
+    transform: scale(1.06);
+    transition-duration: 0.18s;
+  }
+
+  .glass-prominent.glass-interactive::before {
+    background: radial-gradient(
+      140% 140% at var(--lg-px, 50%) var(--lg-py, 0%),
+      rgb(255 255 255 / 0.55),
+      transparent 60%
+    );
+  }
+
+  /*
+   * « Remplissages » de la couche de contenu : HIG — pas de verre sur verre ni dans le contenu,
+   * mais des remplissages translucides et vibrants qui paraissent faire partie du matériau.
+   */
+  .fill {
+    background-color: rgb(255 255 255 / 0.07);
+    box-shadow:
+      inset 0 1px 0 0 rgb(255 255 255 / 0.07),
+      inset 0 0 0 1px rgb(255 255 255 / 0.05);
+  }
+
+  .fill-strong {
+    background-color: rgb(255 255 255 / 0.12);
+    box-shadow:
+      inset 0 1px 0 0 rgb(255 255 255 / 0.12),
+      inset 0 0 0 1px rgb(255 255 255 / 0.07);
+  }
+
+  /* Indicateur de sélection « liquide » (onglets, barre latérale, contrôles segmentés). */
+  .lens-indicator {
+    position: absolute;
+    pointer-events: none;
+    background:
+      linear-gradient(180deg, rgb(255 255 255 / 0.16), rgb(255 255 255 / 0.07)),
+      rgb(255 255 255 / 0.04);
+    box-shadow:
+      inset 0 1px 0 0 rgb(255 255 255 / 0.28),
+      inset 0 -1px 0 0 rgb(255 255 255 / 0.06),
+      inset 0 0 0 1px rgb(255 255 255 / 0.08),
+      0 6px 16px -8px rgb(0 0 0 / 0.6);
+  }
+}
+
+/* Contraste élevé : éléments noir/blanc soulignés d'un contour contrasté (HIG). */
+@media (prefers-contrast: more) {
+  :root {
+    --lg-alpha: 0.94;
+    --lg-clear-alpha: 0.88;
+    --lg-thick-alpha: 0.97;
+    --lg-edge: 0.95;
+  }
+
+  .glass {
+    box-shadow:
+      inset 0 0 0 1.5px rgb(255 255 255 / 0.75),
+      var(--lg-shadow);
+  }
+
+  .fill,
+  .fill-strong {
+    box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.45);
+  }
+}
+
+/* Mouvements réduits : plus d'élasticité ni de « soulèvement » (HIG). */
+@media (prefers-reduced-motion: reduce) {
+  .glass-interactive,
+  .glass-interactive:active {
+    transform: none;
+    transition-duration: 0.01ms;
+  }
+}
+
+/* Couleurs forcées (contraste élevé de Windows) : surfaces système lisibles. */
+@media (forced-colors: active) {
+  .glass,
+  .glass-prominent {
+    background: Canvas;
+    color: CanvasText;
+    border: 1px solid CanvasText;
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+
+  .glass::after,
+  .glass-interactive::before {
+    display: none;
+  }
+}
+
+/* Placement de l'indicateur liquide (positions écrites par useLiquidIndicator). */
+.lens-indicator[data-axis='x'] {
+  left: var(--ind-start);
+  right: var(--ind-end);
+  top: var(--ind-cross);
+  height: var(--ind-cross-size);
+}
+
+.lens-indicator[data-axis='y'] {
+  top: var(--ind-start);
+  bottom: var(--ind-end);
+  left: var(--ind-cross);
+  width: var(--ind-cross-size);
+}
+
+.lens-indicator[data-ready='true'] {
+  transition:
+    left 0.5s var(--ease-spring),
+    right 0.5s var(--ease-spring),
+    top 0.5s var(--ease-spring),
+    bottom 0.5s var(--ease-spring),
+    opacity 0.2s ease;
+}
+
+/* Le bord avant part le premier, le bord arrière suit : la goutte s'étire puis se rétracte. */
+.lens-indicator[data-ready='true'][data-axis='x'][data-direction='forward'] {
+  transition:
+    left 0.62s var(--ease-spring),
+    right 0.34s var(--ease-spring),
+    opacity 0.2s ease;
+}
+
+.lens-indicator[data-ready='true'][data-axis='x'][data-direction='backward'] {
+  transition:
+    left 0.34s var(--ease-spring),
+    right 0.62s var(--ease-spring),
+    opacity 0.2s ease;
+}
+
+.lens-indicator[data-ready='true'][data-axis='y'][data-direction='forward'] {
+  transition:
+    top 0.62s var(--ease-spring),
+    bottom 0.34s var(--ease-spring),
+    opacity 0.2s ease;
+}
+
+.lens-indicator[data-ready='true'][data-axis='y'][data-direction='backward'] {
+  transition:
+    top 0.34s var(--ease-spring),
+    bottom 0.62s var(--ease-spring),
+    opacity 0.2s ease;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lens-indicator[data-ready='true'] {
+    transition: opacity 0.2s ease !important;
+  }
+}
+
+@layer components {
+  /* Champ de recherche en verre : anneau de focus intégré à l'ombre du matériau. */
+  .glass-field:focus-within {
+    --lg-shadow: 0 0 0 3px rgb(251 191 36 / 0.32), 0 18px 40px -18px rgb(0 0 0 / 0.7);
+  }
+
+  /* Interrupteur iOS 26 : le curseur s'étire et devient lentille de verre pendant l'appui. */
+  .switch-knob {
+    display: block;
+    width: 27px;
+    height: 27px;
+    border-radius: 9999px;
+    background: #fff;
+    box-shadow:
+      0 3px 8px rgb(0 0 0 / 0.3),
+      0 1px 1px rgb(0 0 0 / 0.16);
+    transition:
+      transform 0.5s var(--ease-spring),
+      width 0.35s var(--ease-spring),
+      background-color 0.2s ease,
+      box-shadow 0.2s ease;
+  }
+
+  .switch[data-checked='true'] .switch-knob {
+    transform: translateX(20px);
+  }
+
+  .switch:active:not(:disabled) .switch-knob {
+    width: 34px;
+    background: rgb(255 255 255 / 0.5);
+    box-shadow:
+      inset 0 1px 0 rgb(255 255 255 / 0.9),
+      inset 0 0 0 1px rgb(255 255 255 / 0.55),
+      0 6px 16px rgb(0 0 0 / 0.35);
+    -webkit-backdrop-filter: blur(2px) saturate(1.8);
+    backdrop-filter: blur(2px) saturate(1.8);
+  }
+
+  .switch[data-checked='true']:active:not(:disabled) .switch-knob {
+    transform: translateX(13px);
+  }
+}
+
+/* Notifications (sonner) : capsules de verre épais. Sélecteurs renforcés car la bibliothèque
+   injecte ses propres styles après les nôtres. */
+html [data-sonner-toaster][data-sonner-theme='dark'] {
+  --normal-bg: rgb(24 24 32 / 0.6);
+  --normal-bg-hover: rgb(44 44 56 / 0.75);
+  --normal-border: rgb(255 255 255 / 0.12);
+  --normal-border-hover: rgb(255 255 255 / 0.2);
+  --normal-text: #f4f4f5;
+  --success-bg: rgb(12 58 40 / 0.62);
+  --success-border: rgb(52 211 153 / 0.32);
+  --success-text: #bbf7d0;
+  --error-bg: rgb(84 18 24 / 0.66);
+  --error-border: rgb(248 113 113 / 0.38);
+  --error-text: #fecaca;
+  --info-bg: rgb(18 40 74 / 0.62);
+  --info-border: rgb(96 165 250 / 0.32);
+  --info-text: #bfdbfe;
+  --warning-bg: rgb(74 52 10 / 0.62);
+  --warning-border: rgb(251 191 36 / 0.36);
+  --warning-text: #fde68a;
+  --border-radius: 1.375rem;
+}
+
+html [data-sonner-toaster] [data-sonner-toast].lg-toast {
+  -webkit-backdrop-filter: blur(26px) saturate(1.8);
+  backdrop-filter: blur(26px) saturate(1.8);
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 0.2),
+    0 22px 48px -18px rgb(0 0 0 / 0.75);
+}
+
+html[data-glass='solid'] [data-sonner-toaster][data-sonner-theme='dark'] {
+  --normal-bg: #1c1c24;
+  --success-bg: #0f2f22;
+  --error-bg: #3a1216;
+  --info-bg: #122640;
+  --warning-bg: #3a2a08;
+}
+
+html[data-glass='solid'] [data-sonner-toaster] [data-sonner-toast].lg-toast {
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}

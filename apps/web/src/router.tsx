@@ -1,16 +1,20 @@
 import { createBrowserRouter } from 'react-router';
 import { NotFound, Shell } from './components/layout/Shell';
+import { PageLoader } from './components/ui/Spinner';
 import { HomePage } from './features/home/HomePage';
 
 // Les pages secondaires sont chargées à la demande (découpage du bundle).
 export const router = createBrowserRouter([
   {
     path: '/lecture',
+    hydrateFallbackElement: <PageLoader />,
     lazy: () =>
       import('./features/player/PlayerPage').then((module) => ({ Component: module.PlayerPage })),
   },
   {
     element: <Shell />,
+    // Affiché pendant le chargement initial d'une page chargée à la demande.
+    hydrateFallbackElement: <PageLoader />,
     children: [
       { index: true, element: <HomePage /> },
       {

@@ -20,16 +20,16 @@ export function EmptyState({
   return (
     <div
       className={cn(
-        'flex flex-col items-center justify-center gap-3 rounded-2xl border border-dashed border-white/10 px-6 py-16 text-center',
+        'fill flex flex-col items-center justify-center gap-3 rounded-card px-6 py-16 text-center',
         className,
       )}
     >
       {icon && (
-        <div className="mb-1 rounded-2xl bg-white/[0.04] p-4 text-zinc-400 [&>svg]:size-8">
+        <div className="mb-1 flex size-16 items-center justify-center rounded-full bg-gradient-to-b from-white/[0.14] to-white/[0.04] text-zinc-200 shadow-[inset_0_1px_0_rgb(255_255_255/0.25),0_10px_24px_-12px_rgb(0_0_0/0.8)] [&>svg]:size-7">
           {icon}
         </div>
       )}
-      <h3 className="text-lg font-semibold text-zinc-100">{title}</h3>
+      <h3 className="text-lg font-semibold text-white">{title}</h3>
       {description && <div className="max-w-md text-sm text-zinc-400">{description}</div>}
       {action && <div className="mt-2">{action}</div>}
     </div>

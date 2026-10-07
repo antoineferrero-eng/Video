@@ -1,32 +1,49 @@
 import type { ReactNode } from 'react';
 import { cn } from '../../lib/cn';
 
-type Variant = 'primary' | 'secondary' | 'ghost' | 'danger' | 'glass';
-type Size = 'sm' | 'md' | 'lg' | 'icon' | 'icon-sm';
+/**
+ * - primary : verre proéminent teinté à la couleur d'accent (action principale uniquement) ;
+ * - glass / glass-clear : Liquid Glass (commandes flottantes ; « clear » sur images et vidéos) ;
+ * - secondary : remplissage translucide de la couche de contenu ;
+ * - ghost : texte seul ; danger : action destructrice.
+ */
+export type ButtonVariant = 'primary' | 'secondary' | 'ghost' | 'danger' | 'glass' | 'glass-clear';
+type Size = 'sm' | 'md' | 'lg' | 'icon' | 'icon-sm' | 'icon-lg' | 'icon-xl';
 
-const VARIANTS: Record<Variant, string> = {
-  primary:
-    'bg-gradient-to-b from-brand-300 to-brand-500 text-ink-950 shadow-lg shadow-brand-500/20 hover:from-brand-200 hover:to-brand-400 font-semibold',
-  secondary: 'bg-white/[0.07] text-zinc-100 ring-1 ring-inset ring-white/10 hover:bg-white/[0.12]',
-  ghost: 'text-zinc-300 hover:bg-white/[0.07] hover:text-white',
-  danger: 'bg-red-500/15 text-red-300 ring-1 ring-inset ring-red-500/30 hover:bg-red-500/25',
-  glass:
-    'bg-black/40 text-white ring-1 ring-inset ring-white/15 backdrop-blur-md hover:bg-black/60',
+const PRESS = 'transition duration-150 active:scale-[0.97]';
+
+const VARIANTS: Record<ButtonVariant, string> = {
+  primary: 'glass glass-prominent glass-interactive font-semibold text-ink-950',
+  secondary: cn('fill text-zinc-100 hover:bg-white/[0.12]', PRESS),
+  ghost: cn('text-zinc-300 hover:bg-white/[0.08] hover:text-white', PRESS),
+  danger: cn(
+    'bg-red-500/15 text-red-200 shadow-[inset_0_0_0_1px_rgb(248_113_113/0.3)] hover:bg-red-500/25',
+    PRESS,
+  ),
+  glass: 'glass glass-interactive text-white',
+  'glass-clear': 'glass glass-clear glass-interactive text-white',
 };
 
+/** Formes iOS 26 : capsules et cercles pour toutes les commandes tactiles. */
 const SIZES: Record<Size, string> = {
-  sm: 'h-8 gap-1.5 rounded-lg px-3 text-xs',
-  md: 'h-10 gap-2 rounded-xl px-4 text-sm',
-  lg: 'h-12 gap-2.5 rounded-xl px-6 text-[15px]',
-  icon: 'size-10 rounded-xl',
-  'icon-sm': 'size-8 rounded-lg',
+  sm: 'h-8 gap-1.5 rounded-full px-3.5 text-xs',
+  md: 'h-10 gap-2 rounded-full px-[1.125rem] text-sm',
+  lg: 'h-12 gap-2.5 rounded-full px-6 text-[15px]',
+  icon: 'size-10 rounded-full',
+  'icon-sm': 'size-8 rounded-full',
+  'icon-lg': 'size-12 rounded-full',
+  'icon-xl': 'size-16 rounded-full',
 };
 
 export interface ButtonStyleProps {
-  variant?: Variant;
+  variant?: ButtonVariant;
   size?: Size;
   icon?: ReactNode;
   loading?: boolean;
+}
+
+export function isGlassVariant(variant: ButtonVariant | undefined): boolean {
+  return variant === 'glass' || variant === 'glass-clear';
 }
 
 export function buttonClasses(
@@ -34,7 +51,7 @@ export function buttonClasses(
   className?: string,
 ): string {
   return cn(
-    'inline-flex shrink-0 items-center justify-center whitespace-nowrap font-medium transition duration-150 select-none active:scale-[0.97] disabled:pointer-events-none disabled:opacity-45',
+    'relative inline-flex shrink-0 items-center justify-center font-medium whitespace-nowrap select-none disabled:pointer-events-none disabled:opacity-45',
     VARIANTS[variant],
     SIZES[size],
     className,

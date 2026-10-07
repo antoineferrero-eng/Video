@@ -32,10 +32,18 @@ export const NAV_ITEMS: NavItem[] = [
   {
     to: '/telechargements',
     label: 'Téléchargements',
-    shortLabel: 'Télécharg.',
+    shortLabel: 'Téléch.',
     icon: Download,
     mobile: true,
   },
   { to: '/explorateur', label: 'Explorateur', shortLabel: 'Explorer', icon: FolderTree },
   { to: '/parametres', label: 'Paramètres', shortLabel: 'Réglages', icon: Settings },
 ];
+
+/** Entrée de navigation correspondant à l'URL (null pour une page de détail). */
+export function activeNavKey(pathname: string, items: NavItem[] = NAV_ITEMS): string | null {
+  const match = items.find((item) =>
+    item.end ? pathname === item.to : pathname === item.to || pathname.startsWith(`${item.to}/`),
+  );
+  return match?.to ?? null;
+}

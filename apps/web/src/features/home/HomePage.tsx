@@ -1,8 +1,8 @@
-import { AlertTriangle, Film, Play, Settings } from 'lucide-react';
+import { AlertTriangle, Film, Settings } from 'lucide-react';
 import { Link } from 'react-router';
 import type { LibraryItem } from '@lumiere/shared';
 import { useContinueWatching, useHome, useLibrary, useRemoveProgress } from '../../api/queries';
-import { ContinueCard } from '../../components/media/ContinueCard';
+import { ContinueCard, PlayBadge } from '../../components/media/ContinueCard';
 import { MediaRow } from '../../components/media/MediaRow';
 import { Backdrop } from '../../components/media/Poster';
 import { PosterCard, PosterCardSkeleton } from '../../components/media/PosterCard';
@@ -31,7 +31,7 @@ export function HomePage() {
       {feed.featured.length > 0 && <Hero titles={feed.featured} />}
 
       {failing.length > 0 && (
-        <div className="flex flex-col gap-3 rounded-2xl border border-red-400/20 bg-red-500/[0.06] p-5 sm:flex-row sm:items-center">
+        <div className="flex flex-col gap-3 rounded-card bg-red-500/[0.1] p-5 shadow-[inset_0_0_0_1px_rgb(248_113_113/0.25)] sm:flex-row sm:items-center">
           <AlertTriangle className="size-6 shrink-0 text-red-300" />
           <div className="flex-1 text-sm">
             <p className="font-semibold text-red-200">Le catalogue n'a pas pu être actualisé</p>
@@ -108,19 +108,13 @@ function LibraryTile({ item }: { item: LibraryItem }) {
   return (
     <Link
       to={playerUrl({ type: 'library', id: item.id })}
-      className="group relative w-64 shrink-0 snap-start sm:w-72"
+      className="group relative w-64 shrink-0 snap-start rounded-tile outline-none sm:w-72"
     >
-      <div className="relative aspect-video overflow-hidden rounded-xl ring-1 ring-white/[0.06] transition group-hover:ring-brand-400/50">
-        <Backdrop
-          url={item.backdropUrl ?? item.posterUrl}
-          seed={item.title}
-          className="transition duration-500 group-hover:scale-[1.03]"
-        />
+      <div className="media-frame aspect-video" data-glow>
+        <Backdrop url={item.backdropUrl ?? item.posterUrl} seed={item.title} />
         <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/20 to-transparent" />
-        <span className="absolute top-2 right-2 flex size-9 items-center justify-center rounded-full bg-white/90 text-ink-950 opacity-0 shadow-xl transition group-hover:opacity-100">
-          <Play className="ml-0.5 size-4 fill-current" />
-        </span>
-        <div className="absolute inset-x-0 bottom-0 p-3">
+        <PlayBadge size="sm" />
+        <div className="absolute inset-x-0 bottom-0 z-[3] p-3.5">
           <p className="truncate text-sm font-semibold text-white">{item.title}</p>
           <p className="truncate text-xs text-zinc-300">
             {[code, item.release.resolution, formatBytes(item.size)].filter(Boolean).join(' · ')}
@@ -134,7 +128,7 @@ function LibraryTile({ item }: { item: LibraryItem }) {
 function HomeSkeleton() {
   return (
     <div className="flex flex-col gap-10">
-      <Skeleton className="-mx-4 -mt-4 h-[52vh] rounded-none sm:-mx-8" />
+      <Skeleton className="bleed bleed-top h-[60vh] rounded-none" />
       <div className="grid grid-cols-2 gap-4 sm:grid-cols-4 lg:grid-cols-6">
         {Array.from({ length: 6 }, (_, index) => (
           <PosterCardSkeleton key={index} />

@@ -1,11 +1,11 @@
-import { Film, RefreshCw, Search, Tv } from 'lucide-react';
+import { ArrowUpDown, Film, RefreshCw, Search, Tv } from 'lucide-react';
 import { useDeferredValue, useEffect, useRef, useState } from 'react';
 import type { CatalogSort, TitleKind } from '@lumiere/shared';
 import { useCatalog, useGenres, useRefreshCatalog, useSystemInfo } from '../../api/queries';
 import { POSTER_GRID } from '../../components/media/grid';
 import { PosterCard, PosterCardSkeleton } from '../../components/media/PosterCard';
 import { Button } from '../../components/ui/Button';
-import { Select } from '../../components/ui/Field';
+import { Menu } from '../../components/ui/Menu';
 import { Spinner } from '../../components/ui/Spinner';
 import { EmptyState, ErrorState } from '../../components/ui/States';
 import { cn } from '../../lib/cn';
@@ -51,10 +51,10 @@ export function CatalogPage({ kind }: { kind: TitleKind }) {
 
   return (
     <div className="flex flex-col gap-6">
-      <header className="flex flex-col gap-4 pt-2 lg:flex-row lg:items-end lg:justify-between">
+      <header className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
         <div>
-          <h1 className="flex items-center gap-3 text-3xl font-bold tracking-tight">
-            <Icon className="size-7 text-brand-400" />
+          <h1 className="large-title flex items-center gap-3">
+            <Icon className="size-7 text-brand-300" />
             {label}
           </h1>
           <p className="mt-1 text-sm text-zinc-400">
@@ -68,42 +68,51 @@ export function CatalogPage({ kind }: { kind: TitleKind }) {
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <div className="relative min-w-56 flex-1 sm:flex-none">
-            <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-zinc-500" />
+            <Search className="pointer-events-none absolute top-1/2 left-4 size-4 -translate-y-1/2 text-zinc-400" />
             <input
               value={q}
               onChange={(event) => setQ(event.target.value)}
               placeholder={`Filtrer les ${label.toLowerCase()}…`}
-              className="input h-10 pl-9"
+              aria-label={`Filtrer les ${label.toLowerCase()}`}
+              className="input pl-10"
             />
           </div>
-          <Select
+          <Menu
+            header="Trier par"
+            options={SORTS}
             value={sort}
-            onChange={(event) => setSort(event.target.value as CatalogSort)}
-            className="h-10 w-44"
-          >
-            {SORTS.map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label}
-              </option>
-            ))}
-          </Select>
+            onSelect={setSort}
+            trigger={({ toggle, aria }) => (
+              <Button
+                variant="glass"
+                size="md"
+                icon={<ArrowUpDown className="size-4" />}
+                onClick={toggle}
+                className="h-11"
+                {...aria}
+              >
+                {SORTS.find((option) => option.value === sort)?.label}
+              </Button>
+            )}
+          />
           <Button
-            icon={
-              <RefreshCw
-                className={cn('size-4', section?.state === 'refreshing' && 'animate-spin')}
-              />
-            }
+            variant="glass"
+            size="icon"
+            className="size-11"
             onClick={() => refresh.mutate(kind)}
             disabled={section?.state === 'refreshing'}
             title="Relire la liste depuis la source"
+            aria-label="Actualiser le catalogue"
           >
-            Actualiser
+            <RefreshCw
+              className={cn('size-4', section?.state === 'refreshing' && 'animate-spin')}
+            />
           </Button>
         </div>
       </header>
 
       {(genres.data?.length ?? 0) > 0 && (
-        <div className="scrollbar-none -mx-1 flex gap-2 overflow-x-auto px-1 pb-1">
+        <div className="scrollbar-none -mx-1 flex gap-2 overflow-x-auto px-1 py-1">
           <GenreChip active={!genre} onClick={() => setGenre(undefined)}>
             Tous
           </GenreChip>
@@ -170,11 +179,12 @@ function GenreChip({
     <button
       type="button"
       onClick={onClick}
+      aria-pressed={active}
       className={cn(
-        'flex shrink-0 items-center gap-1.5 rounded-full px-3.5 py-1.5 text-sm font-medium transition',
+        'flex h-9 shrink-0 items-center gap-1.5 rounded-full px-4 text-sm font-medium transition duration-200 active:scale-[0.97]',
         active
-          ? 'bg-brand-400 text-ink-950'
-          : 'bg-white/[0.05] text-zinc-300 ring-1 ring-inset ring-white/10 hover:bg-white/10',
+          ? 'bg-white text-ink-950 shadow-[0_6px_18px_-8px_rgb(255_255_255/0.5)]'
+          : 'fill text-zinc-200 hover:bg-white/[0.12]',
       )}
     >
       {children}

@@ -25,6 +25,7 @@ import { Dialog } from '../../components/ui/Dialog';
 import { ProgressBar } from '../../components/ui/ProgressBar';
 import { PageLoader } from '../../components/ui/Spinner';
 import { EmptyState, ErrorState } from '../../components/ui/States';
+import { Glass } from '../../design/glass/Glass';
 import { formatBytes, formatEta, formatRelativeDate, formatSpeed } from '../../lib/format';
 import { playerUrl } from '../../lib/routes';
 
@@ -44,10 +45,10 @@ export function DownloadsPage() {
   );
 
   return (
-    <div className="flex flex-col gap-8 pt-2">
+    <div className="flex flex-col gap-8">
       <header className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight">Téléchargements</h1>
+          <h1 className="large-title">Téléchargements</h1>
           <div className="mt-3 flex flex-wrap gap-2">
             <Stat label="Débit" value={formatSpeed(stats.speed)} highlight={stats.speed > 0} />
             <Stat label="En cours" value={String(stats.active)} />
@@ -56,30 +57,46 @@ export function DownloadsPage() {
             {stats.failed > 0 && <Stat label="Échecs" value={String(stats.failed)} />}
           </div>
         </div>
-        <div className="flex flex-wrap gap-2">
+        {/* Actions groupées dans une même capsule de verre (HIG : regrouper par fonction). */}
+        <Glass
+          role="toolbar"
+          aria-label="Actions sur tous les téléchargements"
+          className="flex max-w-full items-center gap-0.5 self-start overflow-x-auto rounded-full p-1 lg:self-auto"
+        >
           <Button
+            variant="ghost"
             icon={<Pause className="size-4" />}
             onClick={() => bulk.mutate('pause-all')}
             disabled={stats.active + stats.queued === 0}
+
+            aria-label="Tout mettre en pause"
+            title="Tout mettre en pause"
           >
-            Tout mettre en pause
+            <span className="hidden sm:inline">Tout mettre en pause</span>
           </Button>
           <Button
+            variant="ghost"
             icon={<Play className="size-4" />}
             onClick={() => bulk.mutate('resume-all')}
             disabled={stats.paused + stats.failed === 0}
+
+            aria-label="Tout reprendre"
+            title="Tout reprendre"
           >
-            Tout reprendre
+            <span className="hidden sm:inline">Tout reprendre</span>
           </Button>
           <Button
             variant="ghost"
             icon={<Trash2 className="size-4" />}
             onClick={() => bulk.mutate('clear')}
             disabled={finished.length === 0}
+
+            aria-label="Effacer l'historique"
+            title="Effacer l'historique"
           >
-            Effacer l'historique
+            <span className="hidden sm:inline">Effacer l'historique</span>
           </Button>
-        </div>
+        </Glass>
       </header>
 
       {items.length === 0 && (
@@ -125,11 +142,13 @@ function Stat({
   highlight?: boolean;
 }) {
   return (
-    <div className="rounded-xl bg-white/[0.04] px-3.5 py-2 ring-1 ring-white/5 ring-inset">
-      <p className="text-[11px] tracking-wide text-zinc-500 uppercase">{label}</p>
+    <div className="fill rounded-[1rem] px-4 py-2">
+      <p className="text-[11px] font-medium text-zinc-400">{label}</p>
       <p
         className={
-          highlight ? 'text-sm font-semibold text-brand-300' : 'text-sm font-semibold text-zinc-100'
+          highlight
+            ? 'text-sm font-semibold text-brand-300 tabular-nums'
+            : 'text-sm font-semibold text-white tabular-nums'
         }
       >
         {value}
@@ -141,7 +160,7 @@ function Stat({
 function DownloadSection({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <section className="flex flex-col gap-3">
-      <h2 className="text-lg font-semibold text-zinc-200">{title}</h2>
+      <h2 className="text-xl font-bold tracking-tight text-white">{title}</h2>
       <div className="flex flex-col gap-2">{children}</div>
     </section>
   );
@@ -169,10 +188,11 @@ function DownloadRow({ item }: { item: DownloadItem }) {
   const running = item.status === 'downloading';
 
   return (
-    <article className="surface flex items-center gap-4 p-3 sm:p-4">
+    <article className="fill flex items-center gap-4 rounded-card p-3 sm:p-3.5">
       <Link
         to={item.titleId ? `/titre/${item.titleId}` : '#'}
-        className="hidden w-12 shrink-0 overflow-hidden rounded-lg sm:block"
+        className="hidden w-12 shrink-0 overflow-hidden rounded-[0.625rem] shadow-[0_8px_18px_-10px_rgb(0_0_0/0.9)] sm:block"
+        aria-label={item.title}
       >
         <Poster
           url={item.posterUrl}
@@ -183,7 +203,7 @@ function DownloadRow({ item }: { item: DownloadItem }) {
       </Link>
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-2">
-          <h3 className="truncate font-semibold text-zinc-100">{item.title}</h3>
+          <h3 className="truncate font-semibold text-white">{item.title}</h3>
           <Badge
             tone={status.tone}
             icon={item.status === 'completed' ? <CheckCircle2 className="size-3" /> : undefined}
@@ -191,20 +211,21 @@ function DownloadRow({ item }: { item: DownloadItem }) {
             {status.label}
           </Badge>
         </div>
-        {item.subtitle && <p className="mt-0.5 text-xs text-zinc-400">{item.subtitle}</p>}
-        <p className="mt-0.5 truncate font-mono text-[11px] text-zinc-500" title={item.targetPath}>
+        {item.subtitle && <p className="mt-0.5 text-xs text-zinc-300">{item.subtitle}</p>}
+        <p className="mt-0.5 truncate font-mono text-[11px] text-zinc-400" title={item.targetPath}>
           {item.fileName}
         </p>
         {item.status !== 'completed' && item.status !== 'canceled' && (
           <div className="mt-2.5 flex flex-col gap-1.5">
             <ProgressBar
+              label="Progression du téléchargement"
               value={progress}
               tone={
                 item.status === 'failed' ? 'danger' : item.status === 'paused' ? 'muted' : 'brand'
               }
               indeterminate={running && progress === null}
             />
-            <div className="flex flex-wrap justify-between gap-x-4 text-xs text-zinc-400">
+            <div className="flex flex-wrap justify-between gap-x-4 text-xs text-zinc-300 tabular-nums">
               <span>
                 {formatBytes(item.downloadedBytes)} / {formatBytes(item.totalBytes)}
                 {progress !== null && ` · ${Math.floor(progress * 100)} %`}
@@ -225,7 +246,7 @@ function DownloadRow({ item }: { item: DownloadItem }) {
           </p>
         )}
         {item.status === 'completed' && (
-          <p className="mt-1 text-xs text-zinc-500">
+          <p className="mt-1 text-xs text-zinc-400">
             {formatBytes(item.totalBytes)} · terminé {formatRelativeDate(item.completedAt)}
           </p>
         )}

@@ -6,10 +6,11 @@ dist/
 *.tsbuildinfo
 coverage/
 
-# Données locales de l'application (base SQLite, caches, médias téléchargés)
-data/
-media/
-tools/demo-source/content/
+# Données locales de l'application (base SQLite, caches, médias téléchargés).
+# Règles ancrées à la racine : « media/ » seul ignorerait aussi apps/web/src/components/media/.
+/data/
+/media/
+/tools/demo-source/content/
 
 # Environnement
 .env

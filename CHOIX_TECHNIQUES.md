@@ -186,21 +186,106 @@ Les affiches, résumés, notes, genres et titres d'épisodes viennent de **The M
 | Données serveur       | **TanStack Query 5**         | Cache, revalidation, pagination infinie ; mis à jour en direct par le flux SSE. |
 | Navigation            | **React Router 8**           | Routage déclaratif, pages chargées à la demande.                                |
 | Icônes, notifications | **lucide-react**, **sonner** | Légers et élégants.                                                             |
-| Police                | **Inter** (auto-hébergée)    | Lisible, fonctionne hors ligne.                                                 |
+| Police                | **Système Apple / Inter**    | SF Pro via `-apple-system` sur macOS/iOS (sans l'embarquer), Inter ailleurs.    |
 
-Direction artistique : thème sombre « salle de cinéma », accent ambre « lumière du
-projecteur », grandes affiches, bandeau d'accueil animé, rangées défilantes, squelettes de
-chargement, interface 100 % en français, adaptée au mobile (barre de navigation en bas) et
-installable comme application (manifeste PWA).
+Direction artistique : thème sombre « salle de cinéma », design **Liquid Glass** inspiré
+d'Apple (voir la section suivante), accent ambre « lumière du projecteur » réservé aux actions
+principales, grandes affiches, interface 100 % en français, adaptée au mobile et installable
+comme application (manifeste PWA).
 
 ---
 
-## 10. Qualité, sécurité, exploitation
+## 10. Design « Liquid Glass »
+
+### Recherches préalables
+
+Avant la refonte, j'ai étudié la documentation d'Apple et l'état de l'art sur le Web :
+
+- **Ce qu'est Liquid Glass** (HIG « Materials », WWDC25 « Meet Liquid Glass ») : un matériau
+  réservé à la **couche fonctionnelle** (barres, commandes, menus) qui flotte au-dessus du
+  contenu — jamais dans le contenu lui-même, jamais « verre sur verre », avec parcimonie. Il se
+  définit par la **lentille** (la lumière est courbée et concentrée sur les bords, pas
+  seulement diffusée), des **reflets spéculaires** qui réagissent au mouvement, une
+  **adaptation** au contenu (ombre, teinte, luminosité), une **matérialisation** progressive
+  plutôt qu'un fondu et une **souplesse de gel** quand on le touche.
+- **Variantes** : « normale » (lisible, la plupart des composants), « claire » (sur photos et
+  vidéos, avec un voile d'atténuation de 35 % si le fond est clair), teinte de couleur
+  réservée aux actions principales.
+- **Mise en page** (WWDC25 « Get to know the new design system », « Adopting Liquid Glass »,
+  HIG « Tab bars » et « Sidebars ») : formes **concentriques** et capsules, barre latérale
+  **incrustée** sous laquelle le contenu s'étend (« background extension »), barre d'onglets
+  **flottante qui se réduit au défilement** avec un onglet de recherche séparé, **effet de bord
+  de défilement** à la place des séparateurs, menus qui jaillissent de leur bouton.
+- **Accessibilité** : Apple adapte le verre à « Réduire la transparence » (plus givré),
+  « Augmenter le contraste » (noir/blanc avec bordure) et « Réduire les animations ». Les
+  critiques de lisibilité (contrastes mesurés jusqu'à 1,5:1) ont conduit Apple à ajouter une
+  option **« Teinté »** dans iOS 26.1.
+- **Sur le Web** : `backdrop-filter` (flou, saturation) fonctionne partout, mais la vraie
+  réfraction exige un filtre SVG `feDisplacementMap` référencé dans `backdrop-filter`, ce que
+  **seul Chromium** sait appliquer (Safari et Firefox l'ignorent) ; `backdrop-filter` coûte
+  cher au GPU s'il est multiplié ; la police SF Pro et les SF Symbols **ne peuvent pas** être
+  embarqués sur le Web (licence).
+
+### Choix
+
+| Principe d'Apple              | Mise en œuvre dans Lumière                                                                                                                                                                                                                  |
+| ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Couche fonctionnelle en verre | Barre latérale, barre d'outils, barre d'onglets, menus, dialogues, notifications, commandes du lecteur. Le contenu (affiches, listes, réglages) utilise des « remplissages » translucides, jamais du verre.                                 |
+| Lentille (réfraction)         | Carte de déplacement calculée pour la **forme exacte** de chaque élément (distance signée d'un rectangle arrondi, biseau convexe), appliquée par `feDisplacementMap` dans `backdrop-filter`. Navigateurs non Chromium : verre dépoli.       |
+| Reflets spéculaires           | Arête en dégradé orientée vers la source de lumière, qui suit le pointeur (ou l'inclinaison sur Android) ; lueur interne qui part du point de contact.                                                                                      |
+| Adaptation au contenu         | Fond d'ambiance coloré par l'illustration affichée (palette extraite de l'affiche) ; luminosité du fond atténuée sous le verre, ce qui assombrit surtout les fonds clairs.                                                                  |
+| Matérialisation, élasticité   | Courbes « ressort » simulées physiquement puis échantillonnées en CSS `linear()` ; goutte de sélection qui s'étire puis se rétracte ; boutons qui se soulèvent à l'appui ; menus et dialogues qui se matérialisent.                         |
+| Variantes                     | Normale, claire (sur vidéo et images, toujours avec un voile), épaisse (menus, feuilles), proéminente ambrée (action principale seulement).                                                                                                 |
+| Formes                        | Rayons concentriques (28, 22, 18, 14 px) et capsules pour toutes les commandes.                                                                                                                                                             |
+| Navigation                    | Grand écran : barre latérale flottante, contenu et bandeaux qui s'étendent dessous. Mobile : barre d'onglets flottante qui se réduit à l'onglet actif en descendant, bouton de recherche circulaire séparé (comme iOS 26).                  |
+| Typographie                   | Police système d'Apple via `-apple-system` (aucun fichier embarqué), Inter ailleurs ; grands titres gras alignés à gauche.                                                                                                                  |
+| Accessibilité                 | Réglage **Apparence** (Transparent, Teinté, Opaque) ; respect automatique de `prefers-reduced-transparency`, `prefers-contrast`, `prefers-reduced-motion` et `forced-colors` ; contrastes mesurés (ci-dessous).                             |
+| Performance                   | Réfraction limitée à une dizaine d'éléments, filtres partagés entre éléments de même forme et recalculés seulement à la fin d'un redimensionnement, fond d'ambiance statique, **garde-fou** qui coupe la réfraction si l'affichage saccade. |
+
+Le tout est isolé dans un petit design system (`apps/web/src/design/` et
+`apps/web/src/styles/`), décrit dans **[docs/DESIGN.md](docs/DESIGN.md)**. Pas de bibliothèque
+« liquid glass » tierce : celles qui existent sont soit réservées à Chromium sans repli, soit
+basées sur une copie figée de l'arrière-plan, inutilisable sur une interface vivante.
+
+### Mesures
+
+- **Contraste, pire cas** (contenu blanc pur sous le verre, mesuré sur les pixels rendus) :
+  texte blanc à 5,0:1 sur le verre normal, 6,6:1 sur le verre épais (WCAG AA : 4,5:1),
+  3,1:1 sur le verre clair, réservé aux icônes et grands textes posés sur un voile (seuil 3:1),
+  plus de 7:1 en mode « Teinté ».
+- **axe-core** : aucune violation WCAG 2.1 AA sur les 8 pages principales, sur ordinateur et
+  sur mobile.
+- **Parcours de bout en bout** (Playwright) : 15 étapes couvrant toutes les fonctionnalités,
+  les trois matériaux, l'émulation des réglages d'accessibilité et la barre d'onglets mobile.
+
+### Sources
+
+- Apple — HIG, Materials : https://developer.apple.com/design/human-interface-guidelines/materials
+- Apple — WWDC25, Meet Liquid Glass : https://developer.apple.com/videos/play/wwdc2025/219/
+- Apple — WWDC25, Get to know the new design system : https://developer.apple.com/videos/play/wwdc2025/356/
+- Apple — Adopting Liquid Glass : https://developer.apple.com/documentation/TechnologyOverviews/adopting-liquid-glass
+- Apple — HIG, Tab bars : https://developer.apple.com/design/human-interface-guidelines/tab-bars
+- Apple — HIG, Sidebars : https://developer.apple.com/design/human-interface-guidelines/sidebars
+- Apple — refonte de l'app TV : https://www.apple.com/newsroom/2025/06/apple-tv-brings-a-beautiful-redesign-and-enhanced-home-entertainment-experience/
+- Option « Teinté » d'iOS 26.1 : https://gulfnews.com/technology/companies/apple-yields-tinted-control-in-ios-261-beta-4-tones-down-liquid-glass-after-backlash-1.500315176
+- Accessibilité de Liquid Glass (Infinum) : https://infinum.com/blog/apples-ios-26-liquid-glass-sleek-shiny-and-questionably-accessible/
+- Réfraction CSS/SVG (LogRocket) : https://blog.logrocket.com/how-create-liquid-glass-effects-css-and-svg/
+- Liquid Glass en CSS et SVG (ekino) : https://medium.com/ekino-france/liquid-glass-in-css-and-svg-839985fcb88d
+- MDN, `backdrop-filter` : https://developer.mozilla.org/docs/Web/CSS/Reference/Properties/backdrop-filter
+- WebKit, filtres SVG dans `backdrop-filter` : https://bugs.webkit.org/show_bug.cgi?id=245510
+- MDN, `prefers-reduced-transparency` : https://developer.mozilla.org/en-US/docs/Web/CSS/@media/prefers-reduced-transparency
+- Coût de `backdrop-filter` (OpenReplay) : https://blog.openreplay.com/creating-blurred-backgrounds-css-backdrop-filter/
+- Licence de SF Pro sur le Web : https://developer.apple.com/forums/thread/127350
+
+---
+
+## 11. Qualité, sécurité, exploitation
 
 - **Qualité** : TypeScript strict, ESLint 10 (règles React Compiler incluses), Prettier,
-  **Vitest** (tests unitaires et d'intégration : analyseur de listings, noms de releases,
-  plan de lecture, téléchargement avec coupure/reprise, enrichissement TMDB), scénario de
-  bout en bout vérifié dans Chromium (Playwright).
+  **Vitest** (serveur : analyseur de listings, noms de releases, plan de lecture,
+  téléchargement avec coupure/reprise, enrichissement TMDB, configuration ; interface :
+  réfraction, détection des navigateurs, préférences d'accessibilité, palette d'ambiance),
+  parcours de bout en bout et audit d'accessibilité (axe-core) dans Chromium (Playwright).
 - **Sécurité** :
   - le serveur n'est **pas un proxy ouvert** : toutes les URL sont construites à partir de
     la source configurée et de chemins relatifs validés (pas de `..`) ;
@@ -216,7 +301,7 @@ installable comme application (manifeste PWA).
 
 ---
 
-## 11. Limites connues et pistes d'évolution
+## 12. Limites connues et pistes d'évolution
 
 - Pas d'authentification : l'application est prévue pour un usage personnel/local. Avant de
   l'exposer sur Internet, la placer derrière un reverse proxy avec authentification.
@@ -226,3 +311,8 @@ installable comme application (manifeste PWA).
   développement : en cas de souci, `npm run probe -w @lumiere/server -- https://a.111477.xyz/movies/`
   montre immédiatement ce que l'analyseur comprend, et les chemins `/movies/` et `/tvs/`
   sont modifiables dans les paramètres.
+- Design : la réfraction n'est visible que dans les navigateurs Chromium (Chrome, Edge,
+  Brave, Opera) ; Safari et Firefox affichent le même verre, dépoli. Le verre ne bascule pas
+  automatiquement entre clair et sombre selon le fond comme sur iOS (le Web ne permet pas de
+  lire ce qui est rendu sous un élément) : une atténuation de luminosité et des voiles
+  garantissent la lisibilité à la place.

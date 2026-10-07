@@ -13,13 +13,14 @@ import {
   Volume2,
   VolumeX,
 } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useNavigate, useSearchParams } from 'react-router';
 import { toast } from 'sonner';
 import type { MediaRef, PlaybackSession } from '@lumiere/shared';
 import { api, errorMessage } from '../../api/client';
 import { Button } from '../../components/ui/Button';
 import { Spinner } from '../../components/ui/Spinner';
+import { Glass } from '../../design/glass/Glass';
 import { detectCapabilities } from '../../lib/capabilities';
 import { cn } from '../../lib/cn';
 import { formatClock } from '../../lib/format';
@@ -544,25 +545,28 @@ function Player({ media, initialStart }: { media: MediaRef; initialStart: number
 
       {buffering && (
         <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
-          <Spinner className="size-12 text-brand-300" />
+          <span className="glass glass-clear flex size-20 items-center justify-center rounded-full">
+            <Spinner className="size-9 text-white" />
+          </span>
         </div>
       )}
       {!playing && !buffering && src && (
-        <button
-          type="button"
+        <Button
+          variant="glass-clear"
+          size="icon-xl"
           onClick={togglePlay}
           aria-label="Lecture"
-          className="absolute top-1/2 left-1/2 flex size-20 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full bg-white/15 backdrop-blur-md transition hover:scale-105 hover:bg-white/25"
+          className="absolute top-1/2 left-1/2 size-24 -translate-x-1/2 -translate-y-1/2"
         >
-          <Play className="ml-1 size-9 fill-white" />
-        </button>
+          <Play className="ml-1.5 size-10 fill-white" />
+        </Button>
       )}
 
       {visibleCues.length > 0 && (
         <div
           className={cn(
             'pointer-events-none absolute inset-x-0 flex flex-col items-center gap-1 px-[8%] text-center transition-[bottom] duration-300',
-            controls ? 'bottom-32' : 'bottom-12',
+            controls ? 'bottom-40' : 'bottom-12',
           )}
         >
           {visibleCues.map((cue, index) => (
@@ -581,22 +585,31 @@ function Player({ media, initialStart }: { media: MediaRef; initialStart: number
           controls || !playing ? 'opacity-100' : 'pointer-events-none opacity-0',
         )}
       >
-        <div className="absolute inset-x-0 top-0 flex items-start gap-4 bg-gradient-to-b from-black/80 to-transparent px-4 pt-4 pb-16 sm:px-8">
-          <Button variant="glass" size="icon" onClick={() => navigate(-1)} aria-label="Retour">
+        {/* Voiles d'atténuation : le verre clair reste lisible sur une image claire (HIG). */}
+        <div className="pointer-events-none absolute inset-x-0 top-0 h-36 bg-gradient-to-b from-black/60 to-transparent" />
+        <div className="pointer-events-none absolute inset-x-0 bottom-0 h-56 bg-gradient-to-t from-black/70 via-black/30 to-transparent" />
+
+        <div className="absolute inset-x-0 top-0 flex items-start gap-4 px-4 pt-4 sm:px-6 sm:pt-5">
+          <Button
+            variant="glass-clear"
+            size="icon-lg"
+            onClick={() => navigate(-1)}
+            aria-label="Retour"
+          >
             <ArrowLeft className="size-5" />
           </Button>
-          <div className="min-w-0 flex-1 pt-0.5">
-            <h1 className="truncate text-lg font-semibold sm:text-xl">
+          <div className="text-shadow-legible min-w-0 flex-1 pt-1">
+            <h1 className="truncate text-lg font-bold tracking-tight sm:text-xl">
               {session?.title ?? 'Chargement…'}
             </h1>
             {session?.subtitle && (
-              <p className="truncate text-sm text-zinc-300">{session.subtitle}</p>
+              <p className="truncate text-sm text-zinc-200">{session.subtitle}</p>
             )}
           </div>
           {session && (
             <span
               title={session.reasons.join('\n')}
-              className="hidden rounded-lg bg-white/10 px-2.5 py-1 text-xs font-medium text-zinc-200 backdrop-blur sm:block"
+              className="glass glass-clear mt-1.5 hidden rounded-full px-3 py-1.5 text-xs font-semibold text-zinc-100 sm:block"
             >
               {MODE_LABELS[session.mode]}
               {session.video?.height ? ` · ${session.video.height}p` : ''}
@@ -605,51 +618,40 @@ function Player({ media, initialStart }: { media: MediaRef; initialStart: number
           )}
         </div>
 
-        <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/90 via-black/50 to-transparent px-4 pt-16 pb-4 sm:px-8 sm:pb-6">
+        {/*
+          Panneau de commandes flottant (comme le lecteur de tvOS 26). Verre normal et non
+          « clair » : il porte du texte (temps, épisode suivant) qui doit rester lisible même
+          sur une image très claire.
+        */}
+        <Glass
+          lens={{ bezel: 20, strength: 16 }}
+          className="absolute inset-x-3 bottom-[calc(env(safe-area-inset-bottom)+0.75rem)] rounded-panel px-4 pt-2.5 pb-2 sm:inset-x-6 sm:bottom-6 sm:px-5"
+        >
           <ProgressSlider
             current={time}
             duration={duration}
             buffered={bufferedEnd}
             onSeek={(value) => void seek(value)}
           />
-          <div className="mt-2 flex items-center gap-1 sm:gap-2">
-            <button
-              type="button"
-              onClick={togglePlay}
-              className="rounded-lg p-2 transition hover:bg-white/10"
-              aria-label={playing ? 'Pause' : 'Lecture'}
-            >
+          <div className="mt-0.5 flex items-center gap-0.5 sm:gap-1">
+            <PlayerIcon onClick={togglePlay} label={playing ? 'Pause' : 'Lecture'}>
               {playing ? (
                 <Pause className="size-6 fill-white" />
               ) : (
                 <Play className="size-6 fill-white" />
               )}
-            </button>
-            <button
-              type="button"
-              onClick={() => void seek(time - 10)}
-              className="rounded-lg p-2 transition hover:bg-white/10"
-              aria-label="Reculer de 10 secondes"
-            >
+            </PlayerIcon>
+            <PlayerIcon onClick={() => void seek(time - 10)} label="Reculer de 10 secondes">
               <RotateCcw className="size-5" />
-            </button>
-            <button
-              type="button"
-              onClick={() => void seek(time + 10)}
-              className="rounded-lg p-2 transition hover:bg-white/10"
-              aria-label="Avancer de 10 secondes"
-            >
+            </PlayerIcon>
+            <PlayerIcon onClick={() => void seek(time + 10)} label="Avancer de 10 secondes">
               <RotateCw className="size-5" />
-            </button>
-            <div className="group/volume flex items-center">
-              <button
-                type="button"
-                onClick={() => setMuted((value) => !value)}
-                className="rounded-lg p-2 transition hover:bg-white/10"
-                aria-label="Couper le son"
-              >
+            </PlayerIcon>
+            {/* Sur mobile, le volume se règle avec les boutons de l'appareil. */}
+            <div className="group/volume hidden items-center sm:flex">
+              <PlayerIcon onClick={() => setMuted((value) => !value)} label="Couper le son">
                 <VolumeIcon className="size-5" />
-              </button>
+              </PlayerIcon>
               <input
                 type="range"
                 min={0}
@@ -664,16 +666,16 @@ function Player({ media, initialStart }: { media: MediaRef; initialStart: number
                 aria-label="Volume"
               />
             </div>
-            <span className="ml-1 text-sm text-zinc-300 tabular-nums">
+            <span className="ml-1.5 text-sm font-medium whitespace-nowrap text-zinc-100 tabular-nums">
               {formatClock(time)}{' '}
-              <span className="text-zinc-500">/ {duration ? formatClock(duration) : '--:--'}</span>
+              <span className="text-zinc-400">/ {duration ? formatClock(duration) : '--:--'}</span>
             </span>
             <div className="flex-1" />
             {session?.next && (
               <button
                 type="button"
                 onClick={goNext}
-                className="hidden items-center gap-2 rounded-lg px-3 py-2 text-sm transition hover:bg-white/10 sm:flex"
+                className="hidden h-10 items-center gap-2 rounded-full px-3.5 text-sm font-medium transition hover:bg-white/[0.14] sm:flex"
                 title="Épisode suivant (N)"
               >
                 <SkipForward className="size-5" />
@@ -708,20 +710,18 @@ function Player({ media, initialStart }: { media: MediaRef; initialStart: number
                 onSelect={setSubtitleId}
               />
             )}
-            <button
-              type="button"
-              onClick={toggleFullscreen}
-              className="rounded-lg p-2 transition hover:bg-white/10"
-              aria-label="Plein écran"
-            >
+            <PlayerIcon onClick={toggleFullscreen} label="Plein écran">
               {fullscreen ? <Minimize className="size-5" /> : <Maximize className="size-5" />}
-            </button>
+            </PlayerIcon>
           </div>
-        </div>
+        </Glass>
       </div>
 
       {resumeNotice !== null && (
-        <div className="absolute bottom-28 left-4 flex animate-fade-in items-center gap-3 rounded-2xl border border-white/10 bg-ink-900/90 py-2 pr-2 pl-4 text-sm shadow-2xl backdrop-blur-xl sm:left-8">
+        <Glass
+          variant="thick"
+          className="absolute bottom-36 left-4 flex animate-materialize items-center gap-3 rounded-full py-1.5 pr-1.5 pl-4 text-sm sm:left-6"
+        >
           <span>Reprise à {formatClock(resumeNotice)}</span>
           <Button
             size="sm"
@@ -734,12 +734,15 @@ function Player({ media, initialStart }: { media: MediaRef; initialStart: number
           >
             Depuis le début
           </Button>
-        </div>
+        </Glass>
       )}
 
       {showNextCard && session?.next && (
-        <div className="absolute right-4 bottom-28 animate-fade-in rounded-2xl border border-white/10 bg-ink-900/90 p-4 shadow-2xl backdrop-blur-xl sm:right-8">
-          <p className="text-xs tracking-wide text-zinc-400 uppercase">Épisode suivant</p>
+        <Glass
+          variant="thick"
+          className="absolute right-4 bottom-36 w-72 animate-materialize rounded-card p-4 sm:right-6"
+        >
+          <p className="text-xs font-semibold text-zinc-300">Épisode suivant</p>
           <p className="mt-0.5 font-semibold">{session.next.label}</p>
           <div className="mt-3 flex gap-2">
             <Button
@@ -756,9 +759,32 @@ function Player({ media, initialStart }: { media: MediaRef; initialStart: number
               </Button>
             )}
           </div>
-        </div>
+        </Glass>
       )}
     </div>
+  );
+}
+
+/** Bouton d'icône du panneau de commandes (sans verre : il repose déjà sur le verre). */
+function PlayerIcon({
+  onClick,
+  label,
+  children,
+}: {
+  onClick: () => void;
+  label: string;
+  children: ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label={label}
+      title={label}
+      className="flex size-10 shrink-0 items-center justify-center rounded-full transition hover:bg-white/[0.14] active:scale-95"
+    >
+      {children}
+    </button>
   );
 }
 
@@ -774,10 +800,14 @@ function PlayerFailure({
   const navigate = useNavigate();
   return (
     <div className="fixed inset-0 z-50 flex flex-col items-center justify-center gap-4 bg-ink-950 px-6 text-center">
-      <p className="text-xl font-semibold">Lecture impossible</p>
-      <p className="max-w-lg text-sm text-zinc-400">{message}</p>
+      <p className="text-xl font-bold">Lecture impossible</p>
+      <p className="max-w-lg text-sm text-zinc-300">{message}</p>
       <div className="flex gap-2">
-        <Button icon={<ArrowLeft className="size-4" />} onClick={onBack ?? (() => navigate('/'))}>
+        <Button
+          variant="glass"
+          icon={<ArrowLeft className="size-4" />}
+          onClick={onBack ?? (() => navigate('/'))}
+        >
           Retour
         </Button>
         {onRetry && (

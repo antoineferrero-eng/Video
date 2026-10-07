@@ -1,13 +1,28 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
   <defs>
-    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#fde68a"/>
-      <stop offset="0.55" stop-color="#fbbf24"/>
+    <linearGradient id="tile" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#2a2a35"/>
+      <stop offset="1" stop-color="#0c0c12"/>
+    </linearGradient>
+    <linearGradient id="beam" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#fef3c7"/>
+      <stop offset="0.5" stop-color="#fbbf24"/>
       <stop offset="1" stop-color="#d97706"/>
     </linearGradient>
+    <linearGradient id="shine" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#fff" stop-opacity="0.32"/>
+      <stop offset="0.5" stop-color="#fff" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="rim" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#fff" stop-opacity="0.55"/>
+      <stop offset="0.45" stop-color="#fff" stop-opacity="0.06"/>
+      <stop offset="1" stop-color="#fff" stop-opacity="0.3"/>
+    </linearGradient>
   </defs>
-  <rect width="64" height="64" rx="16" fill="#0d0d14"/>
-  <path d="M14 18 L50 32 L14 46 Z" fill="url(#g)" opacity="0.18"/>
-  <path d="M24 21.5 L45 32 L24 42.5 Z" fill="url(#g)"/>
-  <circle cx="17" cy="32" r="5" fill="url(#g)"/>
+  <rect width="64" height="64" rx="18" fill="url(#tile)"/>
+  <path d="M13 17 L52 32 L13 47 Z" fill="url(#beam)" opacity="0.16"/>
+  <path d="M24 20.5 L46 32 L24 43.5 Z" fill="url(#beam)"/>
+  <circle cx="16.5" cy="32" r="5.5" fill="url(#beam)"/>
+  <rect width="64" height="32" rx="18" fill="url(#shine)"/>
+  <rect x="0.75" y="0.75" width="62.5" height="62.5" rx="17.25" fill="none" stroke="url(#rim)" stroke-width="1.5"/>
 </svg>
