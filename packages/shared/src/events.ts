@@ -8,6 +8,13 @@ export type ServerEvent =
   | { type: 'downloads.stats'; stats: DownloadStats }
   | { type: 'library.changed' }
   | { type: 'catalog.updated'; status: CatalogSectionStatus }
-  | { type: 'metadata.updated'; titleId: number };
+  | { type: 'metadata.updated'; titleId: number }
+  | {
+      /** Vérification Cloudflare dans le navigateur de l'utilisateur. */
+      type: 'source.verification';
+      state: 'opening' | 'waiting' | 'passed' | 'failed';
+      browser: string | null;
+      message: string;
+    };
 
 export type ServerEventType = ServerEvent['type'];

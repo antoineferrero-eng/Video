@@ -1,9 +1,10 @@
 export type PreferredQuality = '2160p' | '1080p' | '720p' | 'smallest';
 /**
- * Connexion à la source : automatique (requête standard, puis imitation de Chrome si la source
- * filtre les robots), standard uniquement, ou imitation de navigateur systématique.
+ * Connexion à la source : automatique (requête standard, puis imitation de Chrome, puis
+ * vérification dans le navigateur de l'utilisateur si Cloudflare l'exige), standard
+ * uniquement, imitation de navigateur systématique, ou navigateur réel systématique.
  */
-export type SourceConnection = 'auto' | 'standard' | 'browser';
+export type SourceConnection = 'auto' | 'standard' | 'browser' | 'real-browser';
 export type TranscodePreset = 'quality' | 'balanced' | 'fast';
 
 export interface AppSettings {

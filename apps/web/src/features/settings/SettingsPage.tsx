@@ -53,7 +53,7 @@ const CONNECTIONS: Array<{ value: SourceConnection; label: string; description: 
     value: 'auto',
     label: 'Automatique (recommandé)',
     description:
-      'Connexion standard, puis imitation complète de Chrome si la source filtre les robots (Cloudflare…).',
+      'Connexion standard, puis imitation de Chrome, puis votre navigateur si Cloudflare exige une vérification (« Just a moment… »).',
   },
   {
     value: 'standard',
@@ -65,6 +65,12 @@ const CONNECTIONS: Array<{ value: SourceConnection; label: string; description: 
     label: 'Imitation de navigateur',
     description:
       'Reproduit l’empreinte réseau de Chrome (TLS, HTTP/2) pour toutes les requêtes vers la source.',
+  },
+  {
+    value: 'real-browser',
+    label: 'Navigateur réel (Chrome, Edge…)',
+    description:
+      'Votre navigateur passe la vérification Cloudflare dans une petite fenêtre (cochez la case si elle apparaît), puis Lumière réutilise ce passage.',
   },
 ];
 
@@ -507,6 +513,12 @@ function Section({
   );
 }
 
+const TRANSPORT_LABELS = {
+  standard: '',
+  browser: ' · via l’imitation de Chrome',
+  'real-browser': ' · via votre navigateur (vérification Cloudflare)',
+} as const;
+
 function SourceTester() {
   const test = useTestSource();
   const result = test.data;
@@ -531,7 +543,7 @@ function SourceTester() {
           >
             {result.ok ? <CheckCircle2 className="size-4" /> : <XCircle className="size-4" />}
             {result.ok
-              ? `Source joignable · ${result.directories} dossier(s), ${result.files} fichier(s) · format ${result.format} · ${result.durationMs} ms${result.transport === 'browser' ? ' · via l’imitation de Chrome' : ''}`
+              ? `Source joignable · ${result.directories} dossier(s), ${result.files} fichier(s) · format ${result.format} · ${result.durationMs} ms${TRANSPORT_LABELS[result.transport ?? 'standard']}`
               : (result.error ?? 'Échec')}
           </span>
         )}
@@ -665,6 +677,18 @@ function SystemSection() {
       ) : (
         <span className="text-amber-300">
           Introuvable : installez ffmpeg pour lire tous les formats
+        </span>
+      ),
+    ],
+    [
+      'Navigateur',
+      info.browser ? (
+        <span>
+          {info.browser.name} <span className="text-zinc-400">(vérifications Cloudflare)</span>
+        </span>
+      ) : (
+        <span className="text-amber-300">
+          Aucun trouvé : installez Chrome ou Edge si la source exige une vérification Cloudflare
         </span>
       ),
     ],

@@ -20,6 +20,9 @@ import { PlaybackService } from './modules/playback/playback.service';
 import { ProgressRepository } from './modules/playback/progress.repository';
 import { PlaybackSessions } from './modules/playback/sessions';
 import { SettingsService } from './modules/settings/settings.service';
+import { BrowserSession } from './modules/source/browser/browser-session';
+import { locateBrowser } from './modules/source/browser/locate-browser';
+import { RealBrowserTransport } from './modules/source/browser/real-browser-transport';
 import { SourceClient } from './modules/source/source-client';
 import { SourceRelay } from './modules/source/source-relay';
 
@@ -30,6 +33,7 @@ export interface Container {
   db: Db;
   events: EventBus;
   settings: SettingsService;
+  browser: BrowserSession;
   source: SourceClient;
   relay: SourceRelay;
   titles: TitlesRepository;
@@ -50,7 +54,16 @@ export function createContainer(config: AppConfig, logger: Logger): Container {
   const db = openDatabase(config.databaseFile, logger);
   const events = new EventBus();
   const settings = new SettingsService(db, config);
-  const source = new SourceClient(settings, logger.child({ module: 'source' }));
+  const sourceLogger = logger.child({ module: 'source' });
+  const browser = new BrowserSession({
+    profileDir: config.browserProfileDir,
+    locate: () => locateBrowser(config.browserPath),
+    logger: sourceLogger,
+    onEvent: (event) => events.publish({ type: 'source.verification', ...event }),
+  });
+  const source = new SourceClient(settings, sourceLogger, {
+    realBrowser: (cookies) => new RealBrowserTransport(browser, cookies, sourceLogger),
+  });
   const relay = new SourceRelay(config);
   const titles = new TitlesRepository(db);
   const availability = new AvailabilityService(db);
@@ -123,6 +136,7 @@ export function createContainer(config: AppConfig, logger: Logger): Container {
     db,
     events,
     settings,
+    browser,
     source,
     relay,
     titles,
@@ -157,5 +171,6 @@ export async function stopServices(container: Container): Promise<void> {
   container.metadata.stop();
   container.sessions.closeAll();
   await container.downloads.stop();
+  await container.browser.close();
   container.db.close();
 }

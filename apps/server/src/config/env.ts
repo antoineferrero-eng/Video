@@ -26,6 +26,7 @@ const EnvSchema = z.object({
   TMDB_IMAGE_BASE_URL: z.url().default('https://image.tmdb.org/t/p'),
   FFMPEG_PATH: z.string().default('ffmpeg'),
   FFPROBE_PATH: z.string().default('ffprobe'),
+  BROWSER_PATH: optionalString,
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']).default('info'),
   LOG_PRETTY: z.enum(['auto', 'true', 'false']).default('auto'),
 });
@@ -51,6 +52,10 @@ export interface AppConfig {
   };
   ffmpegPath: string;
   ffprobePath: string;
+  /** Navigateur imposé pour les vérifications Cloudflare (sinon recherche automatique). */
+  browserPath: string | null;
+  /** Profil dédié du navigateur piloté par Lumière. */
+  browserProfileDir: string;
   logLevel: string;
   prettyLogs: boolean;
 }
@@ -114,6 +119,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     },
     ffmpegPath: e.FFMPEG_PATH,
     ffprobePath: e.FFPROBE_PATH,
+    browserPath: e.BROWSER_PATH ? path.resolve(baseDir, e.BROWSER_PATH) : null,
+    browserProfileDir: path.join(dataDir, 'navigateur'),
     logLevel: e.LOG_LEVEL,
     prettyLogs: e.LOG_PRETTY === 'auto' ? Boolean(process.stdout.isTTY) : e.LOG_PRETTY === 'true',
   };

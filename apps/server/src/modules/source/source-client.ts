@@ -16,11 +16,26 @@ import {
   StandardTransport,
   describeRefusal,
   looksBlocked,
+  servedByCloudflare,
   type SourceRequest,
   type SourceResponse,
   type Transport,
   type TransportName,
 } from './transport';
+
+export interface SourceClientOptions {
+  /** Transport d'imitation de Chrome (impit), chargé à la première utilisation. */
+  loadImpersonation?: (cookies: CookieJar) => Promise<Transport | null>;
+  /** Transport « navigateur réel » (vérification Cloudflare dans le navigateur). */
+  realBrowser?: ((cookies: CookieJar) => Transport) | null;
+}
+
+const ESCALATION_MESSAGES: Partial<Record<TransportName, string>> = {
+  browser:
+    'La source filtre les clients qui ne sont pas des navigateurs : imitation de Chrome activée',
+  'real-browser':
+    'Cloudflare exige une vérification de navigateur : passage par le navigateur de l’utilisateur activé',
+};
 
 export interface RemoteEntry {
   name: string;
@@ -42,7 +57,8 @@ export interface DirectoryListing {
 }
 
 const LISTING_TTL_MS = 10 * 60_000;
-const LISTING_TIMEOUT_MS = 90_000;
+/** Inclut le temps de passer une vérification Cloudflare dans le navigateur (≤ 3 min). */
+const LISTING_TIMEOUT_MS = 240_000;
 const HEADERS_TIMEOUT_MS = 30_000;
 const MAX_TEXT_BYTES = 8 * 1024 * 1024;
 
@@ -55,19 +71,22 @@ export class SourceClient {
   private readonly inflight = new InFlight<string, DirectoryListing>();
   private readonly cookies = new CookieJar();
   private readonly standard: StandardTransport;
-  private browser: Promise<Transport | null> | null = null;
-  /** Origines pour lesquelles l'imitation de navigateur s'est révélée nécessaire. */
-  private readonly needsBrowser = new Set<string>();
-  private readonly loadBrowser: () => Promise<Transport | null>;
-  private browserMissingWarned = false;
+  private impersonation: Promise<Transport | null> | null = null;
+  private readonly loadImpersonation: () => Promise<Transport | null>;
+  private readonly realBrowser: Transport | null;
+  /** Transport retenu par origine, en mode automatique, après une bascule réussie. */
+  private readonly preferred = new Map<string, TransportName>();
+  private impersonationMissingWarned = false;
 
   constructor(
     private readonly settings: SettingsService,
     private readonly logger: Logger,
-    loadBrowser: (cookies: CookieJar) => Promise<Transport | null> = BrowserTransport.load,
+    options: SourceClientOptions = {},
   ) {
     this.standard = new StandardTransport(() => this.userAgent, this.cookies);
-    this.loadBrowser = () => loadBrowser(this.cookies);
+    const load = options.loadImpersonation ?? BrowserTransport.load;
+    this.loadImpersonation = () => load(this.cookies);
+    this.realBrowser = options.realBrowser?.(this.cookies) ?? null;
     settings.onChange((next, previous) => {
       if (
         next.sourceBaseUrl !== previous.sourceBaseUrl ||
@@ -75,8 +94,9 @@ export class SourceClient {
         next.sourceConnection !== previous.sourceConnection
       ) {
         this.listings.clear();
-        this.needsBrowser.clear();
+        this.preferred.clear();
         this.cookies.clear();
+        this.realBrowser?.reset?.();
       }
     });
   }
@@ -125,34 +145,38 @@ export class SourceClient {
     this.listings.delete(`${this.baseUrl}${normalizeDirPath(remotePath)}`);
   }
 
-  /** Transport « navigateur » (chargé une seule fois, à la première utilisation). */
-  private browserTransport(): Promise<Transport | null> {
-    this.browser ??= this.loadBrowser();
-    return this.browser;
+  /** Imitation de Chrome (chargée une seule fois, à la première utilisation). */
+  private impersonationTransport(): Promise<Transport | null> {
+    this.impersonation ??= this.loadImpersonation();
+    return this.impersonation;
   }
 
   /** Transports à essayer, dans l'ordre, selon le mode de connexion choisi. */
   private async transportsFor(origin: string): Promise<Transport[]> {
     const mode = this.settings.get().sourceConnection;
     if (mode === 'standard') return [this.standard];
-    const browser = await this.browserTransport();
-    if (!browser) {
-      if (!this.browserMissingWarned) {
-        this.browserMissingWarned = true;
-        this.logger.warn(
-          "Module d'imitation de navigateur (impit) indisponible sur cette plateforme : connexion standard uniquement",
-        );
-      }
-      return [this.standard];
+    if (mode === 'real-browser') return [this.realBrowser ?? this.standard];
+    const impersonation = await this.impersonationTransport();
+    if (!impersonation && !this.impersonationMissingWarned) {
+      this.impersonationMissingWarned = true;
+      this.logger.warn(
+        "Module d'imitation de navigateur (impit) indisponible sur cette plateforme",
+      );
     }
-    if (mode === 'browser' || this.needsBrowser.has(origin)) return [browser];
-    return [this.standard, browser];
+    if (mode === 'browser') return [impersonation ?? this.standard];
+    const chain = [this.standard, impersonation, this.realBrowser].filter(
+      (transport): transport is Transport => transport !== null,
+    );
+    const preferred = this.preferred.get(origin);
+    const start = chain.findIndex((transport) => transport.name === preferred);
+    return start > 0 ? chain.slice(start) : chain;
   }
 
   /**
    * Envoie une requête à la source. En mode automatique, une réponse de filtrage anti-robot
-   * (403, défi Cloudflare) déclenche un nouvel essai en imitant Chrome ; si ce dernier passe,
-   * il est retenu pour toute la suite de la session.
+   * (403, défi Cloudflare) déclenche un nouvel essai avec le transport suivant : imitation
+   * de Chrome, puis vérification dans le navigateur de l'utilisateur (seulement si la
+   * réponse vient de Cloudflare). Le transport qui passe est retenu pour la suite.
    */
   async request(
     url: string,
@@ -161,18 +185,16 @@ export class SourceClient {
     const origin = new URL(url).origin;
     const transports = await this.transportsFor(origin);
     for (const [index, transport] of transports.entries()) {
-      const last = index === transports.length - 1;
+      const next = transports[index + 1];
       const response = await transport.fetch(url, request);
-      if (!last && looksBlocked(response)) {
+      const blocked = looksBlocked(response);
+      if (next && blocked && (next.name !== 'real-browser' || servedByCloudflare(response))) {
         await response.body?.cancel().catch(() => undefined);
         continue;
       }
-      if (index > 0 && !looksBlocked(response) && !this.needsBrowser.has(origin)) {
-        this.needsBrowser.add(origin);
-        this.logger.info(
-          { origin },
-          'La source filtre les clients qui ne sont pas des navigateurs : imitation de Chrome activée',
-        );
+      if (index > 0 && !blocked && this.preferred.get(origin) !== transport.name) {
+        this.preferred.set(origin, transport.name);
+        this.logger.info({ origin }, ESCALATION_MESSAGES[transport.name] ?? 'Transport changé');
       }
       return { response, transport: transport.name };
     }

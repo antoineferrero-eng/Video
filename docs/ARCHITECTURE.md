@@ -34,6 +34,8 @@ flowchart LR
   FF -- relais local --> Client
   FF -- lit --> Disk
   Client --> Source
+  Client -. vérification Cloudflare .-> Browser[Navigateur de l'utilisateur<br/>Chrome / Edge]
+  Browser -.-> Source
   Metadata --> TMDB
   Catalog & Downloads & Playback & Metadata --> DB
 ```
@@ -60,6 +62,8 @@ domain/              fonctions pures : noms de releases, épisodes/saisons, titr
 modules/
   source/            client de la source (transports standard / imitation de Chrome, cookies),
                      relais local pour ffmpeg, analyseur générique de listings
+    browser/         vérification Cloudflare dans le navigateur de l'utilisateur (protocole
+                     DevTools), transport « navigateur réel »
   catalog/           synchronisation films/séries, recherche, fiches, structure saisons/épisodes
   metadata/          client TMDB, rapprochement des titres, cache des images
   downloads/         file d'attente, moteur de transfert, rangement des fichiers
@@ -83,7 +87,11 @@ serveurs HTTP).
    `{ nom, dossier ?, taille, date }`. `SourceClient` choisit le transport (`transport.ts`) :
    requête Node.js avec les en-têtes exacts d'une navigation Chrome (`node-http.ts`), puis,
    si la source filtre les robots (403, page de vérification Cloudflare), imitation complète
-   de Chrome avec **impit** — choix mémorisé par origine.
+   de Chrome avec **impit**, puis, si Cloudflare exige une vérification JavaScript, le
+   **navigateur de l'utilisateur** (`browser/`) : il passe la vérification, puis Lumière
+   réutilise le passage (cookies, identité, empreinte de la même version) ou fait ses
+   requêtes depuis la page. Choix mémorisé par origine ; chaque étape de la vérification est
+   diffusée à l'interface (`source.verification`).
 2. Chaque entrée devient un titre (`title-parser.ts` : « Titre (Année) », nom de release…),
    inséré/actualisé en une transaction ; les titres disparus sont retirés.
 3. `MetadataService` enrichit progressivement les titres (TMDB) en arrière-plan, et à la

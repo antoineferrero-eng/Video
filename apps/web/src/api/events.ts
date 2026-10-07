@@ -1,7 +1,40 @@
 import { useQueryClient, type QueryKey } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
+import { toast } from 'sonner';
 import type { DownloadItem, DownloadList, ServerEvent } from '@lumiere/shared';
 import { queryKeys } from './queries';
+
+/** Une seule notification, mise à jour à chaque étape de la vérification Cloudflare. */
+const VERIFICATION_TOAST = 'source-verification';
+
+function showVerification(event: Extract<ServerEvent, { type: 'source.verification' }>): void {
+  switch (event.state) {
+    case 'opening':
+      toast.loading(event.message, {
+        id: VERIFICATION_TOAST,
+        description: 'La fenêtre se fermera d’elle-même une fois la vérification passée.',
+        duration: Infinity,
+      });
+      break;
+    case 'waiting':
+      toast.warning('Vérification Cloudflare en attente', {
+        id: VERIFICATION_TOAST,
+        description: event.message,
+        duration: Infinity,
+      });
+      break;
+    case 'passed':
+      toast.success(event.message, { id: VERIFICATION_TOAST, description: undefined });
+      break;
+    case 'failed':
+      toast.error('Vérification Cloudflare impossible', {
+        id: VERIFICATION_TOAST,
+        description: event.message,
+        duration: 15_000,
+      });
+      break;
+  }
+}
 
 function upsert(list: DownloadList, item: DownloadItem): DownloadList {
   const exists = list.items.some((entry) => entry.id === item.id);
@@ -82,6 +115,10 @@ export function useServerEvents(): { connected: boolean } {
           break;
         case 'metadata.updated':
           invalidate(queryKeys.title(event.titleId), queryKeys.home, ['titles'], ['genres']);
+          break;
+        case 'source.verification':
+          showVerification(event);
+          if (event.state === 'passed') invalidate(queryKeys.system, ['explorer']);
           break;
       }
     };

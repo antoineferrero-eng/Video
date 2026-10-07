@@ -246,7 +246,7 @@ describe('bascule automatique vers l’imitation de navigateur', () => {
     const client = new SourceClient(
       container.settings,
       createLogger({ level: 'silent', pretty: false }),
-      async () => fakeBrowser,
+      { loadImpersonation: async () => fakeBrowser },
     );
     const listing = await client.list('/fingerprint/');
     expect(listing.transport).toBe('browser');
@@ -266,7 +266,7 @@ describe('bascule automatique vers l’imitation de navigateur', () => {
     const client = new SourceClient(
       container.settings,
       createLogger({ level: 'silent', pretty: false }),
-      async () => fakeBrowser,
+      { loadImpersonation: async () => fakeBrowser },
     );
     await expect(client.list('/fingerprint/')).rejects.toThrow(/vérification anti-robot/);
     expect(seen.some((request) => request.headers['x-impersonated'])).toBe(false);
@@ -277,7 +277,7 @@ describe('bascule automatique vers l’imitation de navigateur', () => {
     const client = new SourceClient(
       container.settings,
       createLogger({ level: 'silent', pretty: false }),
-      async () => null,
+      { loadImpersonation: async () => null },
     );
     const listing = await client.list('/guarded/');
     expect(listing.transport).toBe('standard');
