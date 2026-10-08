@@ -40,6 +40,20 @@ function remoteInputArgs(isRemote: boolean, userAgent: string): string[] {
 }
 
 /**
+ * Filtre audio : trous comblés par du silence. Au début du fichier, l'audio démarre en plus
+ * exactement avec la première image : une piste qui commence plus tard (retard d'une VF
+ * d'une autre source…) est précédée de silence, une piste qui commence plus tôt est coupée.
+ * Sans cela, le MP4 fragmenté place son premier échantillon à 0 suivi d'un trou, que le
+ * navigateur referme : le son serait en avance d'autant jusqu'au premier positionnement.
+ * Après un positionnement, audio et vidéo repartent déjà du même instant (image clé).
+ */
+function audioFilter({ start, plan }: StreamArgsInput): string {
+  if (start > 0 || !plan.videoStream) return 'aresample=async=1';
+  const rate = plan.audioStream?.sampleRate ?? 48_000;
+  return `aresample=${rate}:async=1:first_pts=${Math.round(plan.videoStart * rate)}`;
+}
+
+/**
  * Arguments ffmpeg produisant un MP4 fragmenté lisible progressivement par le navigateur.
  * Le positionnement se fait en relançant ffmpeg avec `-ss` (seek rapide sur l'entrée).
  *
@@ -109,7 +123,7 @@ export function buildStreamArgs(options: StreamArgsInput): string[] {
     else {
       // Trous de l'audio source comblés par du silence : le navigateur les refermerait,
       // et l'audio garderait de l'avance sur l'image jusqu'au positionnement suivant.
-      args.push('-af', 'aresample=async=1');
+      args.push('-af', audioFilter(options));
       if (output.audio === 'aac') args.push('-c:a', 'aac', '-ac', '2', '-b:a', '192k');
       else args.push('-c:a', 'libopus', '-ac', '2', '-b:a', '160k');
     }
@@ -131,9 +145,13 @@ export function buildStreamArgs(options: StreamArgsInput): string[] {
     // Fragments courts : démarrage rapide même quand les images clés de la source sont espacées.
     '-frag_duration',
     '2000000',
-    // Décalages de composition négatifs : la première image (B-frames) s'affiche à 0 comme l'audio.
+    // En-tête écrit avec le premier fragment (`delay_moov`, pas `empty_moov`) : il peut alors
+    // dire qu'une piste commence après l'autre (liste d'éditions). Sans cela, le premier
+    // échantillon de chaque piste est ramené à 0 et suivi d'un trou, que le navigateur
+    // referme pour l'audio : son en avance de l'écart (retard d'une piste, images B). Pas de
+    // décalages de composition négatifs : avec des images B, ils avancent le son d'une image.
     '-movflags',
-    'frag_keyframe+empty_moov+default_base_moof+negative_cts_offsets',
+    'frag_keyframe+delay_moov+default_base_moof',
     'pipe:1',
   );
   if (copiedVideo) {

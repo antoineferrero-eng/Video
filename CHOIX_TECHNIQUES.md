@@ -148,15 +148,30 @@ disque, nettoyage) pour un usage domestique.
 Se positionner sans désynchroniser, surtout sur un fichier lu à distance :
 
 - **vidéo recopiée** (remultiplexage) : elle repart forcément de l'image clé qui précède la
-  position demandée. L'audio repart du même instant (`-noaccurate_seek`) : le MP4 fragmenté
-  fait démarrer chaque piste à zéro, un audio coupé plus tard que l'image serait joué en
-  avance (et les sous-titres, calés sur l'horloge, avec lui) ;
-- l'instant exact de cette image clé est donné par **ffmpeg lui-même**, dans le même
-  passage (seconde sortie `framecrc` du premier paquet vidéo, sur stderr) : pas de seconde
-  analyse du fichier distant à chaque positionnement, et une valeur toujours juste ;
-- trous de l'audio source comblés par du silence (`aresample=async=1`), décalages de
-  composition négatifs (B-frames : première image affichée à 0 comme l'audio), fragments
-  de 2 s pour démarrer vite ;
+  position demandée. L'audio repart du même instant (`-noaccurate_seek`) ;
+- l'instant de cette image clé est donné par **ffmpeg lui-même**, dans le même passage
+  (seconde sortie `framecrc` du premier paquet vidéo, sur stderr) : pas de seconde analyse
+  du fichier distant à chaque positionnement. Le temps du flux part de l'instant de
+  **décodage** de cette image (un peu avant son affichage quand la vidéo a des images B) :
+  c'est lui qui sert d'origine à l'horloge du lecteur, et donc aux sous-titres ;
+- **une piste qui commence après l'autre** : fréquent dans les releases MULTi, où la VF
+  vient d'une autre source et est recalée par un retard dans le MKV. L'en-tête du MP4
+  fragmenté est écrit avec le premier fragment (`delay_moov`, pas `empty_moov`) : il peut
+  ainsi décrire ce décalage (liste d'éditions). Avec `empty_moov`, le premier échantillon
+  de chaque piste était ramené à 0 et suivi d'un trou ; le navigateur referme les trous de
+  l'audio, le son était donc **en avance de tout le retard** (mesuré dans Chromium : 1 s
+  pour une VF retardée d'1 s) jusqu'au premier positionnement. Les décalages de composition
+  négatifs (`negative_cts_offsets`) ont été retirés pour la même raison : avec des images B,
+  ils avançaient le son d'une image (42 ms à 24 i/s) ;
+- au début du fichier, l'audio converti démarre exactement avec la première image
+  (`aresample=…:first_pts=…`) : complété par du silence s'il commence après, coupé s'il
+  commence avant. Un audio qu'on aurait pu recopier mais qui ne démarre pas avec l'image
+  est converti ;
+- `playback-sync.integration.test.ts` vérifie avec le vrai ffmpeg (VF retardée, vidéo
+  retardée, positionnement, pistes alignées) que l'audio produit n'a pas de trou et que le
+  son tombe sur la bonne image à moins de 30 ms ;
+- trous de l'audio source comblés par du silence (`aresample=async=1`), fragments de 2 s
+  pour démarrer vite ;
 - un seul ffmpeg par session, l'ancien est arrêté **et attendu** avant le suivant ; un
   démarrage raté est retenté (la source refuse parfois un instant) et n'envoie jamais de
   flux vide ; ffmpeg se reconnecte aussi aux réponses 5xx du relais ;

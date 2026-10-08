@@ -235,6 +235,7 @@ export class PlaybackService {
           audioTrack: null,
           output: null,
           hdr: false,
+          videoStart: 0,
           reasons: ['ffmpeg indisponible : lecture directe uniquement'],
         };
 
@@ -713,8 +714,10 @@ export class PlaybackService {
       if (child.exitCode === null) child.kill('SIGKILL');
       return { ok: false, error: reader.lastError ?? 'ffmpeg s’est arrêté sans rien produire' };
     }
-    // Vidéo réencodée : ffmpeg se positionne à l'image près, le flux part de la position demandée.
-    if (origin && !origin.settled && !copiedVideo) origin.resolve(start);
+    // Vidéo réencodée : ffmpeg se positionne à l'image près, le flux part de la position demandée
+    // (au début du fichier : de la première image, l'audio étant calé sur elle).
+    if (origin && !origin.settled && !copiedVideo)
+      origin.resolve(start > 0 ? start : session.plan.videoStart);
     child.on('close', (code) => {
       if (code && code !== 255 && session.process === child) {
         this.logger.warn(

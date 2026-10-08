@@ -249,8 +249,9 @@ function Player({ media, initialStart }: { media: MediaRef; initialStart: number
         setOffset(start);
         const element = video.current;
         const elapsed = element?.currentSrc.includes(id) ? element.currentTime : 0;
-        timeRef.current = start + elapsed;
-        setTime(start + elapsed);
+        // Le flux peut démarrer quelques centièmes avant le fichier (images B).
+        timeRef.current = Math.max(0, start + elapsed);
+        setTime(timeRef.current);
       })
       .catch((failure: unknown) => {
         if (streamId.current === id) streamFailure.current = errorMessage(failure);
@@ -655,7 +656,7 @@ function Player({ media, initialStart }: { media: MediaRef; initialStart: number
     const element = video.current;
     // Positionnement en attente, ou ancien flux : la position affichée reste celle visée.
     if (!element || seekTarget.current !== null || !isCurrent(element)) return;
-    const absolute = offset + element.currentTime;
+    const absolute = Math.max(0, offset + element.currentTime);
     timeRef.current = absolute;
     setTime(absolute);
     if (element.buffered.length > 0)
