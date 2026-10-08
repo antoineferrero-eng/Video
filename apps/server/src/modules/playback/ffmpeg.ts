@@ -162,39 +162,6 @@ export class Ffmpeg {
     }
     return parseProbe(JSON.parse(result.stdout) as RawProbe);
   }
-
-  /**
-   * Instant réel où démarrera un flux recopié (sans réencodage) positionné à `position` :
-   * ffmpeg repart de l'image clé précédente, qu'il faut connaître pour garder
-   * l'affichage du temps et les sous-titres synchronisés.
-   */
-  async keyframeBefore(
-    input: string,
-    streamIndex: number,
-    position: number,
-    options: { userAgent?: string } = {},
-  ): Promise<number | null> {
-    if (!this.capabilities.ffprobeAvailable) return null;
-    const args = ['-v', 'error'];
-    if (/^https?:\/\//i.test(input)) {
-      args.push('-rw_timeout', '20000000');
-      if (options.userAgent) args.push('-user_agent', options.userAgent);
-    }
-    args.push(
-      '-select_streams',
-      String(streamIndex),
-      '-read_intervals',
-      `${position.toFixed(3)}%+#1`,
-      '-show_entries',
-      'packet=pts_time',
-      '-of',
-      'csv=p=0',
-      input,
-    );
-    const result = await run(this.ffprobePath, args, 30_000);
-    const value = Number.parseFloat(result.stdout.trim().split('\n')[0] ?? '');
-    return result.code === 0 && Number.isFinite(value) ? value : null;
-  }
 }
 
 function toNumber(value: string | number | undefined): number | null {

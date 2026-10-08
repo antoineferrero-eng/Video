@@ -114,7 +114,8 @@ Génère des vidéos d'exemple (films, séries, MKV multi-pistes, HEVC HDR, sous
 une source locale qui imite le site, un faux service TMDB et une fausse extension Stremio (liens
 qui expirent, réserve de liens limitée), puis l'application sur <http://localhost:8484> avec une
 base dédiée (`data/demo`). `DEMO_MODE=listing npm run demo` lit plutôt la liste de la source,
-sans extension.
+sans extension ; `DEMO_MAX_CONNECTIONS=2 npm run demo` limite les connexions simultanées à un
+même fichier, comme un hébergeur strict (pour éprouver les positionnements du lecteur).
 
 ---
 

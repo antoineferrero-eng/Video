@@ -361,6 +361,17 @@ export class StremioAddon {
         headers: entry.behaviorHints?.proxyHeaders?.request ?? {},
       };
     }
+    if (limited) {
+      // Réserve de jetons vide : les liens déjà obtenus restent utilisables tant que l'hôte
+      // les accepte, plutôt que de rendre illisible un fichier en cours de lecture.
+      const previous = this.cache.get<StoredResult>(key);
+      for (const file of previous?.files ?? []) {
+        const link = previous?.links[file.path];
+        if (!link || links[file.path]) continue;
+        files.push(file);
+        links[file.path] = link;
+      }
+    }
     const raw = notices.length > 0 ? [...new Set(notices)].join(' · ').slice(0, 300) : null;
     const result: StoredResult = {
       files,

@@ -27,6 +27,11 @@ function remoteInputArgs(isRemote: boolean, userAgent: string): string[] {
     '1',
     '-reconnect_streamed',
     '1',
+    '-reconnect_on_network_error',
+    '1',
+    // Le relais répond 5xx quand la source refuse un instant (lien renouvelé, connexions…).
+    '-reconnect_on_http_error',
+    '5xx',
     '-reconnect_delay_max',
     '5',
     '-rw_timeout',
@@ -37,13 +42,23 @@ function remoteInputArgs(isRemote: boolean, userAgent: string): string[] {
 /**
  * Arguments ffmpeg produisant un MP4 fragmenté lisible progressivement par le navigateur.
  * Le positionnement se fait en relançant ffmpeg avec `-ss` (seek rapide sur l'entrée).
+ *
+ * Vidéo recopiée : le flux repart forcément de l'image clé qui précède la position demandée.
+ * L'audio repart alors du même instant (`-noaccurate_seek`) : le MP4 fragmenté fait démarrer
+ * chaque piste à zéro, un audio coupé plus tard que la vidéo serait joué en avance. Une
+ * seconde sortie (`framecrc` sur stderr, premier paquet vidéo seulement) donne l'instant
+ * exact de cette image clé, lu par `readStreamOrigin`.
  */
 export function buildStreamArgs(options: StreamArgsInput): string[] {
   const { plan } = options;
   const output = plan.output ?? { video: 'copy', audio: 'copy' };
+  const copiedVideo = plan.videoStream && output.video === 'copy' ? plan.videoStream : null;
   const args = ['-hide_banner', '-loglevel', 'error', '-nostdin'];
   args.push(...remoteInputArgs(options.isRemote, options.userAgent));
-  if (options.start > 0) args.push('-ss', options.start.toFixed(3));
+  if (options.start > 0) {
+    args.push('-ss', options.start.toFixed(3));
+    if (copiedVideo) args.push('-noaccurate_seek');
+  }
   args.push('-i', options.input);
 
   if (plan.videoStream) args.push('-map', `0:${plan.videoStream.index}`);
@@ -91,8 +106,13 @@ export function buildStreamArgs(options: StreamArgsInput): string[] {
 
   if (plan.audioStream) {
     if (output.audio === 'copy') args.push('-c:a', 'copy');
-    else if (output.audio === 'aac') args.push('-c:a', 'aac', '-ac', '2', '-b:a', '192k');
-    else args.push('-c:a', 'libopus', '-ac', '2', '-b:a', '160k');
+    else {
+      // Trous de l'audio source comblés par du silence : le navigateur les refermerait,
+      // et l'audio garderait de l'avance sur l'image jusqu'au positionnement suivant.
+      args.push('-af', 'aresample=async=1');
+      if (output.audio === 'aac') args.push('-c:a', 'aac', '-ac', '2', '-b:a', '192k');
+      else args.push('-c:a', 'libopus', '-ac', '2', '-b:a', '160k');
+    }
   }
 
   args.push(
@@ -108,10 +128,27 @@ export function buildStreamArgs(options: StreamArgsInput): string[] {
     '4096',
     '-f',
     'mp4',
+    // Fragments courts : démarrage rapide même quand les images clés de la source sont espacées.
+    '-frag_duration',
+    '2000000',
+    // Décalages de composition négatifs : la première image (B-frames) s'affiche à 0 comme l'audio.
     '-movflags',
-    'frag_keyframe+empty_moov+default_base_moof',
+    'frag_keyframe+empty_moov+default_base_moof+negative_cts_offsets',
     'pipe:1',
   );
+  if (copiedVideo) {
+    args.push(
+      '-map',
+      `0:${copiedVideo.index}`,
+      '-c',
+      'copy',
+      '-frames:v',
+      '1',
+      '-f',
+      'framecrc',
+      'pipe:2',
+    );
+  }
   return args;
 }
 

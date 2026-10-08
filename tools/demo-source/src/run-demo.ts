@@ -34,6 +34,7 @@ createDemoServer({
   port,
   host: '127.0.0.1',
   throttleKbps: Number(process.env.DEMO_THROTTLE_KBPS ?? 4096),
+  maxConnections: Number(process.env.DEMO_MAX_CONNECTIONS ?? 0),
 }).listen(port, '127.0.0.1', () => {
   console.log(`Source de démonstration : http://127.0.0.1:${port}/`);
   const server = spawn(

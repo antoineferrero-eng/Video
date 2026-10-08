@@ -307,6 +307,23 @@ describe('mode extension Stremio', () => {
     expect(details.files[0]?.availability.libraryItemId).not.toBeNull();
   });
 
+  it('ne renouvelle pas en boucle un lien que l’hôte refuse', async () => {
+    const { files } = await container.catalog.episodeFiles(await titleId('Breaking Bad'), 1, 2);
+    const remotePath = files[0]!.path;
+    for (const entry of links.values()) entry.expired = true;
+    addonRequests.length = 0;
+    const first = await container.source.openFile(remotePath);
+    await first.body?.cancel();
+    expect(first.status).toBe(200);
+    expect(addonRequests).toEqual(['tt0903747:1:2']);
+    // Nouveau lien aussitôt refusé : pas de nouvelle demande (chacune consomme des jetons).
+    for (const entry of links.values()) entry.expired = true;
+    const second = await container.source.openFile(remotePath);
+    await second.body?.cancel();
+    expect(second.status).toBe(410);
+    expect(addonRequests).toEqual(['tt0903747:1:2']);
+  });
+
   it('télécharge une saison en arrière-plan, épisode par épisode', async () => {
     const id = await titleId('Breaking Bad');
     const notice = waitFor((event) => event.type === 'downloads.notice');

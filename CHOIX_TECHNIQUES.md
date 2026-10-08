@@ -148,9 +148,30 @@ client) :
 | **Conversion**      | Vidéo non décodable (HEVC 10 bits, HDR…)                                                             | ffmpeg (H.264, ou VP9 si le navigateur n'a pas H.264) ; tonemapping HDR → SDR |
 
 Le flux converti est un **MP4 fragmenté** envoyé au fil de l'eau ; se positionner relance
-ffmpeg au bon endroit (le serveur calcule l'image clé exacte pour garder le temps et les
-sous-titres synchronisés). L'alternative HLS a été écartée : plus complexe (segments sur
+ffmpeg au bon endroit. L'alternative HLS a été écartée : plus complexe (segments sur
 disque, nettoyage) pour un usage domestique.
+
+Se positionner sans désynchroniser, surtout sur un fichier lu à distance :
+
+- **vidéo recopiée** (remultiplexage) : elle repart forcément de l'image clé qui précède la
+  position demandée. L'audio repart du même instant (`-noaccurate_seek`) : le MP4 fragmenté
+  fait démarrer chaque piste à zéro, un audio coupé plus tard que l'image serait joué en
+  avance (et les sous-titres, calés sur l'horloge, avec lui) ;
+- l'instant exact de cette image clé est donné par **ffmpeg lui-même**, dans le même
+  passage (seconde sortie `framecrc` du premier paquet vidéo, sur stderr) : pas de seconde
+  analyse du fichier distant à chaque positionnement, et une valeur toujours juste ;
+- trous de l'audio source comblés par du silence (`aresample=async=1`), décalages de
+  composition négatifs (B-frames : première image affichée à 0 comme l'audio), fragments
+  de 2 s pour démarrer vite ;
+- un seul ffmpeg par session, l'ancien est arrêté **et attendu** avant le suivant ; un
+  démarrage raté est retenté (la source refuse parfois un instant) et n'envoie jamais de
+  flux vide ; ffmpeg se reconnecte aussi aux réponses 5xx du relais ;
+- côté lecteur : appuis rapprochés (±10 s répétés) regroupés en un seul positionnement,
+  événements d'un flux remplacé ignorés, coupure d'un flux déjà lu reprise au même endroit
+  au lieu de basculer vers une conversion plus lourde ;
+- extension Stremio : un lien refusé n'est renouvelé qu'une fois par minute et par fichier
+  (chaque demande consomme des jetons), et une réponse « limite atteinte » ne fait pas
+  oublier les liens déjà obtenus.
 
 Autres points :
 
