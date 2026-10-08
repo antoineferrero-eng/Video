@@ -62,6 +62,8 @@ const isVideo = (entry: RemoteEntry) =>
 
 export class CatalogService {
   private readonly refreshes = new Map<TitleKind, Promise<CatalogSectionStatus>>();
+  /** Sections dont la popularité manquante a déjà été rattrapée depuis le démarrage. */
+  private readonly popularityChecked = new Set<TitleKind>();
   private timer: NodeJS.Timeout | null = null;
 
   constructor(
@@ -149,10 +151,24 @@ export class CatalogService {
       const age = status.lastRefreshAt ? Date.now() - Date.parse(status.lastRefreshAt) : Infinity;
       // Extension activée ou désactivée depuis la dernière actualisation.
       const modeChanged = this.addon.enabled ? status.mode !== 'addon' : status.mode === 'addon';
+      // Catalogue antérieur au tri par popularité : ses titres n'en ont pas encore (une fois
+      // par démarrage, pour ne pas boucler si TMDB n'en fournit pas).
+      let missingPopularity = false;
+      if (
+        status.lastRefreshAt &&
+        this.metadata.isEnabled() &&
+        !this.popularityChecked.has(kind) &&
+        !this.titles.hasPopularity(kind)
+      ) {
+        this.popularityChecked.add(kind);
+        if (status.mode === 'listing') void this.refreshPopularity(kind);
+        else missingPopularity = true;
+      }
       const stale =
         !status.lastRefreshAt ||
         status.path !== this.sectionPath(kind) ||
         modeChanged ||
+        missingPopularity ||
         (hours > 0 && age > hours * 3600_000);
       if (stale) {
         await this.refresh(kind).catch((error) =>
@@ -292,6 +308,7 @@ export class CatalogService {
         { kind, total, removed, format: listing.format, ms: Date.now() - started },
         'Catalogue actualisé',
       );
+      if (this.metadata.isEnabled()) void this.refreshPopularity(kind);
       return status;
     } catch (error) {
       const status: CatalogSectionStatus = {
@@ -307,6 +324,16 @@ export class CatalogService {
         this.events.publish({ type: 'catalog.updated', status });
       }
       throw error;
+    }
+  }
+
+  /** Popularité TMDB à jour pour les titres de la liste de la source (tri par popularité). */
+  private async refreshPopularity(kind: TitleKind): Promise<void> {
+    try {
+      const updated = await this.tmdbCatalog.refreshPopularity(kind);
+      this.logger.debug({ kind, updated }, 'Popularité TMDB actualisée');
+    } catch (error) {
+      this.logger.debug({ kind, err: errorMessage(error) }, 'Popularité TMDB non actualisée');
     }
   }
 
@@ -365,7 +392,7 @@ export class CatalogService {
       kind: query.kind,
       tokens: query.q ? searchTokens(query.q) : [],
       genre: query.genre,
-      sort: query.sort ?? 'recent',
+      sort: query.sort ?? 'popular',
       limit: pageSize,
       offset: (page - 1) * pageSize,
     });
@@ -381,11 +408,20 @@ export class CatalogService {
         if (!ids.has(row.id)) featured.push(row);
       }
     }
+    const sections = this.statuses();
+    // « Récemment ajoutés » n'a de sens que pour la liste du site : un catalogue TMDB n'a pas
+    // de date d'ajout (seulement celle de son import).
+    const recent = (kind: TitleKind) =>
+      sections.find((section) => section.kind === kind)?.mode === 'listing'
+        ? this.summaries(this.titles.recent(kind, 24))
+        : [];
     return {
       featured: this.summaries(featured),
-      recentMovies: this.summaries(this.titles.recent('movie', 24)),
-      recentSeries: this.summaries(this.titles.recent('series', 24)),
-      sections: this.statuses(),
+      popularMovies: this.summaries(this.titles.popular('movie', 24)),
+      popularSeries: this.summaries(this.titles.popular('series', 24)),
+      recentMovies: recent('movie'),
+      recentSeries: recent('series'),
+      sections,
     };
   }
 

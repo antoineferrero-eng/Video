@@ -62,6 +62,9 @@ const TITLES: DemoTitle[] = [
   { id: 10, kind: 'tv', fr: 'Orbite', en: 'Orbite', original: 'Orbite', date: '2020-09-15' },
 ];
 
+/** Popularité TMDB de chaque titre (indépendante de l'ordre des listes). */
+const POPULARITY: Record<number, number> = { 1: 30.5, 2: 90.2, 3: 60.1, 10: 40 };
+
 function item(title: DemoTitle, language: string) {
   const name = language.startsWith('en') ? title.en : title.fr;
   const common = {
@@ -71,6 +74,7 @@ function item(title: DemoTitle, language: string) {
     backdrop_path: `/b${title.id}.jpg`,
     vote_average: 7.5,
     vote_count: 100,
+    popularity: POPULARITY[title.id],
     genre_ids: [title.kind === 'movie' ? 878 : 10765],
   };
   return title.kind === 'movie'
@@ -215,6 +219,19 @@ describe('catalogue TMDB', () => {
       ['L’Éclipse oubliée', 'unknown'],
       ['Le Voyage imaginaire', 'unknown'],
     ]);
+  });
+
+  it('trie par popularité TMDB par défaut, accueil compris', async () => {
+    const byPopularity = ['Le Voyage imaginaire', 'L’Éclipse oubliée', 'Cosmos Odyssey'];
+    const page = await container.catalog.search({ kind: 'movie' });
+    expect(page.items.map((title) => title.title)).toEqual(byPopularity);
+    const home = container.catalog.home();
+    expect(home.popularMovies.map((title) => title.title)).toEqual(byPopularity);
+    expect(home.popularSeries.map((title) => title.title)).toEqual(['Orbite']);
+    expect(home.featured[0]?.title).toBe('Le Voyage imaginaire');
+    // Catalogue TMDB : pas de date d'ajout sur la source, donc pas de « récemment ajoutés ».
+    expect(home.recentMovies).toEqual([]);
+    expect(home.recentSeries).toEqual([]);
   });
 
   it('trouve le dossier d’un film à l’ouverture de sa fiche, même en capitales', async () => {

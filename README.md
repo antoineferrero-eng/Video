@@ -15,7 +15,8 @@ reflets qui suivent le pointeur, ambiance colorée par les affiches.
 - **Catalogue films et séries** : tendances, titres populaires et recherche de **TMDB**, avec les
   fichiers fournis par l'**extension Stremio de 111477** (le site lui-même est protégé par
   Cloudflare) ; ou, pour un index HTTP accessible, construit à partir de la liste du site.
-  Recherche instantanée (sans accents ni majuscules), tri (ajouts récents, titre, année, note),
+  Recherche instantanée (sans accents ni majuscules), tri par **popularité** comme sur la page
+  « Populaires » de TMDB (par défaut, accueil compris) ou par ajouts récents, titre, année, note,
   filtre par genre, défilement infini.
 - **Fiches détaillées** : affiche, image de fond, résumé, note, genres, durée, accroche
   (via TMDB, facultatif) ; toutes les **versions** disponibles avec leurs caractéristiques

@@ -212,6 +212,18 @@ function genres(title: DemoTitle) {
   return title.genres.map((name) => ({ id: GENRE_IDS.get(name) ?? 0, name }));
 }
 
+/** Popularité TMDB fictive : chaque titre a la sienne, pour que le tri par popularité se voie. */
+const POPULARITY: Record<string, number> = {
+  tt9100103: 412.7,
+  tt9100201: 288.4,
+  tt9100102: 196.2,
+  tt9100105: 141.9,
+  tt9100202: 97.3,
+  tt9100101: 64.8,
+  tt9100104: 38.5,
+  tt9100106: 12.1,
+};
+
 function summary(title: DemoTitle, language = 'fr-FR') {
   const shown = language.startsWith('en') && title.englishTitle ? title.englishTitle : title.title;
   const common = {
@@ -221,7 +233,7 @@ function summary(title: DemoTitle, language = 'fr-FR') {
     backdrop_path: `/${backdropFile(title)}`,
     vote_average: title.rating,
     vote_count: 1000 + title.id,
-    popularity: 50,
+    popularity: POPULARITY[title.imdb] ?? 10,
     genre_ids: title.genres.map((name) => GENRE_IDS.get(name) ?? 0),
   };
   return title.kind === 'movie'

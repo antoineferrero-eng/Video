@@ -224,6 +224,19 @@ Les affiches, résumés, notes, genres et titres d'épisodes viennent de **The M
   catalogue vient de la liste du site ; avec l'extension Stremio, la clé est indispensable
   puisque TMDB fournit le catalogue (§ 11).
 
+Tri par **popularité** (celui de la page « Populaires » de TMDB), par défaut sur les pages
+Films et Séries et pour l'accueil :
+
+- l'indice `popularity` de TMDB est gardé avec sa date : il vient des listes importées (dont
+  « Populaires » sur 10 pages, soit 200 titres), des recherches et des fiches détaillées ;
+- catalogue issu de la liste du site : à chaque actualisation, les listes TMDB mettent à jour la
+  popularité des titres déjà connus, sans en ajouter ;
+- une popularité de plus de 3 jours (titre sorti des listes) passe après les valeurs à jour :
+  un succès d'il y a des mois ne reste pas en tête ; les titres sans données TMDB viennent en
+  dernier, par date d'ajout ;
+- l'accueil met en avant les plus populaires ; « récemment ajoutés » n'y figure que pour un
+  catalogue issu de la liste du site (un catalogue TMDB n'a pas de date d'ajout).
+
 ---
 
 ## 9. Interface

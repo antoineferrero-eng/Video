@@ -1,6 +1,6 @@
 import { AlertTriangle, Film, Settings } from 'lucide-react';
 import { Link } from 'react-router';
-import type { LibraryItem } from '@lumiere/shared';
+import type { LibraryItem, TitleSummary } from '@lumiere/shared';
 import { useContinueWatching, useHome, useLibrary, useRemoveProgress } from '../../api/queries';
 import { ContinueCard, PlayBadge } from '../../components/media/ContinueCard';
 import { MediaRow } from '../../components/media/MediaRow';
@@ -23,7 +23,12 @@ export function HomePage() {
 
   const feed = home.data;
   const failing = feed.sections.filter((section) => section.state === 'error');
-  const isEmpty = feed.recentMovies.length === 0 && feed.recentSeries.length === 0;
+  const isEmpty = [
+    feed.popularMovies,
+    feed.popularSeries,
+    feed.recentMovies,
+    feed.recentSeries,
+  ].every((row) => row.length === 0);
   const recentLibrary = (library.data ?? []).filter((item) => item.exists).slice(0, 16);
 
   return (
@@ -68,29 +73,10 @@ export function HomePage() {
         </MediaRow>
       )}
 
-      {feed.recentMovies.length > 0 && (
-        <MediaRow title="Films récemment ajoutés" action={{ label: 'Tout voir', to: '/films' }}>
-          {feed.recentMovies.map((title) => (
-            <PosterCard
-              key={title.id}
-              title={title}
-              className="w-36 shrink-0 snap-start sm:w-40 lg:w-44"
-            />
-          ))}
-        </MediaRow>
-      )}
-
-      {feed.recentSeries.length > 0 && (
-        <MediaRow title="Séries récemment ajoutées" action={{ label: 'Tout voir', to: '/series' }}>
-          {feed.recentSeries.map((title) => (
-            <PosterCard
-              key={title.id}
-              title={title}
-              className="w-36 shrink-0 snap-start sm:w-40 lg:w-44"
-            />
-          ))}
-        </MediaRow>
-      )}
+      <TitleRow title="Films populaires" to="/films" titles={feed.popularMovies} />
+      <TitleRow title="Séries populaires" to="/series" titles={feed.popularSeries} />
+      <TitleRow title="Films récemment ajoutés" to="/films" titles={feed.recentMovies} />
+      <TitleRow title="Séries récemment ajoutées" to="/series" titles={feed.recentSeries} />
 
       {recentLibrary.length > 0 && (
         <MediaRow title="Dans ma bibliothèque" action={{ label: 'Tout voir', to: '/bibliotheque' }}>
@@ -100,6 +86,22 @@ export function HomePage() {
         </MediaRow>
       )}
     </div>
+  );
+}
+
+/** Rangée d'affiches de l'accueil (masquée quand elle est vide). */
+function TitleRow({ title, to, titles }: { title: string; to: string; titles: TitleSummary[] }) {
+  if (titles.length === 0) return null;
+  return (
+    <MediaRow title={title} action={{ label: 'Tout voir', to }}>
+      {titles.map((item) => (
+        <PosterCard
+          key={item.id}
+          title={item}
+          className="w-36 shrink-0 snap-start sm:w-40 lg:w-44"
+        />
+      ))}
+    </MediaRow>
   );
 }
 

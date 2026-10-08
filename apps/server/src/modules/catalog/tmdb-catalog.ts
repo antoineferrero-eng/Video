@@ -14,16 +14,17 @@ import type { TitlesRepository, TmdbTitleUpsert } from './titles.repository';
  * n'est cherché qu'à l'ouverture de sa fiche (voir SourceResolver).
  */
 
+// « Populaires » en premier et sur 10 pages (200 titres) : c'est l'ordre du site de TMDB.
 const LISTS: Record<TitleKind, Array<{ path: string; pages: number }>> = {
   movie: [
+    { path: '/movie/popular', pages: 10 },
     { path: '/trending/movie/week', pages: 3 },
-    { path: '/movie/popular', pages: 3 },
     { path: '/movie/now_playing', pages: 2 },
     { path: '/movie/top_rated', pages: 2 },
   ],
   series: [
+    { path: '/tv/popular', pages: 10 },
     { path: '/trending/tv/week', pages: 3 },
-    { path: '/tv/popular', pages: 3 },
     { path: '/tv/on_the_air', pages: 1 },
     { path: '/tv/top_rated', pages: 2 },
   ],
@@ -56,17 +57,41 @@ export class TmdbCatalog {
     const language = this.settings.get().metadataLanguage;
     const genres = await this.genreNames(kind, language);
     const seen = new Set<number>();
+    await this.eachListItem(kind, language, (item) => {
+      if (seen.has(item.id)) return;
+      if (this.importItem(kind, item, genres, language) !== null) seen.add(item.id);
+    });
+    return seen.size;
+  }
+
+  /**
+   * Catalogue issu de la liste de la source : met à jour la popularité des titres déjà
+   * connus d'après les listes TMDB, sans en ajouter. Renvoie le nombre de titres mis à jour.
+   */
+  async refreshPopularity(kind: TitleKind): Promise<number> {
+    const language = this.settings.get().metadataLanguage;
+    const seen = new Set<number>();
+    let updated = 0;
+    await this.eachListItem(kind, language, (item) => {
+      if (seen.has(item.id) || typeof item.popularity !== 'number') return;
+      seen.add(item.id);
+      updated += this.titles.setPopularity(kind, item.id, item.popularity);
+    });
+    return updated;
+  }
+
+  private async eachListItem(
+    kind: TitleKind,
+    language: string,
+    visit: (item: TmdbListItem) => void,
+  ): Promise<void> {
     for (const list of LISTS[kind]) {
       for (let page = 1; page <= list.pages; page += 1) {
         const response = await this.tmdb.list(list.path, language, page);
-        for (const item of response.results) {
-          if (seen.has(item.id)) continue;
-          if (this.importItem(kind, item, genres, language) !== null) seen.add(item.id);
-        }
+        for (const item of response.results) visit(item);
         if (page >= response.total_pages) break;
       }
     }
-    return seen.size;
   }
 
   /**
@@ -121,6 +146,7 @@ export class TmdbCatalog {
       backdropPath: item.backdrop_path ?? null,
       rating: item.vote_count ? (item.vote_average ?? null) : null,
       voteCount: item.vote_count ?? null,
+      popularity: item.popularity ?? null,
       genres: (item.genre_ids ?? [])
         .map((id) => genres.get(id))
         .filter((name): name is string => !!name),
