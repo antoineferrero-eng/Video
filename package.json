@@ -2,7 +2,7 @@
   "name": "lumiere",
   "version": "1.0.0",
   "private": true,
-  "description": "Lumière — parcourez, téléchargez et regardez vos films et séries depuis un index HTTP (a.111477.xyz par défaut).",
+  "description": "Lumière — parcourez, téléchargez et regardez vos films et séries : catalogue TMDB, fichiers fournis par des extensions Stremio.",
   "type": "module",
   "license": "UNLICENSED",
   "workspaces": [

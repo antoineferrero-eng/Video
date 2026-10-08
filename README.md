@@ -1,8 +1,9 @@
 # Lumière
 
-**Lumière** est une application pour parcourir, télécharger et regarder vos films et séries
-depuis l'index de fichiers [a.111477.xyz](https://a.111477.xyz) (ou tout autre index HTTP du
-même type), avec une interface au design **Liquid Glass** inspiré d'Apple : barres et
+**Lumière** est une application pour parcourir, télécharger et regarder vos films et séries :
+le catalogue vient de [TMDB](https://www.themoviedb.org), les fichiers d'une ou plusieurs
+**extensions Stremio** (celle de 111477 par défaut), avec une interface au design **Liquid
+Glass** inspiré d'Apple : barres et
 commandes en verre qui flottent au-dessus du contenu, réfraction de la lumière sur les bords,
 reflets qui suivent le pointeur, ambiance colorée par les affiches.
 
@@ -13,19 +14,20 @@ reflets qui suivent le pointeur, ambiance colorée par les affiches.
 ## Fonctionnalités
 
 - **Catalogue films et séries** : tendances, titres populaires et recherche de **TMDB**, avec les
-  fichiers fournis par l'**extension Stremio de 111477** (le site lui-même est protégé par
-  Cloudflare) ; ou, pour un index HTTP accessible, construit à partir de la liste du site.
-  Recherche instantanée (sans accents ni majuscules), tri par **popularité** comme sur la page
-  « Populaires » de TMDB (par défaut, accueil compris) ou par ajouts récents, titre, année, note,
-  filtre par genre, défilement infini.
+  fichiers fournis par des **extensions Stremio** — autant que vous voulez, par ordre de
+  préférence : leurs versions sont réunies sur chaque fiche, et quand plusieurs proposent le même
+  fichier, la suivante prend le relais si le lien de la première est refusé. Recherche
+  instantanée (sans accents ni majuscules), tri par **popularité** comme sur la page
+  « Populaires » de TMDB (par défaut, accueil compris) ou par sorties récentes, titre, année,
+  note, filtre par genre, défilement infini.
 - **Fiches détaillées** : affiche, image de fond, résumé, note, genres, durée, accroche
   (via TMDB, facultatif) ; toutes les **versions** disponibles avec leurs caractéristiques
   (4K, HDR, Dolby Vision, H.265, DD+ 5.1, MULTi, VFF, VOSTFR…) ; **saisons et épisodes** avec
   titres, résumés et vignettes.
 - **Téléchargements** : file d'attente persistante, plusieurs téléchargements en parallèle,
   **pause / reprise** (même après un redémarrage, sans repartir de zéro), nouvelles tentatives
-  automatiques, limite de débit, progression en temps réel ; téléchargement d'un film, d'une
-  saison, d'une série entière ou d'un dossier complet.
+  automatiques, limite de débit, progression en temps réel ; téléchargement d'un film, d'un
+  épisode, d'une saison ou d'une série entière.
 - **Bibliothèque locale** rangée automatiquement (`Films/…`, `Séries/<série>/Saison 01/…`),
   lecture hors ligne, suppression, enregistrement d'un fichier sur l'appareil qui consulte
   l'interface (téléphone, autre PC).
@@ -35,9 +37,8 @@ reflets qui suivent le pointeur, ambiance colorée par les affiches.
   **trouvés en ligne** (OpenSubtitles.com, extensions Stremio de sous-titres comme OpenSubtitles
   v3 : ceux faits pour votre fichier exact passent en tête), décalage des sous-titres réglable,
   **reprise là où vous vous étiez arrêté**, **épisode suivant** automatique, plein écran,
-  raccourcis clavier. On peut regarder **sans télécharger** (streaming depuis le site) ou
-  depuis la copie locale.
-- **Explorateur** pour naviguer librement dans l'arborescence du site.
+  raccourcis clavier. On peut regarder **sans télécharger** (streaming depuis le lien de
+  l'extension) ou depuis la copie locale.
 - **Design Liquid Glass** : barre latérale flottante sous laquelle les illustrations
   s'étendent, barre d'onglets mobile qui se réduit au défilement (comme iOS 26), menus et
   dialogues en verre, contrôles segmentés à goutte « liquide », lecteur aux commandes
@@ -82,20 +83,22 @@ npm start
 
 Ouvrez ensuite **<http://localhost:8484>**.
 
-### 3. Ajouter une clé TMDB (nécessaire avec l'extension)
+### 3. Ajouter une clé TMDB (indispensable)
 
 Créez un compte gratuit sur [themoviedb.org](https://www.themoviedb.org/settings/api), copiez
-la « clé d'API » et collez-la dans **Paramètres → Extensions et API → Clés d'API**. Avec l'extension
-Stremio (réglage par défaut), c'est TMDB qui fournit le catalogue : sans clé, il reste vide.
-La clé apporte aussi affiches, résumés et titres d'épisodes.
+la « clé d'API » et collez-la dans **Paramètres → Extensions et API → Clés d'API**. C'est TMDB
+qui fournit le catalogue : sans clé, il reste vide. La clé apporte aussi affiches, résumés et
+titres d'épisodes.
 
-### 4. Vérifier l'extension Stremio
+### 4. Choisir les extensions Stremio
 
 Par défaut, Lumière demande les liens des fichiers à l'extension Stremio de 111477
-(`https://st.111477.xyz/manifest.json`). **Paramètres → Extensions et API → Tester
-l'extension** vérifie qu'elle répond. Si vous l'avez configurée sur
-[st.111477.xyz](https://st.111477.xyz/) (nombre de liens par titre, serveurs…), collez-y le
-lien d'installation obtenu (`stremio://…` ou `https://…/manifest.json`).
+(`https://st.111477.xyz/manifest.json`). Dans **Paramètres → Extensions et API → Films et
+séries**, ajoutez d'autres extensions par leur lien d'installation (`stremio://…` ou
+`https://…/manifest.json`, configuration comprise), rangez-les par ordre de préférence avec les
+flèches, et vérifiez chacune avec **Tester**. Si vous avez configuré celle de 111477 sur
+[st.111477.xyz](https://st.111477.xyz/) (nombre de liens par titre, serveurs…), remplacez
+l'adresse par défaut par le lien obtenu.
 
 ### 5. Sous-titres en ligne (facultatif)
 
@@ -126,11 +129,11 @@ npm run demo
 ```
 
 Génère des vidéos d'exemple (films, séries, MKV multi-pistes, HEVC HDR, sous-titres…), lance
-une source locale qui imite le site, un faux service TMDB et une fausse extension Stremio (liens
-qui expirent, réserve de liens limitée), puis l'application sur <http://localhost:8484> avec une
-base dédiée (`data/demo`). `DEMO_MODE=listing npm run demo` lit plutôt la liste de la source,
-sans extension ; `DEMO_MAX_CONNECTIONS=2 npm run demo` limite les connexions simultanées à un
-même fichier, comme un hébergeur strict (pour éprouver les positionnements du lecteur).
+un faux service TMDB et deux fausses extensions Stremio (« Lumière démo » et « Miroir démo » :
+liens qui expirent, réserve de liens limitée, fichiers en partie communs), puis l'application
+sur <http://localhost:8484> avec une base dédiée (`data/demo`). `DEMO_MAX_CONNECTIONS=2 npm run
+demo` limite les connexions simultanées à un même fichier, comme un hébergeur strict (pour
+éprouver les positionnements du lecteur).
 
 ---
 
@@ -138,40 +141,41 @@ même fichier, comme un hébergeur strict (pour éprouver les positionnements du
 
 La plupart des réglages se font dans l'interface (**Paramètres**), rangés en quatre onglets :
 
-| Onglet                  | Contenu                                                                                                                                                                |
-| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Général**             | Apparence du verre (propre à chaque appareil, avec aperçu), langues (audio, sous-titres, fiches), conversion vidéo, téléchargements (dossier, nombre, débit, qualité). |
-| **Extensions et API**   | Extensions Stremio (liens des fichiers, sous-titres en ligne) et clés d'API (TMDB, OpenSubtitles.com), chacune avec son bouton de test.                                |
-| **Source et catalogue** | Adresse, dossiers et mode de connexion de la source, test de connexion ; origine et actualisation du catalogue.                                                        |
-| **Système**             | Version, ffmpeg, espace disque, dossier des données.                                                                                                                   |
+| Onglet                | Contenu                                                                                                                                                                |
+| --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Général**           | Apparence du verre (propre à chaque appareil, avec aperçu), langues (audio, sous-titres, fiches), conversion vidéo, téléchargements (dossier, nombre, débit, qualité). |
+| **Extensions et API** | Extensions Stremio (liste ordonnée pour les fichiers, sous-titres en ligne) et clés d'API (TMDB, OpenSubtitles.com), chacune avec son bouton de test.                  |
+| **Catalogue**         | État des sections films et séries, actualisation (automatique ou immédiate) depuis TMDB.                                                                               |
+| **Système**           | Version, ffmpeg, espace disque, dossier des données.                                                                                                                   |
 
 Les variables d'environnement définissent les valeurs de départ. Elles peuvent aussi être
 placées dans un fichier `.env` à la racine du dépôt (copiez [`.env.example`](.env.example)) :
 
-| Variable                                    | Défaut                                            | Rôle                                                                                              |
-| ------------------------------------------- | ------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
-| `HOST`                                      | `127.0.0.1`                                       | Interface réseau. `0.0.0.0` pour accéder à Lumière depuis la TV, le téléphone…                    |
-| `PORT`                                      | `8484`                                            | Port HTTP.                                                                                        |
-| `DATA_DIR`                                  | `./data`                                          | Base de données, caches (affiches, sous-titres).                                                  |
-| `MEDIA_DIR`                                 | `<DATA_DIR>/media`                                | Dossier des téléchargements (modifiable dans l'interface).                                        |
-| `SOURCE_BASE_URL`                           | `https://a.111477.xyz`                            | Adresse de la source.                                                                             |
-| `SOURCE_MOVIES_PATH` / `SOURCE_SERIES_PATH` | `/movies/` / `/tvs/`                              | Dossiers des films et des séries sur la source.                                                   |
-| `TMDB_API_KEY`                              | —                                                 | Clé TMDB (v3) ou jeton d'accès (v4).                                                              |
-| `STREMIO_ADDON_URL`                         | `https://st.111477.xyz/manifest.json`             | Extension Stremio qui fournit les liens des fichiers (vide : liste de la source lue directement). |
-| `SUBTITLE_ADDON_URLS`                       | `https://opensubtitles-v3.strem.io/manifest.json` | Extensions Stremio de sous-titres, séparées par des virgules (vide : aucune).                     |
-| `OPENSUBTITLES_API_KEY`                     | —                                                 | Clé d'API OpenSubtitles.com (sous-titres faits pour le fichier exact).                            |
-| `FFMPEG_PATH` / `FFPROBE_PATH`              | `ffmpeg` / `ffprobe`                              | Chemins des binaires s'ils ne sont pas dans le PATH.                                              |
-| `LOG_LEVEL`                                 | `info`                                            | `debug` pour diagnostiquer.                                                                       |
+| Variable                       | Défaut                                            | Rôle                                                                                                                                                       |
+| ------------------------------ | ------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `HOST`                         | `127.0.0.1`                                       | Interface réseau. `0.0.0.0` pour accéder à Lumière depuis la TV, le téléphone…                                                                             |
+| `PORT`                         | `8484`                                            | Port HTTP.                                                                                                                                                 |
+| `DATA_DIR`                     | `./data`                                          | Base de données, caches (affiches, sous-titres).                                                                                                           |
+| `MEDIA_DIR`                    | `<DATA_DIR>/media`                                | Dossier des téléchargements (modifiable dans l'interface).                                                                                                 |
+| `TMDB_API_KEY`                 | —                                                 | Clé TMDB (v3) ou jeton d'accès (v4) : indispensable, le catalogue en vient.                                                                                |
+| `STREMIO_ADDON_URLS`           | `https://st.111477.xyz/manifest.json`             | Extensions Stremio qui fournissent les fichiers, par ordre de préférence, séparées par des virgules (`STREMIO_ADDON_URL` : ancien nom, une seule adresse). |
+| `SUBTITLE_ADDON_URLS`          | `https://opensubtitles-v3.strem.io/manifest.json` | Extensions Stremio de sous-titres, séparées par des virgules (vide : aucune).                                                                              |
+| `OPENSUBTITLES_API_KEY`        | —                                                 | Clé d'API OpenSubtitles.com (sous-titres faits pour le fichier exact).                                                                                     |
+| `FFMPEG_PATH` / `FFPROBE_PATH` | `ffmpeg` / `ffprobe`                              | Chemins des binaires s'ils ne sont pas dans le PATH.                                                                                                       |
+| `LOG_LEVEL`                    | `info`                                            | `debug` pour diagnostiquer.                                                                                                                                |
 
-> **Pourquoi une extension Stremio ?** Le site a.111477.xyz impose une vérification Cloudflare
-> que seul un vrai navigateur passe. Son extension Stremio (st.111477.xyz) donne au contraire
-> des liens faits pour les lecteurs vidéo. Lumière lui demande les liens **au moment d'agir** :
-> à l'ouverture d'un film (ses versions), à la lecture ou au téléchargement d'un épisode (la
-> liste des saisons vient de TMDB). Les réponses sont gardées en base et réutilisées tant que
-> l'hôte accepte le lien. Chez 111477, **chaque lien consomme un jeton** d'une réserve propre à
-> votre adresse IP (50 jetons, un regagné toutes les 5 minutes) : réglez l'extension pour
-> qu'elle propose peu de liens par titre. « Télécharger la saison » demande les épisodes un par
-> un en arrière-plan et s'arrête proprement si la réserve est vide.
+> **Pourquoi des extensions Stremio ?** Le site a.111477.xyz impose une vérification Cloudflare
+> que seul un vrai navigateur passe : Lumière ne le lit plus. Son extension Stremio
+> (st.111477.xyz), comme les autres extensions, donne au contraire des liens faits pour les
+> lecteurs vidéo. Lumière demande les liens à toutes les extensions configurées **au moment
+> d'agir** : à l'ouverture d'un film (ses versions), à la lecture ou au téléchargement d'un
+> épisode (la liste des saisons vient de TMDB). Les réponses de chaque extension sont gardées en
+> base et réutilisées tant que l'hôte accepte le lien ; un fichier proposé par plusieurs
+> extensions garde un seul chemin (reprise, bibliothèque), et l'extension suivante prend le
+> relais si le lien de la première est refusé. Chez 111477, **chaque lien consomme un jeton**
+> d'une réserve propre à votre adresse IP (50 jetons, un regagné toutes les 5 minutes) : réglez
+> l'extension pour qu'elle propose peu de liens par titre. « Télécharger la saison » demande les
+> épisodes un par un en arrière-plan et s'arrête proprement si la réserve est vide.
 
 > **Accès depuis d'autres appareils** : lancez avec `HOST=0.0.0.0 npm start` (PowerShell :
 > `$env:HOST="0.0.0.0"; npm start`) puis ouvrez `http://<ip-du-pc>:8484`. L'application n'a pas
@@ -181,17 +185,15 @@ placées dans un fichier `.env` à la racine du dépôt (copiez [`.env.example`]
 
 ## Utilisation
 
-- **Accueil** : reprise de lecture, ajouts récents, contenu de la bibliothèque.
+- **Accueil** : reprise de lecture, films et séries populaires, contenu de la bibliothèque.
 - **Films / Séries** : catalogue complet, filtres et tri ; cliquez sur une affiche pour la fiche.
 - **Fiche** : « Lecture » (streaming ou copie locale), « Télécharger » (meilleure version selon
   vos préférences) ou choix d'une version précise ; pour une série, onglets de saisons,
-  « Télécharger la saison » ou « Tout télécharger ». Avec l'extension, chaque épisode a ses
-  boutons « Lecture » et « Télécharger » (version préférée demandée au moment voulu) et
-  « Choisir une version » pour voir toutes celles que propose l'extension.
+  « Télécharger la saison » ou « Tout télécharger ». Chaque épisode a ses boutons « Lecture » et
+  « Télécharger » (version préférée demandée aux extensions au moment voulu) et « Choisir une
+  version » pour voir toutes celles qu'elles proposent.
 - **Téléchargements** : pause, reprise, annulation, nouvel essai, historique.
 - **Ma bibliothèque** : vos fichiers, lisibles hors ligne.
-- **Explorateur** : parcours brut du site, téléchargement d'un fichier ou d'un dossier entier
-  (seulement si le site est accessible sans vérification).
 
 Raccourcis du lecteur :
 
@@ -211,18 +213,17 @@ npm install
 npm run dev        # API (port 8484, rechargement à chaud) + interface Vite (http://localhost:5173)
 ```
 
-| Commande                                                      | Rôle                                                                                                                                          |
-| ------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
-| `npm run build`                                               | Compile l'interface (Vite) puis le serveur (esbuild).                                                                                         |
-| `npm start`                                                   | Démarre le serveur de production (sert aussi l'interface compilée).                                                                           |
-| `npm test`                                                    | Tests unitaires et d'intégration du serveur et de l'interface (Vitest).                                                                       |
-| `npm run typecheck`                                           | Vérification TypeScript de tous les paquets.                                                                                                  |
-| `npm run lint` / `npm run format`                             | ESLint / Prettier.                                                                                                                            |
-| `npm run check`                                               | Types + lint + tests.                                                                                                                         |
-| `npm run demo:media`                                          | (Re)génère les vidéos et affiches de démonstration.                                                                                           |
-| `npm run demo`                                                | Démonstration complète hors ligne.                                                                                                            |
-| `npm run probe -w @lumiere/server -- <url>`                   | Affiche ce que l'analyseur comprend d'une page de listing.                                                                                    |
-| `npm run diagnose -- [--extension=URL] [--film=tt…] [--site]` | Teste l'extension Stremio (manifeste, liens d'un film, lecture des premiers octets) et, avec `--site`, l'accès direct au site ; puis conclut. |
+| Commande                                              | Rôle                                                                                                                                       |
+| ----------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| `npm run build`                                       | Compile l'interface (Vite) puis le serveur (esbuild).                                                                                      |
+| `npm start`                                           | Démarre le serveur de production (sert aussi l'interface compilée).                                                                        |
+| `npm test`                                            | Tests unitaires et d'intégration du serveur et de l'interface (Vitest).                                                                    |
+| `npm run typecheck`                                   | Vérification TypeScript de tous les paquets.                                                                                               |
+| `npm run lint` / `npm run format`                     | ESLint / Prettier.                                                                                                                         |
+| `npm run check`                                       | Types + lint + tests.                                                                                                                      |
+| `npm run demo:media`                                  | (Re)génère les vidéos et affiches de démonstration.                                                                                        |
+| `npm run demo`                                        | Démonstration complète hors ligne.                                                                                                         |
+| `npm run diagnose -- [--extension=URL…] [--film=tt…]` | Teste chaque extension Stremio (manifeste, liens d'un film, lecture des premiers octets), celles des Paramètres par défaut ; puis conclut. |
 
 Structure du dépôt :
 
@@ -230,7 +231,7 @@ Structure du dépôt :
 apps/server         API Fastify, catalogue, téléchargements, lecture (TypeScript)
 apps/web            interface React + Vite + Tailwind CSS
 packages/shared     types partagés entre serveur et interface (contrats d'API)
-tools/demo-source   source de démonstration (index HTTP, vidéos ffmpeg, faux TMDB et fausse extension Stremio)
+tools/demo-source   démonstration hors ligne (vidéos ffmpeg, faux TMDB, fausses extensions Stremio et de sous-titres)
 docs/               architecture, design system et captures d'écran
 ```
 
@@ -242,19 +243,19 @@ Liquid Glass dans **[docs/DESIGN.md](docs/DESIGN.md)**.
 
 ## Dépannage
 
-| Symptôme                                                                | Piste                                                                                                                                                                                                                                                                               |
-| ----------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Le catalogue reste vide / « Aucune entrée reconnue »                    | **Paramètres → Source et catalogue → Tester la source**. Vérifiez l'adresse et les dossiers (`/movies/`, `/tvs/`). Lancez `npm run probe -w @lumiere/server -- https://a.111477.xyz/movies/` pour voir ce que l'analyseur extrait de la page.                                       |
-| « La source a répondu 403 » / « vérification anti-robot »               | Le site est protégé par Cloudflare : gardez l'extension Stremio renseignée (**Paramètres → Extensions et API**), Lumière ne lit alors plus le site directement. Lancez `npm run diagnose` pour vérifier l'extension depuis votre machine et joignez le rapport à votre signalement. |
-| Catalogue vide avec l'extension                                         | Le catalogue vient de TMDB : ajoutez une clé TMDB (**Paramètres → Extensions et API**), puis **Source et catalogue → Actualiser maintenant**.                                                                                                                                       |
-| « L'extension a atteint sa limite de liens »                            | La réserve de liens de votre adresse IP est vide (chez 111477 : un lien regagné toutes les 5 minutes). Patientez, et réglez l'extension sur [st.111477.xyz](https://st.111477.xyz/) pour qu'elle propose moins de liens par titre. Les liens déjà obtenus restent utilisables.      |
-| « Extension Stremio injoignable » / « manifest.json invalide »          | Vérifiez l'adresse dans **Paramètres → Extensions et API** (bouton « Tester l'extension ») : collez le lien d'installation complet, configuration comprise.                                                                                                                         |
-| « Aucun fichier proposé » / « Introuvable sur la source » sur une fiche | L'extension ne propose aucun fichier pour ce titre (nouvel essai à la prochaine ouverture) ; sans extension, le dossier du titre n'a pas été trouvé sous les noms essayés (affichés sur la fiche), nouvel essai au bout de 24 h.                                                    |
-| Une vidéo ne se lance pas                                               | Vérifiez que ffmpeg est détecté (**Paramètres → Système**). Le lecteur bascule automatiquement en conversion en cas d'échec.                                                                                                                                                        |
-| Pas d'affiches                                                          | Ajoutez/testez la clé TMDB dans les paramètres.                                                                                                                                                                                                                                     |
-| Défilement saccadé                                                      | **Paramètres → Général → Apparence** : désactivez la réfraction ou choisissez « Teinté » ou « Opaque » (la réfraction se coupe d'elle-même si l'affichage saccade).                                                                                                                 |
-| Pas d'effet de réfraction                                               | Normal hors Chrome, Edge, Brave ou Opera : Safari et Firefox affichent un verre dépoli.                                                                                                                                                                                             |
-| « Le port 8484 est déjà utilisé »                                       | `PORT=8585 npm start`                                                                                                                                                                                                                                                               |
+| Symptôme                                                       | Piste                                                                                                                                                                                                                                                                          |
+| -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Le catalogue reste vide                                        | Le catalogue vient de TMDB : ajoutez une clé TMDB (**Paramètres → Extensions et API**), puis **Catalogue → Actualiser maintenant**.                                                                                                                                            |
+| « Lien de l'extension injoignable » / lien refusé (403)        | Lancez `npm run diagnose` pour vérifier chaque extension depuis votre machine (manifeste, liens, lecture) et joignez le rapport à votre signalement. Ajouter une seconde extension donne un lien de secours pour les fichiers qu'elles ont en commun.                          |
+| « L'extension a atteint sa limite de liens »                   | La réserve de liens de votre adresse IP est vide (chez 111477 : un lien regagné toutes les 5 minutes). Patientez, et réglez l'extension sur [st.111477.xyz](https://st.111477.xyz/) pour qu'elle propose moins de liens par titre. Les liens déjà obtenus restent utilisables. |
+| « Extension Stremio injoignable » / « manifest.json invalide » | Vérifiez l'adresse dans **Paramètres → Extensions et API** (bouton « Tester » de l'extension) : collez le lien d'installation complet, configuration comprise.                                                                                                                 |
+| « Aucun fichier proposé » sur une fiche                        | Aucune extension ne propose de fichier pour ce titre pour l'instant (nouvel essai à la prochaine ouverture) : ajoutez-en une autre dans **Paramètres → Extensions et API**.                                                                                                    |
+| Un ancien téléchargement en file affiche « ancienne source »   | Il visait un fichier du site, qui n'est plus lu : supprimez-le et relancez le téléchargement depuis la fiche du titre (les fichiers déjà téléchargés restent dans la bibliothèque).                                                                                            |
+| Une vidéo ne se lance pas                                      | Vérifiez que ffmpeg est détecté (**Paramètres → Système**). Le lecteur bascule automatiquement en conversion en cas d'échec.                                                                                                                                                   |
+| Pas d'affiches                                                 | Ajoutez/testez la clé TMDB dans les paramètres.                                                                                                                                                                                                                                |
+| Défilement saccadé                                             | **Paramètres → Général → Apparence** : désactivez la réfraction ou choisissez « Teinté » ou « Opaque » (la réfraction se coupe d'elle-même si l'affichage saccade).                                                                                                            |
+| Pas d'effet de réfraction                                      | Normal hors Chrome, Edge, Brave ou Opera : Safari et Firefox affichent un verre dépoli.                                                                                                                                                                                        |
+| « Le port 8484 est déjà utilisé »                              | `PORT=8585 npm start`                                                                                                                                                                                                                                                          |
 
 ---
 

@@ -1,7 +1,6 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import http from 'node:http';
-import type { AddressInfo } from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -9,67 +8,65 @@ import type { DownloadItem, ServerEvent } from '@lumiere/shared';
 import { loadConfig } from '../src/config/env';
 import { createContainer, stopServices, type Container } from '../src/container';
 import { createLogger } from '../src/core/logger';
+import { addonRoute, json, listen, tmdbCatalogRoute, type FakeTitle } from './helpers/fakes';
 
 /**
- * Test d'intégration : un mini index HTTP (listing <pre> façon nginx + Range) sert un
- * « film » ; on vérifie catalogue, téléchargement, pause/reprise et intégrité du fichier.
+ * Test d'intégration : un film du catalogue TMDB, dont une fausse extension Stremio sert le
+ * fichier (Range) ; on vérifie catalogue, téléchargement, pause/reprise et intégrité du fichier.
  */
 const FILE_SIZE = 3 * 1024 * 1024;
 const content = crypto.randomBytes(FILE_SIZE);
 const checksum = crypto.createHash('sha256').update(content).digest('hex');
 const FILE_NAME = 'Test.Movie.2024.1080p.WEB-DL.H264-GRP.mkv';
+const TITLES: FakeTitle[] = [
+  { id: 42, kind: 'movie', name: 'Test Movie', date: '2024-05-01', imdb: 'tt0000042' },
+];
 
 let server: http.Server;
 let container: Container;
 let dataDir: string;
+let baseUrl = '';
 const rangeRequests: string[] = [];
 
-function startSourceServer(): Promise<string> {
-  server = http.createServer((request, response) => {
-    const url = decodeURIComponent(new URL(request.url ?? '/', 'http://x').pathname);
-    if (url === '/movies/') {
-      response.end(
-        `<html><body><pre><a href="../">../</a>\n<a href="Test%20Movie%20(2024)/">Test Movie (2024)/</a>   01-Jan-2025 10:00   -\n</pre></body></html>`,
-      );
-    } else if (url === '/tvs/') {
-      response.end(
-        '<html><body><pre><a href="../">../</a>\n<a href="Show/">Show/</a>   01-Jan-2025 10:00   -\n</pre></body></html>',
-      );
-    } else if (url === '/movies/Test Movie (2024)/') {
-      response.end(
-        `<html><body><pre><a href="../">../</a>\n<a href="${encodeURIComponent(FILE_NAME)}">${FILE_NAME}</a>   01-Jan-2025 10:00   ${FILE_SIZE}\n</pre></body></html>`,
-      );
-    } else if (url === `/movies/Test Movie (2024)/${FILE_NAME}`) {
-      const match = /bytes=(\d+)-/.exec(request.headers.range ?? '');
-      const start = match ? Number(match[1]) : 0;
-      if (request.headers.range) rangeRequests.push(request.headers.range);
-      response.writeHead(match ? 206 : 200, {
-        'content-length': FILE_SIZE - start,
-        'accept-ranges': 'bytes',
-        ...(match ? { 'content-range': `bytes ${start}-${FILE_SIZE - 1}/${FILE_SIZE}` } : {}),
-      });
-      // Envoi lent (16 Kio toutes les 10 ms) pour pouvoir mettre en pause en cours de route.
-      let offset = start;
-      const timer = setInterval(() => {
-        if (offset >= FILE_SIZE) {
-          clearInterval(timer);
-          response.end();
-          return;
-        }
-        const end = Math.min(FILE_SIZE, offset + 16 * 1024);
-        response.write(content.subarray(offset, end));
-        offset = end;
-      }, 10);
-      response.on('close', () => clearInterval(timer));
-    } else {
-      response.writeHead(404).end();
-    }
+/** Envoi lent (16 Kio toutes les 10 ms) pour pouvoir mettre en pause en cours de route. */
+function sendSlowly(request: http.IncomingMessage, response: http.ServerResponse): void {
+  const match = /bytes=(\d+)-/.exec(request.headers.range ?? '');
+  const start = match ? Number(match[1]) : 0;
+  if (request.headers.range) rangeRequests.push(request.headers.range);
+  response.writeHead(match ? 206 : 200, {
+    'content-length': FILE_SIZE - start,
+    'accept-ranges': 'bytes',
+    ...(match ? { 'content-range': `bytes ${start}-${FILE_SIZE - 1}/${FILE_SIZE}` } : {}),
   });
-  return new Promise((resolve) =>
-    server.listen(0, '127.0.0.1', () =>
-      resolve(`http://127.0.0.1:${(server.address() as AddressInfo).port}`),
-    ),
-  );
+  let offset = start;
+  const timer = setInterval(() => {
+    if (offset >= FILE_SIZE) {
+      clearInterval(timer);
+      response.end();
+      return;
+    }
+    const end = Math.min(FILE_SIZE, offset + 16 * 1024);
+    response.write(content.subarray(offset, end));
+    offset = end;
+  }, 10);
+  response.on('close', () => clearInterval(timer));
+}
+
+const addon = addonRoute({
+  prefix: '/addon',
+  base: () => baseUrl,
+  streams: { tt0000042: [{ fileName: FILE_NAME, bytes: content }] },
+  serve: (request, response) => sendSlowly(request, response),
+});
+
+function startServer(): Promise<string> {
+  server = http.createServer((request, response) => {
+    const url = new URL(request.url ?? '/', 'http://x');
+    if (addon(request, response)) return;
+    if (tmdbCatalogRoute(TITLES, url.pathname.replace(/^\/3/, ''), response)) return;
+    json(response, 404, { status_code: 34 });
+  });
+  return listen(server);
 }
 
 function waitFor(
@@ -92,13 +89,13 @@ function waitFor(
 }
 
 beforeAll(async () => {
-  const baseUrl = await startSourceServer();
+  baseUrl = await startServer();
   dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lumiere-test-'));
   const config = loadConfig({
     DATA_DIR: dataDir,
-    // Liste de la source lue directement (pas d'extension Stremio).
-    STREMIO_ADDON_URL: '',
-    SOURCE_BASE_URL: baseUrl,
+    STREMIO_ADDON_URLS: `${baseUrl}/addon/manifest.json`,
+    TMDB_API_KEY: 'cle',
+    TMDB_API_BASE_URL: `${baseUrl}/3`,
     LOG_LEVEL: 'silent',
     LOG_PRETTY: 'false',
   });
@@ -113,7 +110,7 @@ afterAll(async () => {
 });
 
 describe('catalogue + téléchargements', () => {
-  it('indexe la section films', async () => {
+  it('importe la section films depuis TMDB', async () => {
     const status = await container.catalog.refresh('movie');
     expect(status.count).toBe(1);
     const page = await container.catalog.search({ kind: 'movie', q: 'test movie' });
@@ -167,7 +164,7 @@ describe('catalogue + téléchargements', () => {
   it('refuse de re-télécharger un fichier déjà présent', async () => {
     const [title] = (await container.catalog.search({ kind: 'movie' })).items;
     const result = container.downloads.enqueueFiles([
-      { path: `/movies/Test Movie (2024)/${FILE_NAME}`, titleId: title!.id },
+      { path: `/@stremio/movie/tt0000042/${FILE_NAME}`, titleId: title!.id },
     ]);
     expect(result.created).toHaveLength(0);
     expect(result.skipped[0]?.reason).toMatch(/bibliothèque/);

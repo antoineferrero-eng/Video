@@ -37,11 +37,7 @@ export function SeriesSeasons({
       <EmptyState
         icon={<Tv />}
         title="Aucun épisode trouvé"
-        description={
-          title.streamsOnDemand
-            ? 'TMDB ne liste encore aucun épisode diffusé pour cette série.'
-            : 'Le dossier de cette série ne contient pas encore de vidéo reconnue.'
-        }
+        description="TMDB ne liste encore aucun épisode diffusé pour cette série."
       />
     );
   }
@@ -62,26 +58,16 @@ export function SeriesSeasons({
         season={season}
         onDownload={() => enqueue.mutate({ titleId: title.id, season: season.number })}
         downloading={enqueue.isPending}
-        onDemand={title.streamsOnDemand}
       />
       <div className="flex flex-col gap-2">
-        {season.episodes.map((episode) =>
-          title.streamsOnDemand ? (
-            <OnDemandEpisodeRow
-              key={episode.key}
-              episode={episode}
-              titleId={title.id}
-              seriesTitle={title.title}
-            />
-          ) : (
-            <EpisodeRow
-              key={episode.key}
-              episode={episode}
-              titleId={title.id}
-              seriesTitle={title.title}
-            />
-          ),
-        )}
+        {season.episodes.map((episode) => (
+          <EpisodeRow
+            key={episode.key}
+            episode={episode}
+            titleId={title.id}
+            seriesTitle={title.title}
+          />
+        ))}
       </div>
     </section>
   );
@@ -91,12 +77,10 @@ function SeasonHeader({
   season,
   onDownload,
   downloading,
-  onDemand,
 }: {
   season: SeasonEntry;
   onDownload: () => void;
   downloading: boolean;
-  onDemand: boolean;
 }) {
   const size = season.episodes.reduce((total, episode) => total + (episode.files[0]?.size ?? 0), 0);
   return (
@@ -110,12 +94,10 @@ function SeasonHeader({
         {season.overview && (
           <p className="mt-2 max-w-3xl text-sm text-zinc-300">{season.overview}</p>
         )}
-        {onDemand && (
-          <p className="mt-2 max-w-3xl text-xs text-zinc-400">
-            Les liens d’un épisode sont demandés à l’extension Stremio au moment de le lire ou de le
-            télécharger (sa réserve de liens est limitée).
-          </p>
-        )}
+        <p className="mt-2 max-w-3xl text-xs text-zinc-400">
+          Les liens d’un épisode sont demandés aux extensions Stremio au moment de le lire ou de le
+          télécharger (leur réserve de liens peut être limitée).
+        </p>
       </div>
       {season.episodes.length > 0 && (
         <Button
@@ -192,11 +174,11 @@ function EpisodeStill({
 }
 
 /**
- * Épisode en mode extension : lecture et téléchargement sans fichier choisi d'avance (la
- * version préférée est demandée à l'extension au moment voulu) ; la liste des versions
- * n'est demandée qu'à l'ouverture.
+ * Épisode : lecture et téléchargement sans fichier choisi d'avance (la version préférée est
+ * demandée aux extensions au moment voulu) ; la liste des versions n'est demandée qu'à
+ * l'ouverture.
  */
-function OnDemandEpisodeRow({
+function EpisodeRow({
   episode,
   titleId,
   seriesTitle,
@@ -271,7 +253,7 @@ function OnDemandEpisodeRow({
             icon={<Download className="size-4" />}
             loading={enqueue.isPending}
             onClick={() => enqueue.mutate({ titleId, season, episode: number })}
-            title="Télécharger la version préférée (demandée à l’extension)"
+            title="Télécharger la version préférée (demandée aux extensions)"
           >
             Télécharger
           </Button>
@@ -284,7 +266,7 @@ function OnDemandEpisodeRow({
             size="sm"
             icon={<Play className="size-4 fill-current" />}
             onClick={() => navigate(playerUrl(media))}
-            title="Regarder (la version préférée est demandée à l’extension)"
+            title="Regarder (la version préférée est demandée aux extensions)"
           >
             Lecture
           </Button>
@@ -294,7 +276,7 @@ function OnDemandEpisodeRow({
   );
 }
 
-/** Versions d'un épisode proposées par l'extension (une demande de liens à l'ouverture). */
+/** Versions d'un épisode proposées par les extensions (une demande de liens à l'ouverture). */
 function EpisodeVersions({
   titleId,
   season,
@@ -309,7 +291,7 @@ function EpisodeVersions({
     return (
       <p className="mt-2 flex items-center gap-2 text-xs text-zinc-400">
         <Loader2 className="size-3.5 animate-spin" />
-        Demande des liens à l’extension…
+        Demande des liens aux extensions…
       </p>
     );
   }
@@ -322,7 +304,7 @@ function EpisodeVersions({
       {notice && <p className="text-xs text-amber-200">{notice}</p>}
       {files.length === 0 && !notice && (
         <p className="text-xs text-zinc-400">
-          L’extension ne propose aucune version de cet épisode.
+          Aucune extension ne propose de version de cet épisode.
         </p>
       )}
       {files.map((version) => (
@@ -349,91 +331,5 @@ function EpisodeVersions({
         </div>
       ))}
     </div>
-  );
-}
-
-function EpisodeRow({
-  episode,
-  titleId,
-  seriesTitle,
-}: {
-  episode: EpisodeEntry;
-  titleId: number;
-  seriesTitle: string;
-}) {
-  const navigate = useNavigate();
-  const [expanded, setExpanded] = useState(false);
-  const file = episode.files[0];
-  if (!file) return null;
-  const watched = file.availability.watch?.completed ?? false;
-
-  return (
-    <article className="fill group flex flex-col gap-3 rounded-card p-2.5 sm:flex-row sm:items-center sm:gap-4">
-      <EpisodeStill
-        episode={episode}
-        seriesTitle={seriesTitle}
-        onPlay={() => navigate(playerUrl(mediaRefFor(file)))}
-      >
-        <StillProgress file={file} />
-      </EpisodeStill>
-
-      <div className="min-w-0 flex-1 px-1 sm:px-0">
-        <h3 className={cn('font-semibold', watched ? 'text-zinc-400' : 'text-white')}>
-          {episode.episode !== null && <span className="text-zinc-400">{episode.episode}. </span>}
-          {episode.title}
-        </h3>
-        <p className="mt-0.5 text-xs text-zinc-400">
-          {[
-            episode.airDate && formatDate(episode.airDate),
-            episode.runtime && `${episode.runtime} min`,
-            formatBytes(file.size),
-          ]
-            .filter(Boolean)
-            .join(' · ')}
-        </p>
-        {episode.overview && (
-          <p className="mt-1.5 line-clamp-2 text-sm text-zinc-300">{episode.overview}</p>
-        )}
-        <div className="mt-2">
-          <ReleaseBadges release={file.release} compact />
-        </div>
-        {episode.files.length > 1 && (
-          <button
-            type="button"
-            onClick={() => setExpanded((value) => !value)}
-            className="mt-2 flex items-center gap-1 text-xs font-medium text-brand-300 hover:text-brand-200"
-          >
-            {episode.files.length} versions
-            <ChevronDown className={cn('size-3.5 transition', expanded && 'rotate-180')} />
-          </button>
-        )}
-        {expanded && (
-          <div className="mt-2 flex flex-col gap-2">
-            {episode.files.map((version) => (
-              <div
-                key={version.path}
-                className="flex flex-wrap items-center gap-2 rounded-[0.875rem] bg-white/[0.05] p-2"
-              >
-                <span
-                  className="min-w-0 flex-1 truncate font-mono text-[11px] text-zinc-400"
-                  title={version.name}
-                >
-                  {version.name}
-                </span>
-                <span className="text-xs text-zinc-400">{formatBytes(version.size)}</span>
-                <DownloadState file={version} titleId={titleId} compact />
-                <PlayButton file={version} label={null} />
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-
-      <div className="flex items-center gap-2 self-end pr-1.5 pb-1 sm:self-center sm:pb-0">
-        <WatchedToggle file={file} />
-        <DownloadState file={file} titleId={titleId} />
-        <PlayButton file={file} />
-      </div>
-    </article>
   );
 }

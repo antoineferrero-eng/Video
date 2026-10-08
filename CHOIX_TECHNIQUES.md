@@ -1,35 +1,39 @@
 # Choix techniques — Lumière
 
 Ce document explique les choix faits pour construire **Lumière**, l'application qui permet
-de parcourir, télécharger et regarder les films et séries de `a.111477.xyz` — aujourd'hui
-via son extension Stremio, le site lui-même exigeant une vérification Cloudflare (§ 11).
+de parcourir, télécharger et regarder des films et séries : le catalogue vient de TMDB, les
+fichiers d'une ou plusieurs extensions Stremio, dont celle de 111477 (le site `a.111477.xyz`
+lui-même exigeant une vérification Cloudflare, § 11).
 
 ---
 
 ## 1. Le point de départ : ce qu'est la source
 
-`a.111477.xyz` est un **index de fichiers HTTP** (un « listing de dossiers ») : il n'y a pas
-d'API, seulement des pages HTML qui listent des dossiers et des fichiers, par exemple
+`a.111477.xyz` est un **index de fichiers HTTP** (un « listing de dossiers ») : pas d'API,
+seulement des pages HTML qui listent des dossiers et des fichiers, par exemple
 `/movies/100 METERS (2025)/100.Meters.2025.1080p.NF.WEB-DL.MULTi.DDP5.1.H.264-VARYG.mkv`.
-Les films sont rangés dans `/movies/<Titre (Année)>/`, les séries dans `/tvs/<Série>/<Saison>/`.
+Les premières versions de Lumière reconstruisaient le catalogue en lisant ces pages (analyseur
+de listings générique, explorateur de dossiers). Le site exigeant désormais une vérification
+Cloudflare que seul un vrai navigateur passe (§ 11), cette lecture directe a été **retirée** :
 
-Conséquences sur la conception :
+- le **catalogue** vient de **TMDB** (populaires, tendances, à l'affiche, mieux notés, et toute
+  recherche) ;
+- les **fichiers** viennent d'**extensions Stremio** (celle de 111477, `st.111477.xyz`, et toute
+  autre extension compatible), qui donnent des liens de lecture directs titre par titre.
 
-- tout le catalogue doit être **reconstruit en lisant ces pages HTML** ;
-- le format exact du HTML peut changer du jour au lendemain → l'analyseur doit être
-  **générique et tolérant**, pas écrit pour une seule mise en page ;
-- les fichiers sont des releases (MKV, HEVC, DD+ 5.1, multi-pistes audio…) que les
-  navigateurs ne savent pas toujours lire → il faut une **chaîne de conversion** ;
-- les noms de fichiers contiennent beaucoup d'informations (qualité, langues, codecs)
-  qu'on peut exploiter pour une belle interface.
+Ce qui reste vrai des fichiers eux-mêmes guide la suite de la conception :
+
+- ce sont des releases (MKV, HEVC, DD+ 5.1, multi-pistes audio…) que les navigateurs ne savent
+  pas toujours lire → il faut une **chaîne de conversion** ;
+- leurs noms contiennent beaucoup d'informations (qualité, langues, codecs) qu'on peut
+  exploiter pour une belle interface ;
+- leurs liens expirent et sont parfois comptés → il faut leur donner une **identité stable** et
+  ne demander un lien qu'au moment d'agir.
 
 > Remarque : l'environnement cloud dans lequel l'application a été développée bloque l'accès
-> à `a.111477.xyz`. L'analyseur a donc été conçu pour reconnaître **tous les formats de
-> listing courants** (nginx, Apache, Caddy, lighttpd, listes `<ul>`, grilles `<div>`, JSON),
-> testé sur ces formats, et une **source de démonstration** locale a été construite pour
-> valider l'application de bout en bout. L'outil `npm run probe` permet de vérifier en une
-> commande ce que l'analyseur comprend du vrai site, et `npm run diagnose` si l'extension
-> Stremio (ou le site) répond depuis la machine de l'utilisateur (voir § 11).
+> à 111477. Une **démonstration** locale (faux TMDB, deux fausses extensions Stremio, vidéos
+> générées) valide l'application de bout en bout, et `npm run diagnose` vérifie depuis la
+> machine de l'utilisateur que chaque extension répond (voir § 11).
 
 ---
 
@@ -79,39 +83,29 @@ tools/demo-source  source de démonstration (vidéos générées par ffmpeg + fa
 
 ## 4. Serveur
 
-| Besoin          | Choix                                                | Raisons                                                                                                                                                                                                                                                                                                                                                                                                        |
-| --------------- | ---------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Runtime         | **Node.js 22 LTS**                                   | Excellent pour les entrées/sorties (flux, téléchargements parallèles, proxy vidéo), `fetch` natif, version longue durée.                                                                                                                                                                                                                                                                                       |
-| Framework HTTP  | **Fastify 5**                                        | Rapide, typé, gestion propre des flux et des erreurs, écosystème officiel (`@fastify/static`).                                                                                                                                                                                                                                                                                                                 |
-| Validation      | **zod 4** + `fastify-type-provider-zod`              | Chaque entrée (paramètres, corps, requête) est validée ; les types TypeScript en sont déduits automatiquement.                                                                                                                                                                                                                                                                                                 |
-| Base de données | **SQLite** via le module intégré **`node:sqlite`**   | Zéro installation (un fichier), transactions ACID, très rapide en local et **aucune compilation native** : l'installation fonctionne partout. `better-sqlite3` a été essayé puis écarté : lors d'un `npm ci`, il lance une compilation `node-gyp` qui exige Python et un compilateur C++, souvent absents sous Windows. Migrations SQL versionnées appliquées au démarrage, requêtes préparées mises en cache. |
-| Analyse HTML    | **cheerio** (moteur htmlparser2) + algorithme maison | Voir §5. 50 000 entrées analysées en < 1 s.                                                                                                                                                                                                                                                                                                                                                                    |
-| Journalisation  | **pino**                                             | Logs JSON structurés, mode lisible en développement.                                                                                                                                                                                                                                                                                                                                                           |
-| Vidéo           | **ffmpeg / ffprobe** (binaires système)              | La référence pour analyser et convertir n'importe quel format ; inclus dans l'image Docker.                                                                                                                                                                                                                                                                                                                    |
-| Temps réel      | **Server-Sent Events**                               | La progression des téléchargements va du serveur vers l'interface uniquement : SSE est plus simple que WebSocket, se reconnecte tout seul et passe par les proxys.                                                                                                                                                                                                                                             |
-| Bundle          | **esbuild**                                          | Le serveur est compilé en un seul fichier `dist/main.js` (démarrage rapide, pas de problème d'extensions ESM).                                                                                                                                                                                                                                                                                                 |
+| Besoin          | Choix                                              | Raisons                                                                                                                                                                                                                                                                                                                                                                                                        |
+| --------------- | -------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Runtime         | **Node.js 22 LTS**                                 | Excellent pour les entrées/sorties (flux, téléchargements parallèles, proxy vidéo), `fetch` natif, version longue durée.                                                                                                                                                                                                                                                                                       |
+| Framework HTTP  | **Fastify 5**                                      | Rapide, typé, gestion propre des flux et des erreurs, écosystème officiel (`@fastify/static`).                                                                                                                                                                                                                                                                                                                 |
+| Validation      | **zod 4** + `fastify-type-provider-zod`            | Chaque entrée (paramètres, corps, requête) est validée ; les types TypeScript en sont déduits automatiquement.                                                                                                                                                                                                                                                                                                 |
+| Base de données | **SQLite** via le module intégré **`node:sqlite`** | Zéro installation (un fichier), transactions ACID, très rapide en local et **aucune compilation native** : l'installation fonctionne partout. `better-sqlite3` a été essayé puis écarté : lors d'un `npm ci`, il lance une compilation `node-gyp` qui exige Python et un compilateur C++, souvent absents sous Windows. Migrations SQL versionnées appliquées au démarrage, requêtes préparées mises en cache. |
+| Journalisation  | **pino**                                           | Logs JSON structurés, mode lisible en développement.                                                                                                                                                                                                                                                                                                                                                           |
+| Vidéo           | **ffmpeg / ffprobe** (binaires système)            | La référence pour analyser et convertir n'importe quel format ; inclus dans l'image Docker.                                                                                                                                                                                                                                                                                                                    |
+| Temps réel      | **Server-Sent Events**                             | La progression des téléchargements va du serveur vers l'interface uniquement : SSE est plus simple que WebSocket, se reconnecte tout seul et passe par les proxys.                                                                                                                                                                                                                                             |
+| Bundle          | **esbuild**                                        | Le serveur est compilé en un seul fichier `dist/main.js` (démarrage rapide, pas de problème d'extensions ESM).                                                                                                                                                                                                                                                                                                 |
 
 ---
 
-## 5. L'analyseur de listings (le cœur de l'intégration avec le site)
+## 5. Noms de releases
 
-Plutôt que de dépendre du HTML exact du site, l'analyseur :
+Les noms de fichiers proposés par les extensions sont analysés par un module dédié
+(`release-parser.ts`) : titre, année, résolution, source (WEB-DL, BluRay, Remux…), codecs,
+HDR/Dolby Vision, audio (DD+ 5.1, TrueHD Atmos…), langues (MULTi, VFF, VOSTFR, TRUEFRENCH…),
+service (Netflix…), groupe. Ils servent aux badges des versions, au choix de la version
+préférée (qualité, langue) et au rangement de la bibliothèque.
 
-1. repère tous les liens de la page et ne garde que ceux qui pointent vers un **enfant direct
-   du dossier courant** (ce qui élimine navigation, tri, liens externes, dossier parent) ;
-2. remonte depuis chaque lien jusqu'à la plus grande « ligne » qui ne contient qu'une entrée
-   (`<tr>`, `<li>`, `<div>`…) ou lit la fin de ligne dans un `<pre>` ;
-3. y cherche une **taille** (« 1.4G », « 734 Mo », « 2147483648 »…) et une **date** (formats
-   nginx, Apache, ISO, US, européen, attributs `datetime`/`data-*`, horodatages Unix) ;
-4. accepte aussi les **listings JSON** (nginx `autoindex_format json`, Caddy, rclone).
-
-Il est couvert par des tests sur chaque format, optimisé (parcours linéaire, moteur
-htmlparser2 : 50 000 entrées en moins d'une seconde) et un **explorateur** dans l'interface
-permet de naviguer dans la source même si l'organisation films/séries changeait.
-
-Les noms de releases sont analysés par un module dédié (`release-parser.ts`) : titre, année,
-résolution, source (WEB-DL, BluRay, Remux…), codecs, HDR/Dolby Vision, audio (DD+ 5.1,
-TrueHD Atmos…), langues (MULTi, VFF, VOSTFR, TRUEFRENCH…), service (Netflix…), groupe.
+(L'analyseur de listings HTML des premières versions, qui reconnaissait les pages nginx,
+Apache, Caddy et les listes JSON, a été retiré avec la lecture directe du site.)
 
 ---
 
@@ -342,7 +336,7 @@ basées sur une copie figée de l'arrière-plan, inutilisable sur une interface 
 
 ---
 
-## 11. Connexion à la source : de Cloudflare à l'extension Stremio
+## 11. Connexion à la source : de Cloudflare aux extensions Stremio
 
 ### Le problème constaté
 
@@ -373,62 +367,70 @@ site mais pas la liste `/movies/`, trop volumineuse pour son offre (« RESP005 �
 un catalogue venu de TMDB, les dossiers des titres et les fichiers eux-mêmes restaient bloqués.
 Ces mécanismes (navigateur piloté, ZenRows, point d'accès `p.111477.xyz/bulk`) ont donc été
 **retirés** : ils ajoutaient du code, une dépendance payante et une fenêtre qui s'ouvre, pour
-un résultat nul.
+un résultat nul. Puis la lecture directe du site elle-même (liste des dossiers, explorateur,
+recherche du dossier d'un titre) a été retirée à son tour : bloquée, elle n'apportait plus rien.
 
-### Le choix : l'extension Stremio de 111477
+### Le choix : les extensions Stremio, dont celle de 111477
 
 111477 publie une **extension Stremio** (`st.111477.xyz`). Stremio est un lecteur vidéo dont
 les extensions répondent à un protocole HTTP+JSON simple : on leur donne l'identifiant d'un
 film ou d'un épisode, elles renvoient des liens de lecture directs. Ces liens sont faits pour
 des lecteurs vidéo ordinaires, pas pour des navigateurs : pas de vérification JavaScript.
 
-| Élément               | Choix                                                                                                                                                                                                                                                     | Pourquoi                                                                                                                                                                                                                                |
-| --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Protocole             | `GET <base>/manifest.json`, puis `<base>/stream/movie/tt1677720.json` (film) ou `<base>/stream/series/tt0903747:1:3.json` (épisode) ; lecture de `url`, `name`/`title`/`description` et `behaviorHints` (`filename`, `videoSize`, `proxyHeaders.request`) | Protocole public et stable : n'importe quelle extension compatible convient, pas seulement celle de 111477. Les en-têtes demandés par l'extension sont renvoyés avec le lien.                                                           |
-| Adresse               | **Paramètres → Extensions et API** : lien d'installation `stremio://…`, adresse de configuration ou manifeste (normalisés), avec un bouton de test ; `STREMIO_ADDON_URL` pour la valeur de départ                                                         | La configuration d'une extension (serveurs, nombre de liens par titre…) est encodée dans son adresse : il suffit de coller celle obtenue sur sa page de configuration.                                                                  |
-| Catalogue             | **TMDB** (tendances, populaires, à l'affiche, mieux notés, et toute recherche) ; identifiant IMDb d'un titre obtenu une fois par `external_ids`, puis gardé                                                                                               | L'extension ne fournit pas de catalogue, seulement des liens titre par titre ; les extensions Stremio identifient les titres par leur identifiant IMDb.                                                                                 |
-| Identité des fichiers | **Chemin virtuel** stable par fichier : `/@stremio/movie/tt1677720/<fichier>`, `/@stremio/series/tt0903747/1x3/<fichier>`                                                                                                                                 | Les liens expirent et changent d'une demande à l'autre. Téléchargements, reprise de lecture, bibliothèque, « vu / non vu » et relais ffmpeg travaillent sur cette identité ; le lien réel n'est résolu qu'au moment de lire les octets. |
-| Économie de liens     | Liens demandés seulement à l'ouverture d'un film, à la lecture ou au téléchargement d'un épisode, ou à l'ouverture de « Choisir une version » ; jamais pour afficher une série (saisons et épisodes viennent de TMDB)                                     | Chez 111477, **chaque lien généré consomme un jeton** d'une réserve de 50 par adresse IP (un regagné toutes les 5 minutes), avec 10 requêtes par 10 s au plus.                                                                          |
-| Cache                 | Réponses gardées **en base** 12 h avec le lien de chaque fichier (3 min si la réponse est vide ou signale la limite) ; un lien refusé par l'hôte (401, 403, 404, 410) est redemandé une fois                                                              | Rouvrir une fiche, reprendre une lecture ou lancer un téléchargement plus tard ne coûte rien tant que l'hôte accepte le lien, même après un redémarrage.                                                                                |
-| Lecture d'un épisode  | Référence `{ type: 'episode', titleId, season, episode }` : copie locale si elle existe, sinon version préférée (qualité, langue) parmi celles de l'extension ; l'épisode suivant est proposé de la même façon                                            | Lancer un épisode, ou enchaîner sur le suivant, ne demande un lien qu'au moment de le regarder.                                                                                                                                         |
-| Saison ou série       | File d'épisodes : une demande toutes les 1,2 s, épisodes déjà téléchargés ou en file ignorés, lot arrêté au premier signal de limite (« ⚠️ Slow down — rate limit reached ») ; bilan en notification                                                      | Respecter la limite en rafale et ne jamais vider la réserve en arrière-plan : le reste du lot se relance plus tard, en un clic.                                                                                                         |
-| Sans extension        | Champ vide : la liste du site est lue directement (en-têtes exacts de Chrome, puis imitation **impit**), avec repli possible sur le catalogue TMDB et la recherche des dossiers à la demande                                                              | Pour un index HTTP non protégé, et la démonstration en mode liste (`DEMO_MODE=listing`).                                                                                                                                                |
+| Élément               | Choix                                                                                                                                                                                                                                                                                                                           | Pourquoi                                                                                                                                                                                                                                |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Protocole             | `GET <base>/manifest.json`, puis `<base>/stream/movie/tt1677720.json` (film) ou `<base>/stream/series/tt0903747:1:3.json` (épisode) ; lecture de `url`, `name`/`title`/`description` et `behaviorHints` (`filename`, `videoSize`, `proxyHeaders.request`)                                                                       | Protocole public et stable : n'importe quelle extension compatible convient, pas seulement celle de 111477. Les en-têtes demandés par l'extension sont renvoyés avec le lien.                                                           |
+| Adresses              | **Paramètres → Extensions et API** : liste ordonnée de liens d'installation `stremio://…`, adresses de configuration ou manifestes (normalisés), chacun avec son bouton de test ; `STREMIO_ADDON_URLS` pour la valeur de départ (migration de l'ancienne adresse unique)                                                        | La configuration d'une extension (serveurs, nombre de liens par titre…) est encodée dans son adresse : il suffit de coller celle obtenue sur sa page de configuration.                                                                  |
+| Plusieurs extensions  | Toutes interrogées en parallèle (seulement celles qui gèrent ce type de titre et cet identifiant, IMDb ou `tmdb:`) ; fichiers réunis par nom ; un fichier proposé par plusieurs garde un seul chemin et une liste de liens, essayés dans l'ordre des extensions ; une extension injoignable est signalée sans priver des autres | Plus d'offre, et un lien de secours quand l'hôte du premier le refuse. Deux fichiers du même nom mais de tailles différentes ne se relaient pas : leurs octets diffèrent.                                                               |
+| Catalogue             | **TMDB** (tendances, populaires, à l'affiche, mieux notés, et toute recherche) ; identifiant IMDb d'un titre obtenu une fois par `external_ids`, puis gardé                                                                                                                                                                     | L'extension ne fournit pas de catalogue, seulement des liens titre par titre ; les extensions Stremio identifient les titres par leur identifiant IMDb.                                                                                 |
+| Identité des fichiers | **Chemin virtuel** stable par fichier : `/@stremio/movie/tt1677720/<fichier>`, `/@stremio/series/tt0903747/1x3/<fichier>`                                                                                                                                                                                                       | Les liens expirent et changent d'une demande à l'autre. Téléchargements, reprise de lecture, bibliothèque, « vu / non vu » et relais ffmpeg travaillent sur cette identité ; le lien réel n'est résolu qu'au moment de lire les octets. |
+| Économie de liens     | Liens demandés seulement à l'ouverture d'un film, à la lecture ou au téléchargement d'un épisode, ou à l'ouverture de « Choisir une version » ; jamais pour afficher une série (saisons et épisodes viennent de TMDB)                                                                                                           | Chez 111477, **chaque lien généré consomme un jeton** d'une réserve de 50 par adresse IP (un regagné toutes les 5 minutes), avec 10 requêtes par 10 s au plus.                                                                          |
+| Cache                 | Réponse de **chaque extension** gardée **en base** 12 h avec le lien de chaque fichier (3 min si la réponse est vide ou signale la limite) ; si tous les liens d'un fichier sont refusés (401, 403, 404, 410), ils sont redemandés une fois, aux seules extensions qui les avaient fournis                                      | Rouvrir une fiche, reprendre une lecture ou lancer un téléchargement plus tard ne coûte rien tant que l'hôte accepte le lien, même après un redémarrage.                                                                                |
+| Lecture d'un épisode  | Référence `{ type: 'episode', titleId, season, episode }` : copie locale si elle existe, sinon version préférée (qualité, langue) parmi celles des extensions ; l'épisode suivant est proposé de la même façon                                                                                                                  | Lancer un épisode, ou enchaîner sur le suivant, ne demande un lien qu'au moment de le regarder.                                                                                                                                         |
+| Saison ou série       | File d'épisodes : une demande toutes les 1,2 s, épisodes déjà téléchargés ou en file ignorés, lot arrêté au premier signal de limite (« ⚠️ Slow down — rate limit reached ») ; bilan en notification                                                                                                                            | Respecter la limite en rafale et ne jamais vider la réserve en arrière-plan : le reste du lot se relance plus tard, en un clic.                                                                                                         |
 
 ### Ce qui reste de la couche de connexion
 
-| Couche                            | Choix                                                                                                                                                                                                                                               | Pourquoi                                                                                                                                                                                                                                                                             |
-| --------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Connexion standard                | Requêtes `node:http`/`node:https` qui envoient **exactement** les en-têtes d'une navigation Chrome (`sec-ch-ua*`, `sec-fetch-*`, `accept`, `accept-language: fr-FR…`, `priority`, `upgrade-insecure-requests`), cohérents avec le User-Agent choisi | `fetch` (undici) impose des en-têtes qu'aucun navigateur n'envoie lors d'une navigation.                                                                                                                                                                                             |
-| Cookies                           | Petit « cookie jar » par origine                                                                                                                                                                                                                    | Un navigateur renvoie les cookies déposés par le site ; les ignorer est un signe de robot.                                                                                                                                                                                           |
-| Imitation de navigateur           | **[impit](https://github.com/apify/impit)** (Apify), en secours : empreinte TLS/HTTP2 de Chrome                                                                                                                                                     | Passe les filtres qui comparent l'empreinte réseau au navigateur annoncé ; sert aussi de secours si l'extension ou l'hôte d'un lien refuse la première requête (403/503).                                                                                                            |
-| Mode « Automatique » (par défaut) | Standard, puis imitation de Chrome ; le transport qui passe est **mémorisé par origine**                                                                                                                                                            | Le chemin léger sert tant qu'il suffit ; chaque mode est forçable dans **Paramètres → Source et catalogue**.                                                                                                                                                                         |
-| ffmpeg / ffprobe                  | **Relais local** `/api/internal/source` (127.0.0.1, jeton aléatoire généré au démarrage)                                                                                                                                                            | ffmpeg lit la source (ou le lien de l'extension) par la même connexion que le reste de l'application, sans jamais recevoir de lien expiré.                                                                                                                                           |
-| Messages d'erreur                 | Analyse des refus : page de vérification (`cf-mitigated: challenge`, « Just a moment… »), règle de pare-feu (erreur 1020), User-Agent banni (1010), autre refus ; limite de l'extension traduite en français                                        | Dire _pourquoi_ la source refuse, plutôt qu'un « 403 » brut.                                                                                                                                                                                                                         |
-| Diagnostic                        | `npm run diagnose [-- --extension=URL] [--film=tt…] [--serie=tt…:S:E] [--site]`                                                                                                                                                                     | Teste depuis la machine de l'utilisateur le manifeste, les liens d'**un seul** film (pour ménager la réserve), la lecture des premiers octets du premier lien, et, sur demande, l'accès direct au site. Indispensable puisque l'environnement de développement n'atteint pas 111477. |
+| Couche                  | Choix                                                                                                                                                                                     | Pourquoi                                                                                                                                                                                                                                                                |
+| ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Liens                   | Requêtes `node:http`/`node:https` (connexions réutilisées) avec l'identité de Chrome et les en-têtes demandés par l'extension (`proxyHeaders`), plages d'octets transmises telles quelles | Un lecteur vidéo enchaîne les plages ; `fetch` (undici) ajoute et réécrit des en-têtes.                                                                                                                                                                                 |
+| Imitation de navigateur | **[impit](https://github.com/apify/impit)** (Apify), en secours : empreinte TLS/HTTP2 de Chrome                                                                                           | Sert si une extension ou l'hôte d'un lien refuse la première requête (403/503 de Cloudflare).                                                                                                                                                                           |
+| ffmpeg / ffprobe        | **Relais local** `/api/internal/source` (127.0.0.1, jeton aléatoire généré au démarrage)                                                                                                  | ffmpeg lit le fichier par la même connexion que le reste de l'application (liens de secours compris), sans jamais recevoir de lien expiré.                                                                                                                              |
+| Messages d'erreur       | Limite de liens, limite de requêtes, extension injoignable ou manifeste invalide traduits en français, préfixés du nom de l'extension quand il y en a plusieurs                           | Dire _quelle_ extension refuse et _pourquoi_, plutôt qu'un « 403 » brut.                                                                                                                                                                                                |
+| Diagnostic              | `npm run diagnose [-- --extension=URL…] [--film=tt…] [--serie=tt…:S:E]`                                                                                                                   | Teste depuis la machine de l'utilisateur, extension par extension, le manifeste, les liens d'**un seul** film (pour ménager la réserve) et la lecture des premiers octets du premier lien. Indispensable puisque l'environnement de développement n'atteint pas 111477. |
 
 ### Validation
 
-L'extension est testée contre de faux services locaux : client et file d'épisodes
-(`stremio-addon.test.ts` : normalisation de l'adresse, identifiants IMDb/TMDB, doublons,
-description, en-têtes, réponse gardée en base, limite signalée, lien redemandé), parcours
+Les extensions sont testées contre de faux services locaux : client et file d'épisodes
+(`stremio-addon.test.ts` : normalisation de l'adresse, identifiants IMDb/TMDB, types de titres,
+doublons, description, en-têtes, réponse gardée en base, limite signalée, lien redemandé ;
+plusieurs extensions réunies, interrogées selon leurs types et préfixes, fichiers homonymes de
+tailles différentes, extension injoignable), liens (`source-transport.test.ts` : relais vers
+l'extension suivante quand un lien est refusé, renouvellement unique, imitation de Chrome),
+migration de l'ancienne adresse unique (`migrations.test.ts`), parcours
 complet (`addon-catalog.test.ts` : catalogue TMDB, versions d'un film demandées une seule fois,
 série affichée sans aucune demande de liens, téléchargement d'un film avec lien expiré
 redemandé, saison téléchargée en arrière-plan, lot arrêté à la limite, épisode suivant). La
-démonstration (`npm run demo`) embarque une fausse extension (liens qui expirent, réserve de
-jetons, limite en rafale) ; l'interface a été vérifiée de bout en bout dans Chromium : versions
-d'un film, téléchargement, épisodes à la demande, saison en arrière-plan, lecture d'un épisode
-à la demande (conversion ffmpeg à travers le relais), bandeau de limite atteinte, paramètres.
+démonstration (`npm run demo`) embarque deux fausses extensions (liens qui expirent, réserve de
+jetons, limite en rafale, fichiers en partie communs) ; l'interface a été vérifiée de bout en
+bout dans Chromium : versions d'un film réunies depuis les deux extensions (et ordre de
+préférence respecté), téléchargement, épisodes à la demande, saison en arrière-plan, lecture
+d'un épisode à la demande (conversion ffmpeg à travers le relais), bandeau de limite atteinte,
+liste des extensions dans les paramètres (ajout, ordre, test, retrait).
 
 ### Limites
 
-- Lumière dépend de l'extension : de sa disponibilité, de son offre (un film qu'elle ne propose
-  pas est marqué « Aucun fichier proposé ») et de sa réserve de liens. Une extension réglée pour
-  proposer beaucoup de liens par titre vide la réserve plus vite.
+- Lumière dépend des extensions : de leur disponibilité, de leur offre (un film qu'aucune ne
+  propose est marqué « Aucun fichier proposé ») et de leur réserve de liens. Une extension réglée
+  pour proposer beaucoup de liens par titre vide la réserve plus vite ; en ajouter une seconde
+  étend l'offre et donne des liens de secours.
 - Télécharger une série entière d'un coup est limité par la réserve : le lot s'arrête à la
   limite et se relance plus tard. La file des épisodes à demander est en mémoire : un
   redémarrage du serveur l'abandonne (les téléchargements déjà créés, eux, reprennent).
-- Avec l'extension, une clé TMDB est indispensable : c'est elle qui fournit le catalogue.
-- L'explorateur, qui parcourt le site directement, ne fonctionne que si le site est accessible.
+- Une clé TMDB est indispensable : c'est elle qui fournit le catalogue. Un titre absent de TMDB
+  n'apparaît pas, même si une extension en propose les fichiers.
+- Les téléchargements encore en file qui visaient un fichier de l'ancienne lecture directe du
+  site échouent avec un message explicite : il faut les relancer depuis la fiche du titre.
 - Un blocage par adresse IP ou par pays (erreur 1020) ne se contourne pas côté application.
 
 ### Sources
@@ -449,20 +451,20 @@ d'un film, téléchargement, épisodes à la demande, saison en arrière-plan, l
 ## 12. Qualité, sécurité, exploitation
 
 - **Qualité** : TypeScript strict, ESLint 10 (règles React Compiler incluses), Prettier,
-  **Vitest** (serveur : analyseur de listings, noms de releases, plan de lecture,
-  téléchargement avec coupure/reprise, enrichissement TMDB, configuration, connexion à la
-  source derrière un pare-feu anti-robot simulé, extension Stremio (liens expirés, limite de
-  liens, saisons en arrière-plan), relais de ffmpeg ; interface :
+  **Vitest** (serveur : noms de releases, plan de lecture, téléchargement avec
+  coupure/reprise, catalogue et enrichissement TMDB, configuration et migrations, extensions
+  Stremio (plusieurs à la fois, liens expirés ou refusés, limite de liens, saisons en
+  arrière-plan), imitation de Chrome, relais de ffmpeg ; interface :
   réfraction, détection des navigateurs, préférences d'accessibilité, palette d'ambiance),
   parcours de bout en bout et audit d'accessibilité (axe-core) dans Chromium (Playwright).
 - **Sécurité** :
-  - le serveur n'est **pas un proxy ouvert** : toutes les URL sont construites à partir de
-    la source configurée et de chemins relatifs validés (pas de `..`) ;
+  - le serveur n'est **pas un proxy ouvert** : il ne contacte que les extensions configurées et
+    les liens qu'elles fournissent, désignés par des chemins virtuels validés (pas de `..`) ;
   - les fichiers locaux ne sont accessibles que par identifiant de bibliothèque ;
   - les noms de fichiers sont assainis (Windows/macOS/Linux) et les écritures confinées au
     dossier de téléchargement ;
-  - ffmpeg est lancé sans shell (aucune injection possible) et ne lit la source qu'à travers
-    le relais local protégé par jeton ;
+  - ffmpeg est lancé sans shell (aucune injection possible) et ne lit les fichiers distants
+    qu'à travers le relais local protégé par jeton ;
   - écoute sur `127.0.0.1` par défaut (accès réseau local sur choix explicite) ;
   - la clé TMDB n'est jamais renvoyée à l'interface.
 - **Journal** : pino, écrit via `process.stdout` pour que Node.js convertisse le texte pour la
@@ -479,12 +481,9 @@ d'un film, téléchargement, épisodes à la demande, saison en arrière-plan, l
   l'exposer sur Internet, la placer derrière un reverse proxy avec authentification.
 - En mode conversion, l'avance rapide relance la conversion (une à deux secondes d'attente).
 - L'accélération matérielle (NVENC, QSV, VAAPI) n'est pas activée : conversion logicielle.
-- Le format HTML exact de `a.111477.xyz` n'a pas pu être observé depuis l'environnement de
-  développement : en cas de souci, `npm run probe -w @lumiere/server -- https://a.111477.xyz/movies/`
-  montre immédiatement ce que l'analyseur comprend, et les chemins `/movies/` et `/tvs/`
-  sont modifiables dans les paramètres. Le site exigeant une vérification Cloudflare, les
-  fichiers passent par l'extension Stremio ; `npm run diagnose` vérifie qu'elle répond depuis
-  la machine (voir § 11).
+- 111477 n'est pas joignable depuis l'environnement de développement : `npm run diagnose`
+  vérifie depuis la machine de l'utilisateur que chaque extension répond et que ses liens se
+  lisent (voir § 11).
 - Design : la réfraction n'est visible que dans les navigateurs Chromium (Chrome, Edge,
   Brave, Opera) ; Safari et Firefox affichent le même verre, dépoli. Le verre ne bascule pas
   automatiquement entre clair et sombre selon le fond comme sur iOS (le Web ne permet pas de

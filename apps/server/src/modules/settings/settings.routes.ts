@@ -33,12 +33,7 @@ const LanguageCode = z
 
 const SettingsUpdateSchema = z
   .object({
-    sourceBaseUrl: z.url({ protocol: /^https?$/ }),
-    moviesPath: z.string().min(1).max(500),
-    seriesPath: z.string().min(1).max(500),
-    userAgent: z.string().max(500),
-    sourceConnection: z.enum(['auto', 'standard', 'browser']),
-    stremioAddonUrl: z.string().max(2000),
+    stremioAddonUrls: z.array(z.string().max(2000)).max(10),
     downloadDir: z.string().min(1).max(1000),
     maxConcurrentDownloads: z.number().int().min(1).max(10),
     maxDownloadSpeedKbps: z.number().int().min(0).max(10_000_000),
@@ -49,7 +44,6 @@ const SettingsUpdateSchema = z
     subtitleAddonUrls: z.array(z.string().max(2000)).max(10),
     openSubtitlesUsername: z.string().max(200),
     catalogRefreshHours: z.number().int().min(0).max(720),
-    catalogSource: z.enum(['auto', 'listing', 'tmdb']),
     transcodePreset: z.enum(['quality', 'balanced', 'fast']),
     maxTranscodeHeight: z.union([
       z.literal(2160),
@@ -66,7 +60,7 @@ const SettingsUpdateSchema = z
   .strict();
 
 export function registerSettingsRoutes(server: FastifyInstance, container: Container): void {
-  const { settings, explorer, config, addon, subtitleAddons, logger } = container;
+  const { settings, config, addons, subtitleAddons, logger } = container;
   const app = server.withTypeProvider<ZodTypeProvider>();
 
   app.get('/settings', async () => settings.toResponse());
@@ -77,16 +71,10 @@ export function registerSettingsRoutes(server: FastifyInstance, container: Conta
   });
 
   app.post(
-    '/settings/test-source',
-    { schema: { body: z.object({ path: z.string().max(2000).optional() }).optional() } },
-    async (request) => explorer.test(request.body?.path ?? '/'),
-  );
-
-  app.post(
     '/settings/test-addon',
     { schema: { body: z.object({ url: z.string().max(2000).optional() }).optional() } },
     async (request): Promise<AddonTestResult> => {
-      const input = request.body?.url?.trim() || settings.get().stremioAddonUrl;
+      const input = request.body?.url?.trim() || (settings.get().stremioAddonUrls[0] ?? '');
       const failure = (message: string): AddonTestResult => ({
         ok: false,
         manifestUrl: input ? manifestUrlOf(input) : '',
@@ -97,7 +85,7 @@ export function registerSettingsRoutes(server: FastifyInstance, container: Conta
       });
       if (!input) return failure('Aucune extension configurée.');
       try {
-        const { manifestUrl, manifest } = await addon.inspect(input);
+        const { manifestUrl, manifest } = await addons.inspect(input);
         const streams = manifest.resources.some(
           (resource) => (typeof resource === 'string' ? resource : resource.name) === 'stream',
         );

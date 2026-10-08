@@ -15,7 +15,6 @@ import type {
   DownloadStats,
   EnqueueResult,
   EpisodeFiles,
-  ExplorerListing,
   GenreCount,
   HomeFeed,
   LibraryItem,
@@ -24,7 +23,6 @@ import type {
   Page,
   SettingsResponse,
   SettingsUpdate,
-  SourceTestResult,
   SubtitleProvidersTestResult,
   SystemInfo,
   TitleDetails,
@@ -45,7 +43,6 @@ export const queryKeys = {
   continueWatching: ['continue-watching'] as const,
   settings: ['settings'] as const,
   system: ['system'] as const,
-  explorer: (path: string) => ['explorer', path] as const,
 };
 
 // ---------------------------------------------------------------------------
@@ -87,7 +84,7 @@ export function useTitle(id: number) {
 }
 
 /**
- * Versions d'un épisode proposées par l'extension Stremio : chaque demande consomme des
+ * Versions d'un épisode proposées par les extensions Stremio : chaque demande peut consommer des
  * liens, elle n'est donc faite qu'à l'ouverture de la liste des versions.
  */
 export function useEpisodeFiles(
@@ -145,14 +142,6 @@ export function useSystemInfo() {
   });
 }
 
-export function useExplorer(path: string) {
-  return useQuery({
-    queryKey: queryKeys.explorer(path),
-    queryFn: () => api<ExplorerListing>('/explorer', { query: { path } }),
-    placeholderData: keepPreviousData,
-  });
-}
-
 // ---------------------------------------------------------------------------
 // Téléchargements
 // ---------------------------------------------------------------------------
@@ -166,7 +155,7 @@ function reportEnqueue(result: EnqueueResult): void {
   if (pending > 0) {
     toast.info(`${plural(pending, 'épisode')} en cours d’ajout`, {
       description:
-        'Les liens sont demandés un par un à l’extension Stremio ; le bilan s’affichera ici.',
+        'Les liens sont demandés un par un aux extensions Stremio ; le bilan s’affichera ici.',
     });
   }
   if (created === 0 && pending === 0 && result.skipped.length > 0) {
@@ -183,7 +172,6 @@ function useInvalidateAfterDownload() {
   return () => {
     void client.invalidateQueries({ queryKey: queryKeys.downloads });
     void client.invalidateQueries({ queryKey: ['title'] });
-    void client.invalidateQueries({ queryKey: ['explorer'] });
   };
 }
 
@@ -350,16 +338,6 @@ export function useUpdateSettings() {
     },
     onError: (error) =>
       toast.error('Enregistrement impossible', { description: errorMessage(error) }),
-  });
-}
-
-export function useTestSource() {
-  return useMutation({
-    mutationFn: (path?: string) =>
-      api<SourceTestResult>('/settings/test-source', {
-        method: 'POST',
-        body: path ? { path } : {},
-      }),
   });
 }
 

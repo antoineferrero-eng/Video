@@ -1,6 +1,5 @@
 import fs from 'node:fs';
 import http from 'node:http';
-import type { AddressInfo } from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -8,46 +7,22 @@ import { loadConfig } from '../src/config/env';
 import { createContainer, stopServices, type Container } from '../src/container';
 import { createLogger } from '../src/core/logger';
 import { pickBestMatch } from '../src/modules/metadata/metadata.service';
+import { listen, tmdbCatalogRoute, type FakeTitle } from './helpers/fakes';
 
 /**
  * Enrichissement TMDB de bout en bout contre un faux serveur reproduisant l'API v3 :
- * recherche, détails localisés, saisons/épisodes et cache des images.
+ * listes, détails localisés, saisons/épisodes et cache des images.
  */
-let source: http.Server;
+const TITLES: FakeTitle[] = [
+  { id: 603, kind: 'movie', name: 'Matrix', date: '1999-03-31', imdb: 'tt0133093' },
+  { id: 70523, kind: 'tv', name: 'Dark', date: '2017-12-01', imdb: 'tt5753856' },
+];
 let tmdb: http.Server;
 let container: Container;
 let dataDir: string;
 const requests: string[] = [];
 
-const listing = (entries: string[]) =>
-  `<html><body><pre><a href="../">../</a>\n${entries
-    .map((name) => `<a href="${encodeURIComponent(name)}/">${name}/</a>   01-Jan-2025 10:00   -`)
-    .join('\n')}\n</pre></body></html>`;
-
-function listen(server: http.Server): Promise<string> {
-  return new Promise((resolve) =>
-    server.listen(0, '127.0.0.1', () =>
-      resolve(`http://127.0.0.1:${(server.address() as AddressInfo).port}`),
-    ),
-  );
-}
-
 beforeAll(async () => {
-  source = http.createServer((request, response) => {
-    const url = decodeURIComponent(new URL(request.url ?? '/', 'http://x').pathname);
-    if (url === '/movies/') response.end(listing(['THE MATRIX (1999)', 'Film Inconnu (2001)']));
-    else if (url === '/movies/THE MATRIX (1999)/' || url === '/movies/Film Inconnu (2001)/') {
-      response.end(
-        '<html><body><pre><a href="../">../</a>\n<a href="film.1080p.mkv">film.1080p.mkv</a> 01-Jan-2025 10:00 100\n</pre></body></html>',
-      );
-    } else if (url === '/tvs/') response.end(listing(['Dark']));
-    else if (url === '/tvs/Dark/') response.end(listing(['Season 1']));
-    else if (url === '/tvs/Dark/Season 1/') {
-      response.end(
-        '<html><body><pre><a href="../">../</a>\n<a href="Dark.S01E01.1080p.mkv">Dark.S01E01.1080p.mkv</a> 01-Jan-2025 10:00 100\n</pre></body></html>',
-      );
-    } else response.writeHead(404).end();
-  });
   tmdb = http.createServer((request, response) => {
     const url = new URL(request.url ?? '/', 'http://x');
     requests.push(`${url.pathname}?${url.searchParams.toString()}`);
@@ -130,6 +105,9 @@ beforeAll(async () => {
           backdrop_path: null,
           vote_average: 8.4,
           vote_count: 6000,
+          seasons: [
+            { season_number: 1, episode_count: 1, name: 'Saison 1', poster_path: '/dark-s1.jpg' },
+          ],
         });
       case '/3/tv/70523/season/1':
         return json({
@@ -149,16 +127,15 @@ beforeAll(async () => {
           ],
         });
       default:
+        if (tmdbCatalogRoute(TITLES, url.pathname.replace(/^\/3/, ''), response)) return;
         return json({ status_code: 34 }, 404);
     }
   });
-  const [sourceUrl, tmdbUrl] = await Promise.all([listen(source), listen(tmdb)]);
+  const tmdbUrl = await listen(tmdb);
   dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lumiere-meta-'));
   const config = loadConfig({
     DATA_DIR: dataDir,
-    // Liste de la source lue directement (pas d'extension Stremio).
-    STREMIO_ADDON_URL: '',
-    SOURCE_BASE_URL: sourceUrl,
+    STREMIO_ADDON_URLS: '',
     TMDB_API_KEY: 'secret',
     TMDB_API_BASE_URL: `${tmdbUrl}/3`,
     TMDB_IMAGE_BASE_URL: `${tmdbUrl}/images`,
@@ -171,7 +148,6 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await stopServices(container);
-  source.close();
   tmdb.close();
   fs.rmSync(dataDir, { recursive: true, force: true });
 });
@@ -218,13 +194,6 @@ describe('enrichissement TMDB', () => {
     // La recherche fonctionne aussi sur le titre TMDB.
     expect((await container.catalog.search({ q: 'monde reel' })).items).toHaveLength(0);
     expect((await container.catalog.search({ q: 'matrix' })).items[0]?.title).toBe('Matrix');
-  });
-
-  it('marque « introuvable » un titre sans correspondance', async () => {
-    const [title] = (await container.catalog.search({ kind: 'movie', q: 'inconnu' })).items;
-    const details = await container.catalog.details(title!.id);
-    expect(details.metadataStatus).toBe('not_found');
-    expect(details.posterUrl).toBeNull();
   });
 
   it('enrichit les épisodes d’une série et met les images en cache', async () => {

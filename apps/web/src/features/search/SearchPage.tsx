@@ -49,7 +49,7 @@ export function SearchPage() {
         <EmptyState
           icon={<SearchX />}
           title="Aucun résultat"
-          description="Vérifiez l'orthographe ou essayez le titre original. Astuce : l'explorateur permet aussi de parcourir la source dossier par dossier."
+          description="Vérifiez l'orthographe ou essayez le titre original : la recherche couvre tous les films et séries de TMDB."
         />
       )}
       <ResultSection title="Films" kind="movie" result={movies} />

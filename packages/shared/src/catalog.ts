@@ -5,7 +5,7 @@ export type TitleKind = 'movie' | 'series';
 
 /**
  * Tri disponible pour le catalogue. `popular` : popularité TMDB (l'ordre de la page
- * « Populaires » du site de TMDB).
+ * « Populaires » du site de TMDB) ; `recent` : sorties les plus récentes.
  */
 export type CatalogSort = 'popular' | 'recent' | 'title' | 'year' | 'rating';
 
@@ -13,16 +13,10 @@ export type CatalogSort = 'popular' | 'recent' | 'title' | 'year' | 'rating';
 export type MetadataStatus = 'pending' | 'matched' | 'not_found' | 'disabled' | 'error';
 
 /**
- * Présence d'un titre sur la source : vu dans la liste ou retrouvé (`present`), venu de TMDB
- * et pas encore cherché (`unknown`), ou cherché sans succès (`missing`).
+ * Présence d'un titre chez les extensions Stremio : au moins un fichier proposé (`present`),
+ * pas encore demandé (`unknown`), ou demandé sans résultat (`missing`).
  */
 export type SourceStatus = 'present' | 'unknown' | 'missing';
-
-/**
- * Origine du catalogue : liste complète de la source, TMDB (dossier cherché à la demande sur
- * la source), ou TMDB avec les fichiers fournis par une extension Stremio.
- */
-export type CatalogMode = 'listing' | 'tmdb' | 'addon';
 
 /** Informations techniques déduites du nom de fichier d'une release. */
 export interface ReleaseInfo {
@@ -52,10 +46,13 @@ export interface MediaAvailability {
   watch: WatchState | null;
 }
 
-/** Fichier vidéo disponible sur la source distante. */
+/** Fichier vidéo proposé par une extension Stremio. */
 export interface RemoteFile {
   name: string;
-  /** Chemin (décodé) relatif à la racine de la source, ex. `/movies/Titre (2020)/fichier.mkv`. */
+  /**
+   * Chemin virtuel stable du fichier, ex. `/@stremio/movie/tt1677720/fichier.mkv` (le lien
+   * réel est demandé aux extensions au moment de lire les octets).
+   */
   path: string;
   size: number | null;
   modifiedAt: string | null;
@@ -64,15 +61,8 @@ export interface RemoteFile {
   episode: number | null;
   episodeEnd: number | null;
   availability: MediaAvailability;
-  /** Description donnée par l'extension Stremio (serveur, qualité…), null sinon. */
+  /** Description donnée par l'extension (son nom s'il y en a plusieurs, serveur, qualité…). */
   label: string | null;
-}
-
-/** Fichier de sous-titres disponible à côté des vidéos. */
-export interface RemoteSubtitle {
-  name: string;
-  path: string;
-  language: string | null;
 }
 
 /** Résumé d'un titre (carte d'affiche). */
@@ -88,7 +78,6 @@ export interface TitleSummary {
   rating: number | null;
   genres: string[];
   overview: string | null;
-  addedAt: string | null;
   /** Nombre de fichiers déjà présents dans la bibliothèque locale. */
   libraryCount: number;
   sourceStatus: SourceStatus;
@@ -111,13 +100,12 @@ export interface SeasonEntry {
   key: string;
   number: number | null;
   name: string;
-  path: string | null;
   posterUrl: string | null;
   overview: string | null;
   episodes: EpisodeEntry[];
 }
 
-/** Détail complet d'un titre, structure distante incluse. */
+/** Détail complet d'un titre. */
 export interface TitleDetails extends TitleSummary {
   remotePath: string;
   originalTitle: string | null;
@@ -126,23 +114,19 @@ export interface TitleDetails extends TitleSummary {
   releaseDate: string | null;
   tmdbId: number | null;
   metadataStatus: MetadataStatus;
-  /** Versions disponibles (films) ou fichiers isolés (séries). */
+  /** Versions proposées par les extensions (films). */
   files: RemoteFile[];
-  subtitles: RemoteSubtitle[];
-  /** Saisons et épisodes (séries uniquement). */
-  seasons: SeasonEntry[];
-  /** Dossiers essayés sur la source quand le titre y est introuvable. */
-  sourceTried: string[];
-  /** Message de l'extension Stremio (limite de liens atteinte…), null sinon. */
-  sourceNotice: string | null;
   /**
-   * Épisodes dont les liens sont demandés à l'extension à la lecture ou au téléchargement
-   * (pour ménager sa limite de liens) : `files` ne contient que les copies connues.
+   * Saisons et épisodes (séries) : les liens d'un épisode sont demandés aux extensions à la
+   * lecture ou au téléchargement (pour ménager leur limite de liens) ; ses `files` ne
+   * contiennent que les copies déjà connues (téléchargées, regardées).
    */
-  streamsOnDemand: boolean;
+  seasons: SeasonEntry[];
+  /** Message des extensions (limite de liens atteinte…), null sinon. */
+  sourceNotice: string | null;
 }
 
-/** Fichiers proposés pour un épisode (extension Stremio). */
+/** Fichiers proposés pour un épisode par les extensions Stremio. */
 export interface EpisodeFiles {
   files: RemoteFile[];
   notice: string | null;
@@ -167,17 +151,13 @@ export interface Page<T> {
 
 export type CatalogSectionState = 'idle' | 'refreshing' | 'error';
 
+/** Section du catalogue (films ou séries), importée des listes de TMDB. */
 export interface CatalogSectionStatus {
   kind: TitleKind;
-  path: string;
   state: CatalogSectionState;
   count: number;
   lastRefreshAt: string | null;
   lastError: string | null;
-  /** D'où vient le catalogue de cette section. */
-  mode: CatalogMode;
-  /** Explication à afficher (par ex. pourquoi le catalogue vient de TMDB). */
-  note: string | null;
 }
 
 export interface HomeFeed {
@@ -185,9 +165,6 @@ export interface HomeFeed {
   /** Les plus populaires d'après TMDB (vides sans données TMDB). */
   popularMovies: TitleSummary[];
   popularSeries: TitleSummary[];
-  /** Derniers ajouts sur la source (catalogue issu de la liste du site uniquement). */
-  recentMovies: TitleSummary[];
-  recentSeries: TitleSummary[];
   sections: CatalogSectionStatus[];
 }
 

@@ -46,13 +46,6 @@ export function registerDownloadRoutes(server: FastifyInstance, { downloads }: C
     },
   );
 
-  app.post(
-    '/downloads/folder',
-    { schema: { body: z.object({ path: z.string().min(1).max(2000) }) } },
-    async (request, reply) =>
-      reply.code(201).send(await downloads.enqueueFolder(request.body.path)),
-  );
-
   app.post('/downloads/:id/pause', { schema: { params: IdParams } }, async (request) =>
     downloads.pause(request.params.id),
   );

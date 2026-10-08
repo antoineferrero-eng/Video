@@ -8,9 +8,10 @@ services:
       - '8484:8484'
     environment:
       TZ: Europe/Paris
-      SOURCE_BASE_URL: https://a.111477.xyz
-      # Clé TMDB (facultative, configurable aussi depuis l'interface) :
+      # Clé TMDB (indispensable : le catalogue en vient ; configurable aussi depuis l'interface) :
       # TMDB_API_KEY: votre_cle_tmdb
+      # Extensions Stremio qui fournissent les fichiers (par ordre de préférence) :
+      # STREMIO_ADDON_URLS: https://st.111477.xyz/manifest.json,https://autre.extension/manifest.json
     volumes:
       # Base de données, caches (affiches, sous-titres) et paramètres.
       - ./data:/data

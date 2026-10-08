@@ -11,6 +11,7 @@ import { buildApp } from '../src/app';
 import { loadConfig } from '../src/config/env';
 import { createContainer, stopServices, type Container } from '../src/container';
 import { createLogger } from '../src/core/logger';
+import { addonRoute, sendBytes } from './helpers/fakes';
 
 /**
  * Test d'intégration du flux relancé (ffmpeg réel, à travers le relais) : un MKV dont les
@@ -20,7 +21,8 @@ const hasFfmpeg =
   spawnSync('ffmpeg', ['-hide_banner', '-version']).status === 0 &&
   spawnSync('ffprobe', ['-hide_banner', '-version']).status === 0;
 
-const FILE_PATH = '/movies/Film (2024)/Film.2024.1080p.WEB.H264.AC3-GRP.mkv';
+const FILE_NAME = 'Film.2024.1080p.WEB.H264.AC3-GRP.mkv';
+const FILE_PATH = `/@stremio/movie/tt0000001/${FILE_NAME}`;
 const CHROME = {
   videoCodecs: ['h264', 'vp9', 'av1'],
   audioCodecs: ['aac', 'mp3', 'opus', 'flac'],
@@ -33,26 +35,25 @@ let source: http.Server;
 let container: Container;
 let app: FastifyInstance;
 let origin: string;
-/** Coupe la source (réponses 404) pour simuler un fichier devenu inaccessible. */
+/** Coupe l'hôte du lien (réponses 404) pour simuler un fichier devenu inaccessible. */
 let sourceDown = false;
+let baseUrl = '';
+
+const addon = addonRoute({
+  prefix: '/addon',
+  base: () => baseUrl,
+  get streams() {
+    return { tt0000001: [{ fileName: FILE_NAME, bytes: media }] };
+  },
+  serve: (request, response, file) => {
+    if (sourceDown) response.writeHead(404).end();
+    else sendBytes(request, response, file.bytes);
+  },
+});
 
 function startSource(): Promise<string> {
   source = http.createServer((request, response) => {
-    const url = decodeURIComponent(new URL(request.url ?? '/', 'http://x').pathname);
-    if (url !== FILE_PATH || sourceDown) {
-      response.writeHead(404).end();
-      return;
-    }
-    const size = media.length;
-    const match = /bytes=(\d+)-(\d*)/.exec(request.headers.range ?? '');
-    const start = match ? Number(match[1]) : 0;
-    const end = match?.[2] ? Math.min(Number(match[2]), size - 1) : size - 1;
-    response.writeHead(match ? 206 : 200, {
-      'content-length': end - start + 1,
-      'accept-ranges': 'bytes',
-      ...(match ? { 'content-range': `bytes ${start}-${end}/${size}` } : {}),
-    });
-    response.end(request.method === 'HEAD' ? undefined : media.subarray(start, end + 1));
+    if (!addon(request, response)) response.writeHead(404).end();
   });
   return new Promise((resolve) =>
     source.listen(0, '127.0.0.1', () =>
@@ -114,11 +115,10 @@ describe.skipIf(!hasFfmpeg)('flux relancé (ffmpeg)', () => {
     expect(generated.status).toBe(0);
     media = fs.readFileSync(file);
 
-    const baseUrl = await startSource();
+    baseUrl = await startSource();
     const config = loadConfig({
       DATA_DIR: path.join(workDir, 'data'),
-      STREMIO_ADDON_URL: '',
-      SOURCE_BASE_URL: baseUrl,
+      STREMIO_ADDON_URLS: `${baseUrl}/addon/manifest.json`,
       LOG_LEVEL: 'silent',
       LOG_PRETTY: 'false',
     });

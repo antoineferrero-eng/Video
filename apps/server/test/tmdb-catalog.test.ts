@@ -9,21 +9,11 @@ import { createContainer, stopServices, type Container } from '../src/container'
 import { createLogger } from '../src/core/logger';
 
 /**
- * Catalogue TMDB : la liste complète de la source est illisible (trop volumineuse), le
- * catalogue vient donc de TMDB et le dossier de chaque titre est cherché à l'ouverture de
- * sa fiche, d'après les conventions « Titre (Année) » / « Titre ».
+ * Catalogue TMDB : listes de films et de séries (popularité, tendances…) et recherche, triés
+ * comme sur le site de TMDB. Les fichiers viennent des extensions Stremio (voir
+ * addon-catalog.test.ts) : sans extension configurée, la fiche le signale.
  */
 const silent = createLogger({ level: 'silent', pretty: false });
-
-const FOLDERS: Record<string, string[]> = {
-  '/movies/COSMOS ODYSSEY (2025)/': ['Cosmos.Odyssey.2025.1080p.WEB.H264-LUMIERE.mkv'],
-  '/movies/Le Voyage Imaginaire (2023)/': ['Le.Voyage.Imaginaire.2023.MULTi.1080p.WEB.mkv'],
-  '/tvs/Orbite (2020)/': ['Saison 1/'],
-  '/tvs/Orbite (2020)/Saison 1/': [
-    'Orbite.S01E01.720p.HDTV.x264-LUMIERE.mp4',
-    'Orbite.S01E02.720p.HDTV.x264-LUMIERE.mp4',
-  ],
-};
 
 interface DemoTitle {
   id: number;
@@ -59,11 +49,19 @@ const TITLES: DemoTitle[] = [
     original: 'The Forgotten Eclipse',
     date: '2024-10-02',
   },
+  {
+    id: 4,
+    kind: 'movie',
+    fr: 'Demain',
+    en: 'Tomorrow',
+    original: 'Tomorrow',
+    date: '2999-01-01',
+  },
   { id: 10, kind: 'tv', fr: 'Orbite', en: 'Orbite', original: 'Orbite', date: '2020-09-15' },
 ];
 
 /** Popularité TMDB de chaque titre (indépendante de l'ordre des listes). */
-const POPULARITY: Record<number, number> = { 1: 30.5, 2: 90.2, 3: 60.1, 10: 40 };
+const POPULARITY: Record<number, number> = { 1: 30.5, 2: 90.2, 3: 60.1, 4: 5, 10: 40 };
 
 function item(title: DemoTitle, language: string) {
   const name = language.startsWith('en') ? title.en : title.fr;
@@ -82,9 +80,7 @@ function item(title: DemoTitle, language: string) {
     : { ...common, name, original_name: title.original, first_air_date: title.date };
 }
 
-let source: http.Server;
 let tmdb: http.Server;
-const probes: string[] = [];
 let dataDir: string;
 let container: Container;
 
@@ -97,24 +93,6 @@ function listen(server: http.Server): Promise<string> {
 }
 
 beforeAll(async () => {
-  source = http.createServer((request, response) => {
-    const pathname = decodeURIComponent(new URL(request.url ?? '/', 'http://x').pathname);
-    probes.push(pathname);
-    if (pathname === '/movies/' || pathname === '/tvs/') {
-      response.writeHead(500, { 'content-type': 'text/plain' });
-      return response.end('Réponse trop volumineuse');
-    }
-    const entries = FOLDERS[pathname];
-    if (!entries) return void response.writeHead(404).end('Not Found');
-    const rows = entries
-      .map(
-        (name) =>
-          `<a href="${encodeURIComponent(name.replace(/\/$/, ''))}${name.endsWith('/') ? '/' : ''}">${name}</a>  01-Jan-2025 10:00  ${name.endsWith('/') ? '-' : '734003200'}`,
-      )
-      .join('\n');
-    response.writeHead(200, { 'content-type': 'text/html' });
-    response.end(`<html><body><pre><a href="../">../</a>\n${rows}\n</pre></body></html>`);
-  });
   tmdb = http.createServer((request, response) => {
     const url = new URL(request.url ?? '/', 'http://x');
     const route = url.pathname.replace(/^\/3/, '');
@@ -177,18 +155,20 @@ beforeAll(async () => {
         runtime: 120,
         episode_run_time: [40],
         genres: [{ id: 878, name: 'Science-Fiction' }],
+        seasons:
+          title.kind === 'tv'
+            ? [{ season_number: 1, episode_count: 2, name: 'Saison 1', poster_path: null }]
+            : undefined,
       });
     }
     send(404, { status_code: 34 });
   });
-  const [sourceUrl, tmdbUrl] = await Promise.all([listen(source), listen(tmdb)]);
+  const tmdbUrl = await listen(tmdb);
   dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lumiere-tmdb-catalog-'));
   container = createContainer(
     loadConfig({
       DATA_DIR: dataDir,
-      // Liste de la source lue directement (pas d'extension Stremio).
-      STREMIO_ADDON_URL: '',
-      SOURCE_BASE_URL: sourceUrl,
+      STREMIO_ADDON_URLS: '',
       TMDB_API_KEY: 'cle',
       TMDB_API_BASE_URL: `${tmdbUrl}/3`,
       LOG_LEVEL: 'silent',
@@ -199,83 +179,60 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await stopServices(container);
-  source.close();
   tmdb.close();
   fs.rmSync(dataDir, { recursive: true, force: true });
 });
 
 describe('catalogue TMDB', () => {
-  it('se replie sur TMDB quand la liste complète de la source est illisible', async () => {
+  it('importe les listes de TMDB', async () => {
     const movies = await container.catalog.refresh('movie');
-    expect(movies).toMatchObject({ state: 'idle', mode: 'tmdb', count: 3, lastError: null });
-    expect(movies.note).toMatch(/La liste complète de \/movies\/ n’a pas pu être lue/);
+    expect(movies).toMatchObject({ state: 'idle', count: 4, lastError: null });
     const series = await container.catalog.refresh('series');
-    expect(series).toMatchObject({ mode: 'tmdb', count: 1 });
-    expect(container.catalog.tmdbActive()).toBe(true);
+    expect(series).toMatchObject({ state: 'idle', count: 1 });
 
     const page = await container.catalog.search({ kind: 'movie', sort: 'title' });
     expect(page.items.map((title) => [title.title, title.sourceStatus])).toEqual([
       ['Cosmos Odyssey', 'unknown'],
+      ['Demain', 'unknown'],
       ['L’Éclipse oubliée', 'unknown'],
       ['Le Voyage imaginaire', 'unknown'],
     ]);
   });
 
   it('trie par popularité TMDB par défaut, accueil compris', async () => {
-    const byPopularity = ['Le Voyage imaginaire', 'L’Éclipse oubliée', 'Cosmos Odyssey'];
+    const byPopularity = ['Le Voyage imaginaire', 'L’Éclipse oubliée', 'Cosmos Odyssey', 'Demain'];
     const page = await container.catalog.search({ kind: 'movie' });
     expect(page.items.map((title) => title.title)).toEqual(byPopularity);
     const home = container.catalog.home();
     expect(home.popularMovies.map((title) => title.title)).toEqual(byPopularity);
     expect(home.popularSeries.map((title) => title.title)).toEqual(['Orbite']);
     expect(home.featured[0]?.title).toBe('Le Voyage imaginaire');
-    // Catalogue TMDB : pas de date d'ajout sur la source, donc pas de « récemment ajoutés ».
-    expect(home.recentMovies).toEqual([]);
-    expect(home.recentSeries).toEqual([]);
   });
 
-  it('trouve le dossier d’un film à l’ouverture de sa fiche, même en capitales', async () => {
-    const [cosmos] = (await container.catalog.search({ q: 'cosmos' })).items;
-    probes.length = 0;
-    const details = await container.catalog.details(cosmos!.id);
-    expect(details.sourceStatus).toBe('present');
-    expect(details.remotePath).toBe('/movies/COSMOS ODYSSEY (2025)/');
-    expect(details.files.map((file) => file.name)).toEqual([
-      'Cosmos.Odyssey.2025.1080p.WEB.H264-LUMIERE.mkv',
+  it('trie les sorties récentes d’abord, les titres à venir à la fin', async () => {
+    const page = await container.catalog.search({ kind: 'movie', sort: 'recent' });
+    expect(page.items.map((title) => title.title)).toEqual([
+      'Cosmos Odyssey',
+      'L’Éclipse oubliée',
+      'Le Voyage imaginaire',
+      'Demain',
     ]);
-    expect(probes).toEqual(['/movies/Cosmos Odyssey (2025)/', '/movies/COSMOS ODYSSEY (2025)/']);
-
-    // Mémorisé : plus aucun essai à la réouverture.
-    probes.length = 0;
-    await container.catalog.details(cosmos!.id);
-    expect(probes).toEqual([]);
   });
 
-  it('essaie le titre original, puis note les dossiers essayés quand le titre est absent', async () => {
-    const [voyage] = (await container.catalog.search({ q: 'voyage' })).items;
-    const found = await container.catalog.details(voyage!.id);
-    expect(found.remotePath).toBe('/movies/Le Voyage Imaginaire (2023)/');
-
-    const [eclipse] = (await container.catalog.search({ q: 'eclipse' })).items;
-    const missing = await container.catalog.details(eclipse!.id);
-    expect(missing.sourceStatus).toBe('missing');
-    expect(missing.files).toEqual([]);
-    expect(missing.sourceTried[0]).toBe('The Forgotten Eclipse (2024)');
-    expect(missing.sourceTried).toContain('L’Éclipse oubliée (2024)');
-    expect((await container.catalog.search({ q: 'eclipse' })).items[0]?.sourceStatus).toBe(
-      'missing',
-    );
+  it('signale sur la fiche d’un film qu’aucune extension n’est configurée', async () => {
+    const [cosmos] = (await container.catalog.search({ q: 'cosmos' })).items;
+    const details = await container.catalog.details(cosmos!.id);
+    expect(details.files).toEqual([]);
+    expect(details.sourceNotice).toMatch(/Aucune extension Stremio configurée/);
   });
 
-  it('trouve une série nommée « Titre (Année) » et ses épisodes', async () => {
+  it('liste les saisons et épisodes d’une série d’après TMDB', async () => {
     const [orbite] = (await container.catalog.search({ kind: 'series' })).items;
     const details = await container.catalog.details(orbite!.id);
-    expect(details.remotePath).toBe('/tvs/Orbite (2020)/');
     expect(details.seasons[0]?.episodes.map((episode) => episode.episode)).toEqual([1, 2]);
   });
 
   it('ajoute au catalogue les titres trouvés par la recherche TMDB', async () => {
-    await container.settings.update({ catalogSource: 'tmdb' });
     const results = await container.catalog.search({ q: 'forgotten' });
     expect(results.items.map((title) => title.title)).toEqual(['L’Éclipse oubliée']);
   });

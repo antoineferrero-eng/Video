@@ -58,13 +58,6 @@ export const router = createBrowserRouter([
           })),
       },
       {
-        path: 'explorateur',
-        lazy: () =>
-          import('./features/explorer/ExplorerPage').then((module) => ({
-            Component: module.ExplorerPage,
-          })),
-      },
-      {
         path: 'parametres',
         lazy: () =>
           import('./features/settings/SettingsPage').then((module) => ({

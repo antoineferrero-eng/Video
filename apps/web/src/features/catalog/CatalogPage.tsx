@@ -13,7 +13,7 @@ import { formatRelativeDate, plural } from '../../lib/format';
 
 const SORTS: Array<{ value: CatalogSort; label: string; hint?: string }> = [
   { value: 'popular', label: 'Popularité', hint: 'Comme la page « Populaires » de TMDB' },
-  { value: 'recent', label: 'Ajouts récents' },
+  { value: 'recent', label: 'Sorties récentes' },
   { value: 'title', label: 'Titre (A → Z)' },
   { value: 'year', label: 'Année' },
   { value: 'rating', label: 'Note' },
@@ -124,7 +124,7 @@ export function CatalogPage({ kind }: { kind: TitleKind }) {
             className="size-11"
             onClick={() => refresh.mutate(kind)}
             disabled={section?.state === 'refreshing'}
-            title="Relire la liste depuis la source"
+            title="Réimporter les listes de TMDB"
             aria-label="Actualiser le catalogue"
           >
             <RefreshCw
@@ -169,7 +169,7 @@ export function CatalogPage({ kind }: { kind: TitleKind }) {
               ? 'Essayez un autre mot-clé ou retirez le filtre de genre.'
               : section?.lastError
                 ? `Dernière erreur : ${section.lastError}`
-                : 'Le catalogue est vide pour le moment. Vérifiez la source dans les paramètres.'
+                : 'Le catalogue est vide pour le moment. Vérifiez la clé TMDB dans les paramètres.'
           }
         />
       ) : (

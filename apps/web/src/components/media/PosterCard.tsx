@@ -26,7 +26,7 @@ export function PosterCard({ title, className }: { title: TitleSummary; classNam
         {title.sourceStatus === 'missing' && (
           <span
             className="absolute top-2 left-2 z-[3] rounded-full bg-black/65 px-2 py-0.5 text-[11px] font-semibold text-zinc-100 backdrop-blur-md"
-            title="Ce titre n’a pas été trouvé sur la source"
+            title="Aucune extension Stremio ne propose ce titre pour l’instant"
           >
             Introuvable
           </span>

@@ -1,31 +1,12 @@
 export type PreferredQuality = '2160p' | '1080p' | '720p' | 'smallest';
-/**
- * Connexion à la source : automatique (requête standard, puis imitation de Chrome si la source
- * filtre les robots), standard uniquement, ou imitation de navigateur systématique.
- */
-export type SourceConnection = 'auto' | 'standard' | 'browser';
 export type TranscodePreset = 'quality' | 'balanced' | 'fast';
-/**
- * Origine du catalogue : liste complète de la source, catalogue TMDB (le dossier de chaque
- * titre est cherché sur la source à l'ouverture de sa fiche), ou automatique (la liste
- * complète si elle est accessible, sinon TMDB).
- */
-export type CatalogSource = 'auto' | 'listing' | 'tmdb';
 
 export interface AppSettings {
-  /** URL racine de l'index HTTP (ex. https://a.111477.xyz). */
-  sourceBaseUrl: string;
-  /** Dossier distant contenant les films. */
-  moviesPath: string;
-  /** Dossier distant contenant les séries. */
-  seriesPath: string;
-  userAgent: string;
-  sourceConnection: SourceConnection;
   /**
-   * Manifeste d'une extension Stremio qui fournit les liens des fichiers (vide : désactivé).
-   * Quand elle est active, le catalogue vient de TMDB et les fichiers de l'extension.
+   * Manifestes des extensions Stremio qui fournissent les liens des fichiers, par ordre de
+   * préférence (le catalogue, lui, vient de TMDB). Liste vide : aucun fichier disponible.
    */
-  stremioAddonUrl: string;
+  stremioAddonUrls: string[];
   /** Dossier local de téléchargement (bibliothèque). */
   downloadDir: string;
   maxConcurrentDownloads: number;
@@ -45,7 +26,6 @@ export interface AppSettings {
   /** Compte OpenSubtitles.com (facultatif : plus de téléchargements par jour). */
   openSubtitlesUsername: string;
   catalogRefreshHours: number;
-  catalogSource: CatalogSource;
   transcodePreset: TranscodePreset;
   maxTranscodeHeight: number;
 }

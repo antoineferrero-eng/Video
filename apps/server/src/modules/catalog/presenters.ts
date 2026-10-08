@@ -55,7 +55,6 @@ export function toTitleSummary(
     rating: row.rating,
     genres: parseGenres(row.genres),
     overview: row.overview,
-    addedAt: row.origin === 'tmdb' ? null : (row.remote_modified_at ?? row.first_seen_at),
     libraryCount,
     sourceStatus: row.source_status,
   };

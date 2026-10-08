@@ -5,18 +5,21 @@ import type { KeyValueCache } from '../../infra/database/database';
 import type { MetadataService } from '../metadata/metadata.service';
 import type { TmdbClient, TmdbSeason, TmdbSeasonSummary } from '../metadata/tmdb.client';
 import type { SettingsService } from '../settings/settings.service';
-import type { AddonResult, StremioAddon } from '../source/stremio/stremio-addon';
+import type { AddonResult, StremioAddons } from '../source/stremio/stremio-addon';
 import { isVirtualPath, virtualFolder } from '../source/stremio/virtual-path';
 import type { TitleRow, TitlesRepository } from './titles.repository';
 
 /**
- * Catalogue alimenté par une extension Stremio : les titres viennent de TMDB, les fichiers de
- * l'extension. L'identifiant IMDb d'un titre (attendu par l'extension) est demandé une fois
- * à TMDB puis gardé. Les saisons et épisodes d'une série viennent de TMDB ; les liens d'un
- * épisode ne sont demandés à l'extension qu'au moment de le lire ou de le télécharger.
+ * Fichiers des titres du catalogue, fournis par les extensions Stremio : les titres viennent
+ * de TMDB, les fichiers des extensions. L'identifiant IMDb d'un titre (attendu par les
+ * extensions) est demandé une fois à TMDB puis gardé. Les saisons et épisodes d'une série
+ * viennent de TMDB ; les liens d'un épisode ne sont demandés qu'au moment de le lire ou de
+ * le télécharger.
  */
 
 const SEASONS_TTL_MS = 24 * 3600_000;
+const NO_PROVIDER =
+  'Aucune extension configurée ne peut chercher ce titre (identifiant IMDb inconnu, ou type de titre non pris en charge).';
 
 export interface EpisodeOutline {
   season: number;
@@ -41,7 +44,7 @@ export class AddonCatalog {
     private readonly titles: TitlesRepository,
     private readonly tmdb: TmdbClient,
     private readonly metadata: MetadataService,
-    private readonly addon: StremioAddon,
+    private readonly addon: StremioAddons,
     private readonly settings: SettingsService,
     private readonly cache: KeyValueCache,
     private readonly logger: Logger,
@@ -51,7 +54,7 @@ export class AddonCatalog {
     return this.addon.enabled;
   }
 
-  /** Identifiant du titre pour l'extension (null si elle ne peut pas le chercher). */
+  /** Identifiant du titre pour les extensions (null si aucune ne peut le chercher). */
   async contentId(row: TitleRow): Promise<string | null> {
     if (row.tmdb_id === null) return null;
     let imdb = row.imdb_id;
@@ -98,17 +101,17 @@ export class AddonCatalog {
     return folder ? `${folder}${season}x${episode}/` : null;
   }
 
-  /** Versions d'un film proposées par l'extension. */
+  /** Versions d'un film proposées par les extensions. */
   async movieFiles(row: TitleRow): Promise<AddonResult> {
     const id = await this.contentId(row);
     if (!id) {
       return {
         files: [],
-        notice: 'L’extension ne peut pas chercher ce titre (identifiant IMDb inconnu).',
+        notice: NO_PROVIDER,
         limited: false,
       };
     }
-    const result = await this.addon.files({ kind: 'movie', id });
+    const result = await this.addon.files({ kind: 'movie', id, tmdb: row.tmdb_id });
     // Une limite atteinte ne dit rien de la présence du film.
     if (result.files.length > 0 || !result.limited)
       this.titles.setSource(row.id, {
@@ -118,17 +121,23 @@ export class AddonCatalog {
     return result;
   }
 
-  /** Versions d'un épisode proposées par l'extension. */
+  /** Versions d'un épisode proposées par les extensions. */
   async episodeFiles(row: TitleRow, season: number, episode: number): Promise<AddonResult> {
     const id = await this.contentId(row);
     if (!id) {
       return {
         files: [],
-        notice: 'L’extension ne peut pas chercher ce titre (identifiant IMDb inconnu).',
+        notice: NO_PROVIDER,
         limited: false,
       };
     }
-    const result = await this.addon.files({ kind: 'series', id, season, episode });
+    const result = await this.addon.files({
+      kind: 'series',
+      id,
+      tmdb: row.tmdb_id,
+      season,
+      episode,
+    });
     if (result.files.length > 0 && row.source_status !== 'present')
       this.titles.setSource(row.id, { status: 'present', note: null });
     return result;

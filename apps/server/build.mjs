@@ -3,7 +3,7 @@
 import { build } from 'esbuild';
 
 await build({
-  entryPoints: ['src/main.ts', 'src/cli/probe-source.ts'],
+  entryPoints: ['src/main.ts', 'src/cli/diagnose.ts'],
   outdir: 'dist',
   bundle: true,
   platform: 'node',

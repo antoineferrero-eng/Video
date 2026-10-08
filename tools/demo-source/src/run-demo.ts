@@ -1,12 +1,11 @@
 /**
  * Lance une démonstration complète hors ligne :
  *  1. génère les vidéos d'exemple si besoin ;
- *  2. démarre la source de démonstration (http://127.0.0.1:8585) ;
+ *  2. démarre les services de démonstration (http://127.0.0.1:8585) ;
  *  3. démarre Lumière avec une base de données dédiée (data/demo) : catalogue du faux TMDB,
- *     fichiers fournis par la fausse extension Stremio (comme avec 111477).
+ *     fichiers fournis par deux fausses extensions Stremio (comme avec 111477).
  *
  *   npm run demo          (depuis la racine du dépôt, après « npm run build » pour l'interface)
- *   DEMO_MODE=listing npm run demo   (liste de la source lue directement, sans extension)
  */
 import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
@@ -36,7 +35,7 @@ createDemoServer({
   throttleKbps: Number(process.env.DEMO_THROTTLE_KBPS ?? 4096),
   maxConnections: Number(process.env.DEMO_MAX_CONNECTIONS ?? 0),
 }).listen(port, '127.0.0.1', () => {
-  console.log(`Source de démonstration : http://127.0.0.1:${port}/`);
+  console.log(`Services de démonstration : http://127.0.0.1:${port}/`);
   const server = spawn(
     process.execPath,
     ['--import', 'tsx', path.join(repoRoot, 'apps/server/src/main.ts')],
@@ -45,13 +44,12 @@ createDemoServer({
       stdio: 'inherit',
       env: {
         ...process.env,
-        SOURCE_BASE_URL: `http://127.0.0.1:${port}`,
         DATA_DIR: process.env.DATA_DIR ?? path.join(repoRoot, 'data', 'demo'),
-        // Fausse extension Stremio (ou liste de la source avec DEMO_MODE=listing).
-        STREMIO_ADDON_URL:
-          process.env.DEMO_MODE === 'listing'
-            ? ''
-            : `http://127.0.0.1:${port}/stremio/manifest.json`,
+        // Deux fausses extensions Stremio, par ordre de préférence.
+        STREMIO_ADDON_URLS: [
+          `http://127.0.0.1:${port}/stremio/manifest.json`,
+          `http://127.0.0.1:${port}/stremio-miroir/manifest.json`,
+        ].join(','),
         // Faux TMDB de la démonstration (les titres d'exemple sont fictifs).
         TMDB_API_KEY: 'demo',
         TMDB_API_BASE_URL: `http://127.0.0.1:${port}/tmdb/3`,

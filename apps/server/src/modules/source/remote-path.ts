@@ -1,8 +1,9 @@
 import { BadRequestError } from '../../core/errors';
 
 /**
- * Les chemins distants sont manipulés sous forme décodée, relatifs à la racine de la source :
- * `/movies/Titre (2020)/fichier.mkv`. Les dossiers se terminent par `/`.
+ * Les chemins distants sont manipulés sous forme décodée : chemins virtuels des fichiers des
+ * extensions (`/@stremio/movie/tt1677720/fichier.mkv`, voir stremio/virtual-path.ts). Les
+ * dossiers se terminent par `/`.
  */
 export function normalizeRemotePath(input: string): string {
   const raw = input.trim().replace(/\\/g, '/');
@@ -14,15 +15,6 @@ export function normalizeRemotePath(input: string): string {
   if (parts.length === 0) return '/';
   const joined = `/${parts.join('/')}`;
   return trailingSlash ? `${joined}/` : joined;
-}
-
-export function normalizeDirPath(input: string): string {
-  const normalized = normalizeRemotePath(input);
-  return normalized.endsWith('/') ? normalized : `${normalized}/`;
-}
-
-export function isDirPath(path: string): boolean {
-  return path.endsWith('/');
 }
 
 /** Dernier segment d'un chemin (sans slash final). */
@@ -37,14 +29,4 @@ export function remoteParent(path: string): string | null {
   if (parts.length === 0) return null;
   parts.pop();
   return parts.length === 0 ? '/' : `/${parts.join('/')}/`;
-}
-
-export function joinRemote(dir: string, name: string, isDirectory: boolean): string {
-  const base = normalizeDirPath(dir);
-  return `${base}${name}${isDirectory ? '/' : ''}`;
-}
-
-/** Vérifie que `path` est situé dans `dir` (ou est `dir` lui-même). */
-export function isRemotePathWithin(path: string, dir: string): boolean {
-  return normalizeRemotePath(path).startsWith(normalizeDirPath(dir));
 }

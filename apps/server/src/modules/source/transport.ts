@@ -1,22 +1,20 @@
-import { PAGE_ENCODINGS, nodeRequest } from './node-http';
-
 /**
- * Transport HTTP vers la source.
+ * Transport HTTP vers les hôtes des liens fournis par les extensions Stremio.
  *
- * Beaucoup d'index de fichiers sont servis derrière Cloudflare, qui refuse (403) les clients
- * qui ne ressemblent pas à un navigateur. Deux transports sont donc disponibles :
- *   - « standard » : requête HTTP(S) de Node.js avec les en-têtes d'une navigation Chrome ;
- *   - « browser » : la bibliothèque `impit`, qui imite aussi l'empreinte réseau de Chrome
- *     (poignée de main TLS, HTTP/2, ordre des en-têtes), invisible au niveau des en-têtes.
- * En mode automatique, le client de la source bascule sur le second si le premier est bloqué.
- * (Quand Cloudflare impose une vérification JavaScript, aucun des deux ne passe : Lumière
- * obtient alors les fichiers par l'extension Stremio de la source, voir stremio/.)
+ * Certains hôtes sont servis derrière Cloudflare, qui refuse (403) les clients qui ne
+ * ressemblent pas à un navigateur. Les liens sont donc d'abord demandés par une requête
+ * Node.js ordinaire (node-http.ts), puis, en cas de refus, avec la bibliothèque `impit`, qui
+ * imite l'empreinte réseau de Chrome (poignée de main TLS, HTTP/2, ordre des en-têtes).
  */
+
+/** Identité présentée aux hôtes des liens (et par ffmpeg). */
+export const USER_AGENT =
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36';
 
 export type TransportName = 'standard' | 'browser';
 
 export interface SourceRequest {
-  /** Page de listing (navigation) ou fichier (téléchargement, lecture). */
+  /** Document (manifeste, réponse JSON) ou fichier (téléchargement, lecture). */
   kind: 'document' | 'file';
   method?: 'GET' | 'HEAD';
   range?: string;
@@ -65,78 +63,6 @@ export class CookieJar {
 
   clear(): void {
     this.hosts.clear();
-  }
-}
-
-const CHROME_VERSION = /\bChrome\/(\d+)/;
-
-/**
- * En-têtes d'une requête de navigateur cohérents avec l'identité (User-Agent) choisie :
- * indices clients `sec-ch-ua` pour Chrome/Edge, métadonnées `sec-fetch-*`, langues.
- * (`fetch` de Node.js, lui, envoie `sec-fetch-mode: cors` et `accept-language: *`, une
- * signature de robot que les pare-feu applicatifs repèrent facilement.)
- */
-export function browserHeaders(
-  userAgent: string,
-  request: Pick<SourceRequest, 'kind' | 'range'>,
-): Record<string, string> {
-  const headers: Record<string, string> = {};
-  const chrome = CHROME_VERSION.exec(userAgent)?.[1];
-  if (chrome && !/\bFirefox\//.test(userAgent)) {
-    const edge = /\bEdg\//.test(userAgent);
-    const mobile = /\bMobile\b/.test(userAgent);
-    const platform = /Windows/.test(userAgent)
-      ? 'Windows'
-      : /Android/.test(userAgent)
-        ? 'Android'
-        : /Mac OS X|Macintosh/.test(userAgent)
-          ? 'macOS'
-          : 'Linux';
-    headers['sec-ch-ua'] = edge
-      ? `"Microsoft Edge";v="${chrome}", "Not?A_Brand";v="8", "Chromium";v="${chrome}"`
-      : `"Google Chrome";v="${chrome}", "Not?A_Brand";v="8", "Chromium";v="${chrome}"`;
-    headers['sec-ch-ua-mobile'] = mobile ? '?1' : '?0';
-    headers['sec-ch-ua-platform'] = `"${platform}"`;
-  }
-  headers['upgrade-insecure-requests'] = '1';
-  headers['user-agent'] = userAgent;
-  headers.accept =
-    request.kind === 'document'
-      ? 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7'
-      : '*/*';
-  headers['sec-fetch-site'] = 'none';
-  headers['sec-fetch-mode'] = 'navigate';
-  headers['sec-fetch-user'] = '?1';
-  headers['sec-fetch-dest'] = 'document';
-  // Un fichier est demandé tel quel : la compression fausserait les plages d'octets.
-  headers['accept-encoding'] = request.kind === 'document' ? PAGE_ENCODINGS : 'identity';
-  headers['accept-language'] = 'fr-FR,fr;q=0.9,en-US;q=0.8,en;q=0.7';
-  headers.priority = 'u=0, i';
-  if (request.range) headers.range = request.range;
-  return headers;
-}
-
-/**
- * Requête HTTP(S) de Node.js avec des en-têtes de navigateur et un bocal à cookies.
- * (Pas `fetch` : il remplacerait `sec-fetch-mode: navigate` par `cors`.)
- */
-export class StandardTransport implements Transport {
-  readonly name = 'standard' as const;
-
-  constructor(
-    private readonly userAgent: () => string,
-    private readonly cookies: CookieJar,
-  ) {}
-
-  fetch(url: string, request: SourceRequest): Promise<SourceResponse> {
-    return nodeRequest(url, {
-      method: request.method ?? 'GET',
-      headers: browserHeaders(this.userAgent(), request),
-      signal: request.signal,
-      decompress: request.kind === 'document',
-      cookieFor: (target) => this.cookies.header(target),
-      onSetCookie: (target, cookie) => this.cookies.store(target, cookie),
-    });
   }
 }
 
@@ -197,53 +123,4 @@ export function looksBlocked(response: Pick<SourceResponse, 'status' | 'headers'
   return (
     response.headers.has('cf-mitigated') || /cloudflare/i.test(response.headers.get('server') ?? '')
   );
-}
-
-export interface BlockDiagnosis {
-  /** Message en français destiné à l'utilisateur. */
-  message: string;
-  details: Record<string, string | number | null>;
-}
-
-/**
- * Explique un refus de la source à partir du statut, des en-têtes et du début du corps :
- * défi Cloudflare, règle de pare-feu (codes 10xx), refus de l'origine…
- */
-export function describeRefusal(
-  status: number,
-  statusText: string,
-  headers: Headers,
-  bodyStart: string,
-): BlockDiagnosis {
-  const server = headers.get('server');
-  const cloudflare = /cloudflare/i.test(server ?? '') || headers.has('cf-ray');
-  const title = /<title[^>]*>([^<]{0,160})<\/title>/i.exec(bodyStart)?.[1]?.trim() ?? null;
-  const code = /error(?:\s+code)?[:\s]+(10\d\d)\b/i.exec(bodyStart)?.[1] ?? null;
-  const details = {
-    status,
-    server,
-    cfRay: headers.get('cf-ray'),
-    cfMitigated: headers.get('cf-mitigated'),
-    title,
-    cloudflareCode: code,
-  };
-  const base = `« ${status} ${statusText} »`;
-  let message: string;
-  if (
-    headers.get('cf-mitigated') === 'challenge' ||
-    /just a moment|cf-chl|challenge-platform|cf_chl_opt/i.test(bodyStart)
-  ) {
-    message = `${base} : Cloudflare exige une vérification anti-robot (« Just a moment… ») que seul un vrai navigateur peut passer`;
-  } else if (code === '1020') {
-    message = `${base} : Cloudflare a bloqué la requête (erreur 1020, règle de pare-feu du site)`;
-  } else if (code === '1010') {
-    message = `${base} : Cloudflare a refusé la signature du client (erreur 1010)`;
-  } else if (code) {
-    message = `${base} : Cloudflare a bloqué la requête (erreur ${code})`;
-  } else if (cloudflare && status === 403) {
-    message = `${base} renvoyé via Cloudflare (filtrage des robots ou refus du site)`;
-  } else {
-    message = `${base}${server ? ` (serveur ${server})` : ''}`;
-  }
-  return { message, details };
 }

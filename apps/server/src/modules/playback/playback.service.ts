@@ -385,8 +385,8 @@ export class PlaybackService {
   }
 
   /**
-   * Épisode demandé sans fichier précis (extension Stremio) : copie locale si elle existe,
-   * sinon la version préférée parmi celles que propose l'extension.
+   * Épisode demandé sans fichier précis : copie locale si elle existe, sinon la version
+   * préférée parmi celles que proposent les extensions.
    */
   private async resolveEpisode(
     titleId: number,
@@ -401,7 +401,7 @@ export class PlaybackService {
     if (!file) {
       throw new NotFoundError(
         notice ??
-          `L’extension Stremio ne propose aucun fichier pour l’épisode ${formatEpisodeCode(season, episode) ?? episode}.`,
+          `Aucune extension Stremio ne propose de fichier pour l’épisode ${formatEpisodeCode(season, episode) ?? episode}.`,
       );
     }
     return this.resolveMedia({ type: 'remote', path: file.path });
@@ -488,30 +488,20 @@ export class PlaybackService {
       }));
   }
 
-  /** Sous-titres externes (.srt, .vtt, .ass) rangés à côté de la vidéo, en local ou sur la source. */
+  /**
+   * Sous-titres externes (.srt, .vtt, .ass) rangés à côté d'une vidéo téléchargée. (Un fichier
+   * lu sans être téléchargé n'en a pas : les extensions ne fournissent que la vidéo, les
+   * sous-titres viennent alors des services en ligne.)
+   */
   private async externalSubtitles(media: ResolvedMedia): Promise<SubtitleSource[]> {
+    if (!media.filePath) return [];
     const stem = stripExtension(media.fileName).toLowerCase();
-    let candidates: Array<{ name: string; remotePath?: string; filePath?: string }> = [];
-    let videoCount = 0;
-
-    if (media.filePath) {
-      const dir = path.dirname(media.filePath);
-      const names = await fsp.readdir(dir).catch(() => [] as string[]);
-      videoCount = names.filter((name) => classifyFile(name) === 'video').length;
-      candidates = names
-        .filter((name) => classifyFile(name) === 'subtitle')
-        .map((name) => ({ name, filePath: path.join(dir, name) }));
-    }
-    if (candidates.length === 0 && media.remotePath) {
-      const listing = await this.source
-        .list(remoteParent(media.remotePath) ?? '/')
-        .catch(() => null);
-      const entries = listing?.entries.filter((entry) => !entry.isDirectory) ?? [];
-      videoCount = entries.filter((entry) => classifyFile(entry.name) === 'video').length;
-      candidates = entries
-        .filter((entry) => classifyFile(entry.name) === 'subtitle')
-        .map((entry) => ({ name: entry.name, remotePath: entry.path }));
-    }
+    const dir = path.dirname(media.filePath);
+    const names = await fsp.readdir(dir).catch(() => [] as string[]);
+    const videoCount = names.filter((name) => classifyFile(name) === 'video').length;
+    const candidates = names
+      .filter((name) => classifyFile(name) === 'subtitle')
+      .map((name) => ({ name, filePath: path.join(dir, name) }));
 
     const code = formatEpisodeCode(media.season, media.episode)?.toLowerCase();
     return candidates
@@ -534,7 +524,6 @@ export class PlaybackService {
           supported: ['srt', 'vtt', 'ass', 'ssa'].includes(format),
           isDefault: false,
           isForced: forced,
-          remotePath: candidate.remotePath,
           filePath: candidate.filePath,
           format,
         };
@@ -558,7 +547,7 @@ export class PlaybackService {
     return forced?.id ?? null;
   }
 
-  /** Épisode suivant : d'abord dans la bibliothèque locale, sinon sur la source. */
+  /** Épisode suivant : d'abord dans la bibliothèque locale, sinon d'après TMDB. */
   private async findNext(media: ResolvedMedia): Promise<PlaybackSession['next']> {
     if (media.libraryRow?.kind === 'episode') {
       const episodes = this.library.listEpisodes(media.libraryRow);
@@ -572,45 +561,22 @@ export class PlaybackService {
       }
     }
     if (media.titleRow?.kind !== 'series') return null;
-    if (this.catalog.addonMode) {
-      // Épisode suivant d'après TMDB : son fichier ne sera demandé qu'à la lecture.
-      if (media.season === null || media.episode === null) return null;
-      const next = await this.catalog.nextEpisode(
-        media.titleRow,
-        media.season,
-        media.episodeEnd ?? media.episode,
-      );
-      if (!next) return null;
-      return {
-        media: {
-          type: 'episode',
-          titleId: media.titleRow.id,
-          season: next.season,
-          episode: next.episode,
-        },
-        label: formatEpisodeCode(next.season, next.episode) ?? `Épisode ${next.episode}`,
-      };
-    }
-    if (!media.remotePath) return null;
-    const structure = await this.catalog.seriesStructure(media.titleRow);
-    const episodes = structure.flatMap((season) => season.episodes);
-    const index = episodes.findIndex((episode) =>
-      episode.files.some((file) => file.path === media.remotePath),
+    // Épisode suivant d'après TMDB : son fichier ne sera demandé qu'à la lecture.
+    if (media.season === null || media.episode === null) return null;
+    const next = await this.catalog.nextEpisode(
+      media.titleRow,
+      media.season,
+      media.episodeEnd ?? media.episode,
     );
-    const next = index >= 0 ? episodes[index + 1] : undefined;
     if (!next) return null;
-    const currentResolution = parseRelease(media.fileName).info.resolution;
-    const sameQuality = next.files.find(
-      (file) => parseRelease(file.name).info.resolution === currentResolution,
-    );
-    const { preferredQuality, preferredAudioLanguage } = this.settings.get();
-    const file =
-      sameQuality ?? pickPreferredFile(next.files, preferredQuality, preferredAudioLanguage);
-    if (!file) return null;
     return {
-      media: { type: 'remote', path: file.path },
-      label:
-        formatEpisodeCode(next.season, next.episode, next.episodeEnd) ?? stripExtension(file.name),
+      media: {
+        type: 'episode',
+        titleId: media.titleRow.id,
+        season: next.season,
+        episode: next.episode,
+      },
+      label: formatEpisodeCode(next.season, next.episode) ?? `Épisode ${next.episode}`,
     };
   }
 
@@ -815,9 +781,7 @@ export class PlaybackService {
     track: SubtitleSource,
   ): Promise<string> {
     if (track.source === 'external') {
-      const buffer = track.remotePath
-        ? await this.source.fetchBuffer(track.remotePath)
-        : await fsp.readFile(track.filePath as string);
+      const buffer = await fsp.readFile(track.filePath as string);
       return this.toVtt(buffer, track.format ?? null);
     }
     if (track.source === 'online' && track.online) return this.loadOnlineSubtitles(track.online);

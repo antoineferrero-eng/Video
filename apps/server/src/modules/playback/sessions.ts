@@ -23,7 +23,6 @@ export interface SubtitleSource {
   isDefault: boolean;
   isForced: boolean;
   streamIndex?: number;
-  remotePath?: string;
   filePath?: string;
   format?: string;
   /** Sous-titres trouvés en ligne. */

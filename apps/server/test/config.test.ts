@@ -22,11 +22,7 @@ describe('configuration', () => {
   it('applique les valeurs par défaut', () => {
     const config = loadConfig({});
     expect(config).toMatchObject({ host: '127.0.0.1', port: 8484, logLevel: 'info' });
-    expect(config.defaults).toMatchObject({
-      sourceBaseUrl: 'https://a.111477.xyz',
-      moviesPath: '/movies/',
-      seriesPath: '/tvs/',
-    });
+    expect(config.defaults.stremioAddonUrls).toEqual(['https://st.111477.xyz/manifest.json']);
     expect(config.tmdb.envApiKey).toBeNull();
   });
 
@@ -35,12 +31,10 @@ describe('configuration', () => {
     const config = loadConfig({
       INIT_CWD: dir,
       DATA_DIR: 'donnees',
-      SOURCE_BASE_URL: 'http://nas.local:8080/',
     });
     expect(config.dataDir).toBe(path.join(dir, 'donnees'));
     expect(config.databaseFile).toBe(path.join(dir, 'donnees', 'lumiere.db'));
     expect(config.defaults.downloadDir).toBe(path.join(dir, 'donnees', 'media'));
-    expect(config.defaults.sourceBaseUrl).toBe('http://nas.local:8080');
     expect(loadConfig({ INIT_CWD: dir, MEDIA_DIR: 'videos' }).defaults.downloadDir).toBe(
       path.join(dir, 'videos'),
     );
@@ -48,7 +42,19 @@ describe('configuration', () => {
 
   it('refuse une configuration invalide avec un message explicite', () => {
     expect(() => loadConfig({ PORT: 'abc' })).toThrow(/Configuration invalide[\s\S]*PORT/);
-    expect(() => loadConfig({ SOURCE_BASE_URL: 'ftp://exemple' })).toThrow(/SOURCE_BASE_URL/);
+    expect(() => loadConfig({ TMDB_API_BASE_URL: 'pas une url' })).toThrow(/TMDB_API_BASE_URL/);
+  });
+
+  it('lit plusieurs extensions Stremio, ou l’ancienne variable à une seule adresse', () => {
+    expect(
+      loadConfig({ STREMIO_ADDON_URLS: 'https://a.example/manifest.json, https://b.example' })
+        .defaults.stremioAddonUrls,
+    ).toEqual(['https://a.example/manifest.json', 'https://b.example']);
+    expect(
+      loadConfig({ STREMIO_ADDON_URL: 'https://c.example/manifest.json' }).defaults
+        .stremioAddonUrls,
+    ).toEqual(['https://c.example/manifest.json']);
+    expect(loadConfig({ STREMIO_ADDON_URLS: '' }).defaults.stremioAddonUrls).toEqual([]);
   });
 
   it('charge le fichier .env sans écraser les variables déjà définies', () => {

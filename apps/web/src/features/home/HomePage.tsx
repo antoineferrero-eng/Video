@@ -23,12 +23,7 @@ export function HomePage() {
 
   const feed = home.data;
   const failing = feed.sections.filter((section) => section.state === 'error');
-  const isEmpty = [
-    feed.popularMovies,
-    feed.popularSeries,
-    feed.recentMovies,
-    feed.recentSeries,
-  ].every((row) => row.length === 0);
+  const isEmpty = [feed.popularMovies, feed.popularSeries].every((row) => row.length === 0);
   const recentLibrary = (library.data ?? []).filter((item) => item.exists).slice(0, 16);
 
   return (
@@ -42,17 +37,16 @@ export function HomePage() {
             <p className="font-semibold text-red-200">Le catalogue n'a pas pu être actualisé</p>
             {failing.map((section) => (
               <p key={section.kind} className="text-red-200/70">
-                {section.kind === 'movie' ? 'Films' : 'Séries'} ({section.path}) :{' '}
-                {section.lastError}
+                {section.kind === 'movie' ? 'Films' : 'Séries'} : {section.lastError}
               </p>
             ))}
           </div>
           <ButtonLink
-            to="/parametres?onglet=source"
+            to="/parametres?onglet=services"
             size="sm"
             icon={<Settings className="size-4" />}
           >
-            Vérifier la source
+            Vérifier la clé TMDB
           </ButtonLink>
         </div>
       )}
@@ -61,7 +55,7 @@ export function HomePage() {
         <EmptyState
           icon={<Film />}
           title="Le catalogue est en cours de chargement"
-          description="La liste des films et séries est récupérée depuis la source. Cela ne prend généralement que quelques secondes."
+          description="La liste des films et séries est récupérée depuis TMDB. Cela ne prend généralement que quelques secondes."
         />
       )}
 
@@ -79,8 +73,6 @@ export function HomePage() {
 
       <TitleRow title="Films populaires" to="/films" titles={feed.popularMovies} />
       <TitleRow title="Séries populaires" to="/series" titles={feed.popularSeries} />
-      <TitleRow title="Films récemment ajoutés" to="/films" titles={feed.recentMovies} />
-      <TitleRow title="Séries récemment ajoutées" to="/series" titles={feed.recentSeries} />
 
       {recentLibrary.length > 0 && (
         <MediaRow title="Dans ma bibliothèque" action={{ label: 'Tout voir', to: '/bibliotheque' }}>
