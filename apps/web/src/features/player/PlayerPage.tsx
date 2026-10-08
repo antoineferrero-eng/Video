@@ -31,8 +31,11 @@ import { cn } from '../../lib/cn';
 import { formatClock } from '../../lib/format';
 import { mediaFromSearch, playerUrl } from '../../lib/routes';
 import { activeCues, parseVtt, type Cue } from '../../lib/vtt';
+import { PLAYER_TOAST } from './player-toast';
 import { ProgressSlider } from './ProgressSlider';
+import { describeSync, isIdentity, subtitleTime } from './subtitle-sync';
 import { TrackMenu } from './TrackMenu';
+import { useSubtitleSync } from './useSubtitleSync';
 
 /** 0 = automatique, 1 = lecture directe désactivée (remultiplexage), 2 = conversion forcée. */
 type FallbackLevel = 0 | 1 | 2;
@@ -47,14 +50,11 @@ const RECOVERY_WINDOW_MS = 60_000;
 const SUBTITLE_DELAY_STEP = 0.25;
 /** Entrées du menu des sous-titres qui ne sont pas des pistes. */
 const SEARCH_ONLINE_AGAIN = '__search-again';
+const SYNC_AUTO = '__sync-auto';
+const SYNC_RESET = '__sync-reset';
 const MENU_NOTE = '__note';
 
 type OnlineStatus = 'idle' | 'searching' | 'done' | 'error';
-
-function formatDelay(seconds: number): string {
-  const value = `${Math.abs(seconds).toFixed(2).replace('.', ',')} s`;
-  return seconds === 0 ? '0 s' : `${seconds > 0 ? '+' : '−'}${value}`;
-}
 
 /** Détail d'une piste de sous-titres affiché sous son nom dans le menu. */
 function subtitleHint(track: SubtitleTrackInfo): string {
@@ -134,8 +134,6 @@ function Player({ media, initialStart }: { media: MediaRef; initialStart: number
   const [controls, setControls] = useState(true);
   const [subtitleId, setSubtitleId] = useState<string | null>(null);
   const [loadedCues, setLoadedCues] = useState<Record<string, Cue[]>>({});
-  /** Décalage des sous-titres en secondes (positif : plus tard). */
-  const [subtitleDelay, setSubtitleDelay] = useState(0);
   const [onlineTracks, setOnlineTracks] = useState<SubtitleTrackInfo[]>([]);
   const [onlineStatus, setOnlineStatus] = useState<OnlineStatus>('idle');
   const [onlineNotices, setOnlineNotices] = useState<string[]>([]);
@@ -435,7 +433,10 @@ function Player({ media, initialStart }: { media: MediaRef; initialStart: number
       try {
         await activate(Math.max(level, 0) as FallbackLevel, index, position);
       } catch (failure) {
-        toast.error('Changement de piste impossible', { description: errorMessage(failure) });
+        toast.error('Changement de piste impossible', {
+          ...PLAYER_TOAST,
+          description: errorMessage(failure),
+        });
       }
     },
     [activate, level],
@@ -471,7 +472,7 @@ function Player({ media, initialStart }: { media: MediaRef; initialStart: number
   useEffect(() => {
     if (!subtitleId || !session || subtitleLoaded) return;
     let cancelled = false;
-    const toastId = toast.loading('Chargement des sous-titres…');
+    const toastId = toast.loading('Chargement des sous-titres…', PLAYER_TOAST);
     fetch(`/api/playback/sessions/${session.sessionId}/subtitles/${encodeURIComponent(subtitleId)}`)
       .then(async (response) => {
         if (!response.ok)
@@ -488,6 +489,7 @@ function Player({ media, initialStart }: { media: MediaRef; initialStart: number
       })
       .catch((failure: unknown) => {
         toast.error('Sous-titres indisponibles', {
+          ...PLAYER_TOAST,
           id: toastId,
           description: errorMessage(failure),
         });
@@ -498,21 +500,25 @@ function Player({ media, initialStart }: { media: MediaRef; initialStart: number
     };
   }, [subtitleId, session, subtitleLoaded]);
 
-  const visibleCues = useMemo(
-    () => activeCues(cues, time - subtitleDelay),
-    [cues, time, subtitleDelay],
+  const subtitleTrack = useMemo(
+    () =>
+      [...(session?.subtitleTracks ?? []), ...onlineTracks].find(
+        (track) => track.id === subtitleId,
+      ) ?? null,
+    [session, onlineTracks, subtitleId],
   );
+  const subtitleSync = useSubtitleSync({
+    sessionId: session?.sessionId ?? null,
+    track: subtitleTrack,
+    cues,
+    timeRef,
+    showOsd,
+  });
+  const { nudge: nudgeSubtitles, anchor: anchorSubtitles } = subtitleSync;
 
-  const shiftSubtitles = useCallback(
-    (step: number) => {
-      const next = Math.round((subtitleDelay + step) * 100) / 100;
-      setSubtitleDelay(next);
-      showOsd(
-        `Sous-titres : ${formatDelay(next)}`,
-        next > 0 ? 'affichés plus tard' : next < 0 ? 'affichés plus tôt' : 'sans décalage',
-      );
-    },
-    [subtitleDelay, showOsd],
+  const visibleCues = useMemo(
+    () => activeCues(cues, subtitleTime(time, subtitleSync.sync)),
+    [cues, time, subtitleSync.sync],
   );
 
   useEffect(() => {
@@ -528,12 +534,19 @@ function Player({ media, initialStart }: { media: MediaRef; initialStart: number
         if (current) void searchOnline(current, { force: true });
         return;
       }
+      if (value === SYNC_AUTO) {
+        subtitleSync.autoSync();
+        return;
+      }
+      if (value === SYNC_RESET) {
+        subtitleSync.reset();
+        return;
+      }
       if (value?.startsWith(MENU_NOTE)) return;
       subtitlePicked.current = true;
       setSubtitleId(value);
-      setSubtitleDelay(0);
     },
-    [searchOnline],
+    [searchOnline, subtitleSync],
   );
 
   const onSubtitleMenuOpenChange = useCallback(
@@ -607,10 +620,17 @@ function Player({ media, initialStart }: { media: MediaRef; initialStart: number
           goNext();
           break;
         case 'g':
-          shiftSubtitles(-SUBTITLE_DELAY_STEP);
+          nudgeSubtitles(-SUBTITLE_DELAY_STEP);
           break;
         case 'h':
-          shiftSubtitles(SUBTITLE_DELAY_STEP);
+          nudgeSubtitles(SUBTITLE_DELAY_STEP);
+          break;
+        // Maj : caler une réplique sur ce que l'on entend.
+        case 'G':
+          anchorSubtitles('next');
+          break;
+        case 'H':
+          anchorSubtitles('previous');
           break;
         case 'Escape':
           if (!document.fullscreenElement) navigate(-1);
@@ -622,7 +642,16 @@ function Player({ media, initialStart }: { media: MediaRef; initialStart: number
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [togglePlay, seek, toggleFullscreen, goNext, navigate, revealControls, shiftSubtitles]);
+  }, [
+    togglePlay,
+    seek,
+    toggleFullscreen,
+    goNext,
+    navigate,
+    revealControls,
+    nudgeSubtitles,
+    anchorSubtitles,
+  ]);
 
   useEffect(() => {
     if (resumeNotice === null) return;
@@ -778,6 +807,29 @@ function Player({ media, initialStart }: { media: MediaRef; initialStart: number
       : []),
     ...(onlineAvailable && (onlineStatus === 'done' || onlineStatus === 'error')
       ? [{ value: SEARCH_ONLINE_AGAIN, label: 'Relancer la recherche en ligne' }]
+      : []),
+    ...(subtitleId
+      ? [
+          {
+            value: SYNC_AUTO,
+            label: subtitleSync.syncing
+              ? 'Synchronisation en cours…'
+              : 'Synchroniser automatiquement',
+            hint: 'Sur la voix ou une piste intégrée · à la main : Maj+G (réplique suivante), Maj+H (précédente)',
+            disabled: subtitleSync.syncing,
+          },
+          ...(!isIdentity(subtitleSync.sync)
+            ? [
+                {
+                  value: SYNC_RESET,
+                  label: 'Annuler le recalage',
+                  hint: [describeSync(subtitleSync.sync), subtitleSync.note]
+                    .filter(Boolean)
+                    .join(' · '),
+                },
+              ]
+            : []),
+        ]
       : []),
   ];
 
@@ -974,11 +1026,11 @@ function Player({ media, initialStart }: { media: MediaRef; initialStart: number
             {session && (
               <TrackMenu
                 icon={<Captions className={cn('size-5', subtitleId && 'text-brand-300')} />}
-                title="Sous-titres (G / H : décalage)"
+                title="Sous-titres (G / H : décalage · Maj+G / Maj+H : caler une réplique)"
                 label={
-                  subtitleDelay === 0
+                  isIdentity(subtitleSync.sync)
                     ? 'Sous-titres'
-                    : `Sous-titres · décalage ${formatDelay(subtitleDelay)}`
+                    : `Sous-titres · recalés ${describeSync(subtitleSync.sync)}`
                 }
                 value={subtitleId}
                 options={subtitleOptions}
@@ -994,7 +1046,7 @@ function Player({ media, initialStart }: { media: MediaRef; initialStart: number
       </div>
 
       {osd && (
-        <div className="pointer-events-none absolute inset-x-0 top-20 flex justify-center px-4">
+        <div className="pointer-events-none absolute inset-x-0 top-28 flex justify-center px-4">
           <Glass
             key={osd.at}
             variant="thick"
