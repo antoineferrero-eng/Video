@@ -56,6 +56,10 @@ createDemoServer({
         TMDB_API_KEY: 'demo',
         TMDB_API_BASE_URL: `http://127.0.0.1:${port}/tmdb/3`,
         TMDB_IMAGE_BASE_URL: `http://127.0.0.1:${port}/tmdb-images`,
+        // Faux OpenSubtitles (clé « demo », compte demo / demo) et fausse extension de sous-titres.
+        OPENSUBTITLES_API_KEY: process.env.OPENSUBTITLES_API_KEY ?? 'demo',
+        OPENSUBTITLES_API_URL: `http://127.0.0.1:${port}/opensubtitles/api/v1`,
+        SUBTITLE_ADDON_URLS: `http://127.0.0.1:${port}/subtitles-addon/manifest.json`,
       },
     },
   );

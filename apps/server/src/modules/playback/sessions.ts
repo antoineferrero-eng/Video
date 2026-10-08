@@ -1,6 +1,8 @@
 import type { ChildProcess } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
+import type { OnlineSubtitlesResult } from '@lumiere/shared';
 import { NotFoundError } from '../../core/errors';
+import type { OnlineSubtitleCandidate } from '../subtitles/online-subtitles.service';
 import type { PlaybackPlan } from './planner';
 
 /** Instant réel où démarre un flux relancé (connu quand ffmpeg a atteint l'image clé). */
@@ -16,7 +18,7 @@ export interface SubtitleSource {
   label: string;
   language: string | null;
   codec: string;
-  source: 'embedded' | 'external';
+  source: 'embedded' | 'external' | 'online';
   supported: boolean;
   isDefault: boolean;
   isForced: boolean;
@@ -24,6 +26,8 @@ export interface SubtitleSource {
   remotePath?: string;
   filePath?: string;
   format?: string;
+  /** Sous-titres trouvés en ligne. */
+  online?: OnlineSubtitleCandidate;
 }
 
 export interface PlaybackSessionState {
@@ -42,9 +46,17 @@ export interface PlaybackSessionState {
   mediaKey: string;
   titleId: number | null;
   libraryItemId: number | null;
+  /** Film ou épisode, et numéros d'épisode (recherche de sous-titres en ligne). */
+  kind: 'movie' | 'series';
+  season: number | null;
+  episode: number | null;
+  /** Taille du fichier en octets, si elle est connue. */
+  size: number | null;
   title: string;
   subtitle: string | null;
   subtitles: SubtitleSource[];
+  /** Recherche de sous-titres en ligne (faite une fois par session, à la demande). */
+  onlineSearch: Promise<OnlineSubtitlesResult> | null;
   process: ChildProcess | null;
   /** Incrémenté à chaque demande de flux : une demande plus récente rend les autres caduques. */
   streamGeneration: number;
@@ -55,7 +67,14 @@ export interface PlaybackSessionState {
 
 export type NewSession = Omit<
   PlaybackSessionState,
-  'id' | 'createdAt' | 'lastAccess' | 'process' | 'streamGeneration' | 'origins' | 'subtitleCache'
+  | 'id'
+  | 'createdAt'
+  | 'lastAccess'
+  | 'process'
+  | 'streamGeneration'
+  | 'origins'
+  | 'subtitleCache'
+  | 'onlineSearch'
 >;
 
 const SESSION_TTL_MS = 6 * 3600_000;
@@ -83,6 +102,7 @@ export class PlaybackSessions {
       streamGeneration: 0,
       origins: new Map(),
       subtitleCache: new Map(),
+      onlineSearch: null,
     };
     this.sessions.set(session.id, session);
     return session;

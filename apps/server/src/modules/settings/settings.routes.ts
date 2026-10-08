@@ -1,11 +1,13 @@
 import type { FastifyInstance } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
-import type { AddonTestResult } from '@lumiere/shared';
+import type { AddonTestResult, SubtitleProvidersTestResult } from '@lumiere/shared';
 import { z } from 'zod';
 import type { Container } from '../../container';
 import { errorMessage } from '../../core/errors';
 import { TmdbClient } from '../metadata/tmdb.client';
 import { normalizeAddonUrl } from '../source/stremio/stremio-addon';
+import { OpenSubtitlesClient } from '../subtitles/opensubtitles.client';
+import { providesSubtitles } from '../subtitles/subtitle-addons';
 
 const TYPE_LABELS: Record<string, string> = { movie: 'films', series: 'séries' };
 
@@ -14,6 +16,14 @@ function manifestUrlOf(input: string): string {
     return normalizeAddonUrl(input);
   } catch {
     return input;
+  }
+}
+
+function hostOf(url: string): string {
+  try {
+    return new URL(url).host;
+  } catch {
+    return url;
   }
 }
 
@@ -36,6 +46,8 @@ const SettingsUpdateSchema = z
     metadataLanguage: z.string().regex(/^[a-z]{2}-[A-Z]{2}$/, 'Format attendu : fr-FR'),
     preferredAudioLanguage: LanguageCode,
     preferredSubtitleLanguage: LanguageCode,
+    subtitleAddonUrls: z.array(z.string().max(2000)).max(10),
+    openSubtitlesUsername: z.string().max(200),
     catalogRefreshHours: z.number().int().min(0).max(720),
     catalogSource: z.enum(['auto', 'listing', 'tmdb']),
     transcodePreset: z.enum(['quality', 'balanced', 'fast']),
@@ -47,12 +59,14 @@ const SettingsUpdateSchema = z
       z.literal(480),
     ]),
     tmdbApiKey: z.string().max(500),
+    openSubtitlesApiKey: z.string().max(500),
+    openSubtitlesPassword: z.string().max(500),
   })
   .partial()
   .strict();
 
 export function registerSettingsRoutes(server: FastifyInstance, container: Container): void {
-  const { settings, explorer, config, addon } = container;
+  const { settings, explorer, config, addon, subtitleAddons, logger } = container;
   const app = server.withTypeProvider<ZodTypeProvider>();
 
   app.get('/settings', async () => settings.toResponse());
@@ -117,6 +131,70 @@ export function registerSettingsRoutes(server: FastifyInstance, container: Conta
       } catch (error) {
         return failure(errorMessage(error));
       }
+    },
+  );
+
+  // Test des services de sous-titres en ligne, avec les valeurs saisies (pas encore enregistrées).
+  app.post(
+    '/settings/test-subtitles',
+    {
+      schema: {
+        body: z
+          .object({
+            openSubtitlesApiKey: z.string().max(500),
+            openSubtitlesUsername: z.string().max(200),
+            openSubtitlesPassword: z.string().max(500),
+            subtitleAddonUrls: z.array(z.string().max(2000)).max(10),
+          })
+          .partial()
+          .optional(),
+      },
+    },
+    async (request): Promise<SubtitleProvidersTestResult> => {
+      const body = request.body ?? {};
+      const providers: SubtitleProvidersTestResult['providers'] = [];
+      const apiKey = body.openSubtitlesApiKey?.trim() || settings.getOpenSubtitlesApiKey();
+      if (apiKey) {
+        const username = body.openSubtitlesUsername ?? settings.get().openSubtitlesUsername;
+        const saved = settings.getOpenSubtitlesCredentials();
+        const password =
+          body.openSubtitlesPassword ||
+          (saved && saved.username === username.trim() ? saved.password : '');
+        const client = new OpenSubtitlesClient({
+          baseUrl: config.openSubtitles.apiBaseUrl,
+          apiKey: () => apiKey,
+          credentials: () =>
+            username.trim() && password ? { username: username.trim(), password } : null,
+          userAgent: `Lumiere v${config.version}`,
+          logger,
+        });
+        try {
+          providers.push({ name: 'OpenSubtitles.com', ok: true, message: await client.test() });
+        } catch (error) {
+          providers.push({ name: 'OpenSubtitles.com', ok: false, message: errorMessage(error) });
+        }
+      }
+      for (const input of body.subtitleAddonUrls ?? settings.get().subtitleAddonUrls) {
+        if (!input.trim()) continue;
+        const url = manifestUrlOf(input);
+        try {
+          const manifest = await subtitleAddons.manifest(url);
+          const kinds = (['movie', 'series'] as const).filter((kind) =>
+            providesSubtitles(manifest, kind, 'tt0000001'),
+          );
+          providers.push({
+            name: manifest.name,
+            ok: kinds.length > 0,
+            message:
+              kinds.length > 0
+                ? `${manifest.name} ${manifest.version} : sous-titres de ${kinds.map((kind) => TYPE_LABELS[kind]).join(' et de ')}.`
+                : 'Cette extension ne fournit pas de sous-titres de films ou de séries.',
+          });
+        } catch (error) {
+          providers.push({ name: hostOf(url), ok: false, message: errorMessage(error) });
+        }
+      }
+      return { providers };
     },
   );
 

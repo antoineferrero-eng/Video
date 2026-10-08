@@ -26,6 +26,10 @@ const EnvSchema = z.object({
   TMDB_API_KEY: optionalString,
   TMDB_API_BASE_URL: z.url().default('https://api.themoviedb.org/3'),
   TMDB_IMAGE_BASE_URL: z.url().default('https://image.tmdb.org/t/p'),
+  OPENSUBTITLES_API_KEY: optionalString,
+  OPENSUBTITLES_API_URL: z.url().default('https://api.opensubtitles.com/api/v1'),
+  // Extensions Stremio de sous-titres (adresses séparées par des virgules, vide : aucune).
+  SUBTITLE_ADDON_URLS: z.string().default('https://opensubtitles-v3.strem.io/manifest.json'),
   FFMPEG_PATH: z.string().default('ffmpeg'),
   FFPROBE_PATH: z.string().default('ffprobe'),
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']).default('info'),
@@ -46,11 +50,16 @@ export interface AppConfig {
     seriesPath: string;
     downloadDir: string;
     stremioAddonUrl: string;
+    subtitleAddonUrls: string[];
   };
   tmdb: {
     envApiKey: string | null;
     apiBaseUrl: string;
     imageBaseUrl: string;
+  };
+  openSubtitles: {
+    envApiKey: string | null;
+    apiBaseUrl: string;
   };
   ffmpegPath: string;
   ffprobePath: string;
@@ -109,12 +118,19 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
       moviesPath: e.SOURCE_MOVIES_PATH,
       seriesPath: e.SOURCE_SERIES_PATH,
       stremioAddonUrl: e.STREMIO_ADDON_URL.trim(),
+      subtitleAddonUrls: e.SUBTITLE_ADDON_URLS.split(',')
+        .map((url) => url.trim())
+        .filter(Boolean),
       downloadDir: e.MEDIA_DIR ? path.resolve(baseDir, e.MEDIA_DIR) : path.join(dataDir, 'media'),
     },
     tmdb: {
       envApiKey: e.TMDB_API_KEY ?? null,
       apiBaseUrl: e.TMDB_API_BASE_URL.replace(/\/+$/, ''),
       imageBaseUrl: e.TMDB_IMAGE_BASE_URL.replace(/\/+$/, ''),
+    },
+    openSubtitles: {
+      envApiKey: e.OPENSUBTITLES_API_KEY ?? null,
+      apiBaseUrl: e.OPENSUBTITLES_API_URL.replace(/\/+$/, ''),
     },
     ffmpegPath: e.FFMPEG_PATH,
     ffprobePath: e.FFPROBE_PATH,

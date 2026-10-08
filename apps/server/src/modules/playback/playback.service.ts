@@ -9,9 +9,11 @@ import type {
   AudioTrackInfo,
   ContinueWatchingItem,
   MediaRef,
+  OnlineSubtitlesResult,
   PlaybackRequest,
   PlaybackSession,
   ProgressUpdate,
+  SubtitleTrackInfo,
 } from '@lumiere/shared';
 import type { AppConfig } from '../../config/env';
 import { TtlCache, sleep } from '../../core/async';
@@ -48,6 +50,10 @@ import { normalizeRemotePath, remoteBaseName, remoteParent } from '../source/rem
 import type { SourceClient } from '../source/source-client';
 import type { SourceRelay } from '../source/source-relay';
 import { parseVirtualPath } from '../source/stremio/virtual-path';
+import type {
+  OnlineSubtitleCandidate,
+  OnlineSubtitlesService,
+} from '../subtitles/online-subtitles.service';
 import type { Ffmpeg, ProbeResult, ProbeStream } from './ffmpeg';
 import { buildStreamArgs, buildSubtitleConvertArgs, buildSubtitleExtractArgs } from './ffmpeg-args';
 import { planPlayback, type PlaybackPlan } from './planner';
@@ -60,7 +66,13 @@ import type {
   SubtitleSource,
 } from './sessions';
 import { StreamOriginReader } from './stream-origin';
-import { TEXT_SUBTITLE_CODECS, decodeText, normalizeVtt, srtToVtt } from './subtitles';
+import {
+  TEXT_SUBTITLE_CODECS,
+  decodeText,
+  normalizeVtt,
+  sniffSubtitleFormat,
+  srtToVtt,
+} from './subtitles';
 
 interface ResolvedMedia {
   input: string;
@@ -76,6 +88,8 @@ interface ResolvedMedia {
 }
 
 const MAX_SUBTITLE_BYTES = 20 * 1024 * 1024;
+/** Lecture d'une plage d'un fichier distant (empreinte OpenSubtitles) : 1 Mio au plus. */
+const MAX_RANGE_BYTES = 1024 * 1024;
 /** Démarrages de ffmpeg tentés pour un même flux (source qui refuse un instant…). */
 const STREAM_ATTEMPTS = 3;
 const STREAM_RETRY_DELAY_MS = 1000;
@@ -131,6 +145,35 @@ function audioLabel(stream: ProbeStream, index: number): string {
   return `${language}${extraTitle(stream.title, language)}${details ? ` (${details})` : ''}`;
 }
 
+function trackInfo(track: SubtitleSource): SubtitleTrackInfo {
+  const info: SubtitleTrackInfo = {
+    id: track.id,
+    label: track.label,
+    language: track.language,
+    codec: track.codec,
+    source: track.source,
+    supported: track.supported,
+    isDefault: track.isDefault,
+    isForced: track.isForced,
+  };
+  if (track.online) {
+    info.provider = track.online.provider;
+    info.hashMatch = track.online.hashMatch;
+    info.hearingImpaired = track.online.hearingImpaired;
+    info.release = track.online.release;
+    info.downloads = track.online.downloads;
+  }
+  return info;
+}
+
+function onlineLabel(candidate: OnlineSubtitleCandidate): string {
+  const base = languageLabel(candidate.language) ?? 'Langue inconnue';
+  const flags = [candidate.forced && 'forcés', candidate.hearingImpaired && 'malentendants']
+    .filter(Boolean)
+    .join(', ');
+  return `${base}${flags ? ` (${flags})` : ''}${candidate.release ? ` · ${candidate.release}` : ''}`;
+}
+
 function subtitleLabel(
   language: string | null,
   title: string | null,
@@ -144,6 +187,11 @@ function subtitleLabel(
 /** Orchestration de la lecture : sessions, plan de lecture, flux, sous-titres et progression. */
 export class PlaybackService {
   private readonly probes = new TtlCache<string, ProbeResult>(300, 3600_000);
+  /**
+   * Sous-titres en ligne trouvés récemment, par identifiant de piste : une nouvelle session du
+   * même fichier (repli vers la conversion, autre piste audio) peut les charger aussitôt.
+   */
+  private readonly onlineTracks = new TtlCache<string, SubtitleSource>(500, 6 * 3600_000);
 
   constructor(
     private readonly ffmpeg: Ffmpeg,
@@ -156,6 +204,7 @@ export class PlaybackService {
     private readonly metadata: MetadataService,
     private readonly progress: ProgressRepository,
     private readonly settings: SettingsService,
+    private readonly onlineSubtitles: OnlineSubtitlesService,
     private readonly config: AppConfig,
     private readonly logger: Logger,
   ) {}
@@ -195,6 +244,13 @@ export class PlaybackService {
       : mediaKeyForRemote(media.remotePath as string);
     const { title, subtitle } = await this.describe(media);
     const mimeType = plan.mode === 'direct' ? videoMimeType(media.fileName) : 'video/mp4';
+    const size =
+      probe?.size ??
+      (media.filePath ? ((await fsp.stat(media.filePath).catch(() => null))?.size ?? null) : null);
+    const isEpisode =
+      media.titleRow?.kind === 'series' ||
+      media.libraryRow?.kind === 'episode' ||
+      media.episode !== null;
 
     const session = this.sessions.create({
       input: media.input,
@@ -208,6 +264,10 @@ export class PlaybackService {
       mediaKey,
       titleId: media.titleRow?.id ?? media.libraryRow?.title_id ?? null,
       libraryItemId: media.libraryRow?.id ?? null,
+      kind: isEpisode ? 'series' : 'movie',
+      season: media.season,
+      episode: media.episode,
+      size,
       title,
       subtitle,
       subtitles,
@@ -254,18 +314,7 @@ export class PlaybackService {
       backdropUrl: media.titleRow ? backdropUrlFor(media.titleRow, enabled) : null,
       audioTracks,
       selectedAudioTrack: plan.audioTrack,
-      subtitleTracks: subtitles.map(
-        ({ id, label, language, codec, source, supported, isDefault, isForced }) => ({
-          id,
-          label,
-          language,
-          codec,
-          source,
-          supported,
-          isDefault,
-          isForced,
-        }),
-      ),
+      subtitleTracks: subtitles.map(trackInfo),
       defaultSubtitleTrack: this.defaultSubtitle(subtitles, plan),
       video: plan.videoStream
         ? {
@@ -277,7 +326,21 @@ export class PlaybackService {
         : null,
       reasons: plan.reasons,
       next: await this.findNext(media).catch(() => null),
+      onlineSubtitles: {
+        available: this.onlineSubtitles.available,
+        autoLanguage: this.onlineSubtitles.available ? this.missingLanguage(subtitles) : null,
+      },
     };
+  }
+
+  /** Langue de sous-titres préférée absente du fichier (null si elle y est, ou sans préférence). */
+  private missingLanguage(subtitles: SubtitleSource[]): string | null {
+    const preferred = this.settings.get().preferredSubtitleLanguage;
+    if (!preferred) return null;
+    const present = subtitles.some(
+      (track) => track.supported && !track.isForced && track.language === preferred,
+    );
+    return present ? null : preferred;
   }
 
   private async resolveMedia(ref: MediaRef): Promise<ResolvedMedia> {
@@ -730,7 +793,11 @@ export class PlaybackService {
 
   async subtitles(sessionId: string, trackId: string): Promise<string> {
     const session = this.sessions.get(sessionId);
-    const track = session.subtitles.find((item) => item.id === trackId);
+    let track = session.subtitles.find((item) => item.id === trackId);
+    if (!track && trackId.startsWith('onl-')) {
+      track = this.onlineTracks.get(trackId);
+      if (track) session.subtitles.push(track);
+    }
     if (!track) throw new NotFoundError('Piste de sous-titres introuvable.');
     if (!track.supported)
       throw new BadRequestError('Ce format de sous-titres (image) ne peut pas être affiché.');
@@ -751,14 +818,9 @@ export class PlaybackService {
       const buffer = track.remotePath
         ? await this.source.fetchBuffer(track.remotePath)
         : await fsp.readFile(track.filePath as string);
-      const text = decodeText(buffer);
-      if (track.format === 'srt') return srtToVtt(text);
-      if (track.format === 'vtt') return normalizeVtt(text);
-      return this.runFfmpegText(
-        buildSubtitleConvertArgs(track.format === 'ssa' ? 'ass' : (track.format ?? 'ass')),
-        Buffer.from(text, 'utf8'),
-      );
+      return this.toVtt(buffer, track.format ?? null);
     }
+    if (track.source === 'online' && track.online) return this.loadOnlineSubtitles(track.online);
 
     // Piste intégrée : extraction (mise en cache disque, l'opération lit tout le fichier).
     let cacheKey = `${
@@ -794,6 +856,156 @@ export class PlaybackService {
     await ensureDir(path.dirname(cacheFile));
     await fsp.writeFile(cacheFile, vtt, 'utf8');
     return vtt;
+  }
+
+  /** Fichier de sous-titres texte (SRT, WebVTT, ASS/SSA) converti en WebVTT. */
+  private async toVtt(buffer: Buffer, format: string | null): Promise<string> {
+    const text = decodeText(buffer);
+    const kind = format && format !== 'auto' ? format : sniffSubtitleFormat(text);
+    if (kind === 'srt') return srtToVtt(text);
+    if (kind === 'vtt') return normalizeVtt(text);
+    if (!this.ffmpeg.info.available) {
+      throw new ServiceUnavailableError(
+        'FFMPEG_UNAVAILABLE',
+        'ffmpeg est nécessaire pour convertir ces sous-titres.',
+      );
+    }
+    return this.runFfmpegText(
+      buildSubtitleConvertArgs(kind === 'ssa' ? 'ass' : kind),
+      Buffer.from(text, 'utf8'),
+    );
+  }
+
+  /**
+   * Sous-titres en ligne : téléchargés une seule fois puis gardés sur disque (OpenSubtitles
+   * compte chaque téléchargement dans un quota quotidien).
+   */
+  private async loadOnlineSubtitles(candidate: OnlineSubtitleCandidate): Promise<string> {
+    const cacheFile = path.join(this.config.cacheDir, 'subtitles', `online-${candidate.key}.vtt`);
+    const cached = await fsp.readFile(cacheFile, 'utf8').catch(() => null);
+    if (cached) return cached;
+    const { data, fileName } = await this.onlineSubtitles.download(candidate.ref);
+    const extension = fileName ? extensionOf(fileName.replace(/[?#].*$/, '')) : '';
+    const vtt = await this.toVtt(
+      data,
+      ['srt', 'vtt', 'ass', 'ssa'].includes(extension) ? extension : null,
+    );
+    await ensureDir(path.dirname(cacheFile));
+    await fsp.writeFile(cacheFile, vtt, 'utf8');
+    return vtt;
+  }
+
+  /**
+   * Recherche de sous-titres en ligne pour la session (faite une fois, sauf `force`). Les
+   * résultats rejoignent les pistes de la session et se chargent comme les autres.
+   */
+  async searchOnlineSubtitles(sessionId: string, force = false): Promise<OnlineSubtitlesResult> {
+    const session = this.sessions.get(sessionId);
+    if (!this.onlineSubtitles.available) {
+      return {
+        tracks: [],
+        providers: [],
+        notices: ['Aucun service de sous-titres en ligne configuré (Paramètres → Sous-titres).'],
+      };
+    }
+    if (force || !session.onlineSearch) {
+      const search = this.runOnlineSearch(session);
+      session.onlineSearch = search;
+      search.catch(() => {
+        if (session.onlineSearch === search) session.onlineSearch = null;
+      });
+    }
+    return session.onlineSearch as Promise<OnlineSubtitlesResult>;
+  }
+
+  private async runOnlineSearch(session: PlaybackSessionState): Promise<OnlineSubtitlesResult> {
+    const title = session.titleId !== null ? (this.titles.findById(session.titleId) ?? null) : null;
+    const result = await this.onlineSubtitles.search({
+      title,
+      kind: session.kind,
+      season: session.season,
+      episode: session.episode,
+      fileName: session.fileName,
+      size: session.size,
+      read: this.rangeReader(session),
+      cacheKey: session.mediaKey,
+    });
+    // Une nouvelle recherche remplace les résultats précédents (même identifiant = même fichier).
+    const kept = session.subtitles.filter((track) => track.source !== 'online');
+    const online = result.candidates.map((candidate): SubtitleSource => ({
+      id: `onl-${candidate.key}`,
+      label: onlineLabel(candidate),
+      language: candidate.language,
+      codec: 'srt',
+      source: 'online',
+      supported: true,
+      isDefault: false,
+      isForced: candidate.forced,
+      online: candidate,
+    }));
+    session.subtitles = [...kept, ...online];
+    for (const track of online) this.onlineTracks.set(track.id, track);
+    session.subtitleCache.forEach((_, id) => {
+      if (id.startsWith('onl-') && !online.some((track) => track.id === id))
+        session.subtitleCache.delete(id);
+    });
+    this.logger.info(
+      { session: session.id, found: online.length, providers: result.providers },
+      'Sous-titres en ligne recherchés',
+    );
+    return {
+      tracks: online.map(trackInfo),
+      providers: result.providers,
+      notices: result.notices,
+    };
+  }
+
+  /** Lecture d'une plage d'octets du fichier lu (local, ou distant par requête Range). */
+  private rangeReader(
+    session: PlaybackSessionState,
+  ): ((start: number, length: number) => Promise<Buffer>) | null {
+    if (session.filePath) {
+      const filePath = session.filePath;
+      return async (start, length) => {
+        const handle = await fsp.open(filePath, 'r');
+        try {
+          const buffer = Buffer.alloc(length);
+          const { bytesRead } = await handle.read(buffer, 0, length, start);
+          return buffer.subarray(0, bytesRead);
+        } finally {
+          await handle.close();
+        }
+      };
+    }
+    if (!session.remotePath) return null;
+    const remotePath = session.remotePath;
+    return async (start, length) => {
+      const size = Math.min(length, MAX_RANGE_BYTES);
+      const response = await this.source.openFile(remotePath, { start, end: start + size - 1 });
+      // Une source qui ignore Range renvoie tout le fichier : utilisable seulement depuis le début.
+      if (
+        !response.body ||
+        !(response.status === 206 || (response.status === 200 && start === 0))
+      ) {
+        await response.body?.cancel().catch(() => undefined);
+        throw new AppError(
+          502,
+          'RANGE_UNSUPPORTED',
+          `Lecture partielle refusée (${response.status}).`,
+        );
+      }
+      const reader = response.body.getReader();
+      const chunks: Buffer[] = [];
+      let received = 0;
+      while (received < size) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        chunks.push(Buffer.from(value));
+        received += value.length;
+      }
+      await reader.cancel().catch(() => undefined);
+      return Buffer.concat(chunks).subarray(0, size);
+    };
   }
 
   private runFfmpegText(args: string[], stdin?: Buffer): Promise<string> {

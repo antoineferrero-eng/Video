@@ -76,6 +76,8 @@ modules/
                      episode-queue.ts : épisodes demandés un par un à l'extension
   library/           fichiers locaux, analyse du dossier
   playback/          ffprobe, plan de lecture, sessions, flux ffmpeg, sous-titres, progression
+  subtitles/         sous-titres en ligne : API OpenSubtitles.com, extensions Stremio de
+                     sous-titres, empreinte OpenSubtitles des fichiers
   explorer/          navigation brute dans la source, test de connexion
   availability/      état combiné téléchargement / bibliothèque / visionnage d'un fichier
   settings/          paramètres persistés (modifiables à chaud)
@@ -174,7 +176,9 @@ au redémarrage, les téléchargements interrompus repartent de l'octet où ils 
      `GET …/streams/:id/origin` donne l'instant réel de départ (image clé atteinte en
      recopie vidéo, lue par ffmpeg dans le même passage) pour rester synchronisé.
 4. Sous-titres : `GET …/subtitles/:piste` renvoie du WebVTT (extraction ffmpeg ou conversion
-   SRT/ASS), affiché par le lecteur.
+   SRT/ASS), affiché par le lecteur. `GET …/subtitles/online` cherche en ligne (OpenSubtitles,
+   extensions de sous-titres) ; les résultats rejoignent les pistes de la session et se
+   chargent de la même façon (téléchargés une fois, gardés en cache).
 5. La position est enregistrée régulièrement (`POST …/progress`) : reprise, « Reprendre la
    lecture », marquage « vu ».
 

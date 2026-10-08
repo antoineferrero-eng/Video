@@ -179,12 +179,37 @@ Autres points :
   releases MULTi, et on peut changer de piste pendant la lecture ;
 - **sous-titres** intégrés (MKV) ou externes (`.srt`, `.vtt`, `.ass`) convertis en WebVTT,
   encodage Windows‑1252 détecté, affichage personnalisé et synchronisé dans le lecteur ;
+- **sous-titres en ligne** (voir ci-dessous), décalage réglable pendant la lecture (G / H) ;
 - un fichier déjà téléchargé est toujours lu **depuis la copie locale** ;
 - **reprise là où on s'était arrêté**, rangée « Reprendre la lecture », **épisode suivant**
   automatique, raccourcis clavier, plein écran, repli automatique direct → remux → conversion
   en cas d'échec.
 
 ---
+
+### Sous-titres en ligne
+
+| Service                               | Accès                                    | Ce qu'il apporte                                                                                                                        |
+| ------------------------------------- | ---------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| **Extensions Stremio de sous-titres** | Aucune clé (OpenSubtitles v3 par défaut) | Protocole déjà parlé par Lumière (`/subtitles/{type}/{id}/{extra}.json`) : n'importe quelle extension compatible s'ajoute par son lien. |
+| **API OpenSubtitles.com** (REST v1)   | Clé gratuite ; compte facultatif         | Recherche par empreinte du fichier (`moviehash`) : les sous-titres faits pour la version exacte sont signalés et passent en tête.       |
+
+- la recherche est faite **à la demande** (ouverture du menu des sous-titres) ou d'office quand
+  la langue de sous-titres préférée manque dans le fichier ; le meilleur résultat est alors
+  choisi, sauf si l'utilisateur a déjà fait son choix ;
+- le titre est désigné par son identifiant **IMDb** (demandé une fois à TMDB puis gardé),
+  la série plus saison et épisode pour un épisode ; sans titre identifié, OpenSubtitles est
+  interrogé par le nom du fichier ;
+- l'**empreinte OpenSubtitles** (taille + 64 premiers et 64 derniers Kio) est calculée même
+  sur un fichier lu à distance : deux petites requêtes `Range` successives ;
+- classement : langue préférée, puis fichier exact, complets avant « forcés », puis les plus
+  téléchargés ; 8 résultats au plus par langue ;
+- un sous-titre téléchargé est **gardé sur disque** : OpenSubtitles compte chaque
+  téléchargement dans un quota quotidien (plus élevé avec un compte) ;
+- les deux services sont interrogés en parallèle ; une panne de l'un est signalée dans le menu
+  sans bloquer l'autre ;
+- seuls l'identifiant IMDb, le nom, la taille et l'empreinte du fichier quittent la machine, et
+  seulement lors d'une recherche ; liste d'extensions vide et pas de clé : aucun service contacté.
 
 ## 8. Métadonnées : TMDB
 
@@ -389,8 +414,6 @@ d'un film, téléchargement, épisodes à la demande, saison en arrière-plan, l
 - Télécharger une série entière d'un coup est limité par la réserve : le lot s'arrête à la
   limite et se relance plus tard. La file des épisodes à demander est en mémoire : un
   redémarrage du serveur l'abandonne (les téléchargements déjà créés, eux, reprennent).
-- Le protocole Stremio permet à une extension de fournir des sous-titres avec ses liens ;
-  Lumière ne les lit pas encore (les sous-titres intégrés aux fichiers restent disponibles).
 - Avec l'extension, une clé TMDB est indispensable : c'est elle qui fournit le catalogue.
 - L'explorateur, qui parcourt le site directement, ne fonctionne que si le site est accessible.
 - Un blocage par adresse IP ou par pays (erreur 1020) ne se contourne pas côté application.

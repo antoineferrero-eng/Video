@@ -53,6 +53,18 @@ export function registerPlaybackRoutes(server: FastifyInstance, { playback }: Co
   );
 
   app.get(
+    '/playback/sessions/:id/subtitles/online',
+    {
+      schema: {
+        params: SessionParams,
+        querystring: z.object({ force: z.stringbool().optional() }),
+      },
+    },
+    async (request) =>
+      playback.searchOnlineSubtitles(request.params.id, request.query.force ?? false),
+  );
+
+  app.get(
     '/playback/sessions/:id/subtitles/:trackId',
     { schema: { params: SessionParams.extend({ trackId: z.string().max(40) }) } },
     async (request, reply) => {

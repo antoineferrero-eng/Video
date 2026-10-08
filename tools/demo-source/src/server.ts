@@ -4,8 +4,9 @@
  * des requêtes Range. Le débit peut être bridé pour observer la progression des
  * téléchargements (DEMO_THROTTLE_KBPS, 0 = illimité) et le nombre de connexions
  * simultanées à un même fichier limité, comme chez certains hébergeurs (DEMO_MAX_CONNECTIONS,
- * 0 = sans limite ; au-delà, réponse 503). Il héberge aussi un faux TMDB (/tmdb/3) et une
- * fausse extension Stremio (/stremio/manifest.json).
+ * 0 = sans limite ; au-delà, réponse 503). Il héberge aussi un faux TMDB (/tmdb/3), une
+ * fausse extension Stremio (/stremio/manifest.json) et de faux services de sous-titres en
+ * ligne (/opensubtitles/api/v1, /subtitles-addon/manifest.json).
  *
  *   npm run serve -w @lumiere/demo-source
  */
@@ -16,6 +17,7 @@ import { Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { fileURLToPath } from 'node:url';
 import { FakeStremio, fakeStremioOptions } from './fake-stremio';
+import { FakeSubtitles } from './fake-subtitles';
 import { handleFakeTmdb } from './fake-tmdb';
 
 export interface DemoServerOptions {
@@ -87,12 +89,14 @@ function throttle(kbps: number): Transform {
 export function createDemoServer(options: DemoServerOptions): http.Server {
   const root = path.resolve(options.root);
   const addon = new FakeStremio(fakeStremioOptions(root));
+  const subtitles = new FakeSubtitles();
   /** Connexions en cours par fichier servi. */
   const active = new Map<string, number>();
   return http.createServer((request, response) => {
     void (async () => {
       const url = new URL(request.url ?? '/', 'http://localhost');
       if (handleFakeTmdb(url, request.headers, response, path.join(root, '.tmdb'))) return;
+      if (subtitles.handle(url, request, response)) return;
       // Lien de l'extension : chemin du fichier à servir.
       const addonFile = addon.handle(url, request, response);
       if (addonFile === true) return;

@@ -11,6 +11,8 @@ export const DEFAULT_USER_AGENT =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36';
 
 const TMDB_KEY = 'tmdbApiKey';
+const OPENSUBTITLES_KEY = 'openSubtitlesApiKey';
+const OPENSUBTITLES_PASSWORD = 'openSubtitlesPassword';
 
 export function defaultSettings(config: AppConfig): AppSettings {
   return {
@@ -27,6 +29,8 @@ export function defaultSettings(config: AppConfig): AppSettings {
     metadataLanguage: 'fr-FR',
     preferredAudioLanguage: 'fr',
     preferredSubtitleLanguage: '',
+    subtitleAddonUrls: normalizeAddonUrls(config.defaults.subtitleAddonUrls),
+    openSubtitlesUsername: '',
     catalogRefreshHours: 12,
     catalogSource: 'auto',
     transcodePreset: 'balanced',
@@ -42,12 +46,19 @@ function defaultAddonUrl(value: string): string {
   }
 }
 
+/** Adresses d'extensions valides et sans doublon (les adresses invalides sont ignorées). */
+function normalizeAddonUrls(values: string[]): string[] {
+  return [...new Set(values.map(defaultAddonUrl).filter(Boolean))];
+}
+
 export type SettingsListener = (next: AppSettings, previous: AppSettings) => void;
 
 /** Paramètres modifiables depuis l'interface, persistés en base (valeurs par défaut issues de l'environnement). */
 export class SettingsService {
   private current: AppSettings;
   private storedTmdbKey: string | null;
+  private storedOpenSubtitlesKey: string | null;
+  private storedOpenSubtitlesPassword: string | null;
   private readonly listeners = new Set<SettingsListener>();
 
   constructor(
@@ -61,7 +72,11 @@ export class SettingsService {
       if (key in stored) merged[key] = stored[key];
     }
     this.current = merged as unknown as AppSettings;
-    this.storedTmdbKey = typeof stored[TMDB_KEY] === 'string' ? (stored[TMDB_KEY] as string) : null;
+    const secret = (key: string) =>
+      typeof stored[key] === 'string' ? (stored[key] as string) : null;
+    this.storedTmdbKey = secret(TMDB_KEY);
+    this.storedOpenSubtitlesKey = secret(OPENSUBTITLES_KEY);
+    this.storedOpenSubtitlesPassword = secret(OPENSUBTITLES_PASSWORD);
   }
 
   get(): AppSettings {
@@ -73,11 +88,27 @@ export class SettingsService {
     return key && key.trim() ? key.trim() : null;
   }
 
+  getOpenSubtitlesApiKey(): string | null {
+    const key = this.storedOpenSubtitlesKey ?? this.config.openSubtitles.envApiKey;
+    return key && key.trim() ? key.trim() : null;
+  }
+
+  /** Compte OpenSubtitles.com complet (identifiant et mot de passe), sinon null. */
+  getOpenSubtitlesCredentials(): { username: string; password: string } | null {
+    const username = this.current.openSubtitlesUsername.trim();
+    const password = this.storedOpenSubtitlesPassword ?? '';
+    return username && password ? { username, password } : null;
+  }
+
   toResponse(): SettingsResponse {
     return {
       settings: this.current,
       tmdbApiKeyConfigured: this.getTmdbApiKey() !== null,
       tmdbApiKeyFromEnv: this.storedTmdbKey === null && this.config.tmdb.envApiKey !== null,
+      openSubtitlesApiKeyConfigured: this.getOpenSubtitlesApiKey() !== null,
+      openSubtitlesApiKeyFromEnv:
+        this.storedOpenSubtitlesKey === null && this.config.openSubtitles.envApiKey !== null,
+      openSubtitlesPasswordConfigured: Boolean(this.storedOpenSubtitlesPassword),
     };
   }
 
@@ -97,6 +128,13 @@ export class SettingsService {
     if (patch.seriesPath !== undefined) next.seriesPath = normalizeDirPath(patch.seriesPath);
     if (patch.stremioAddonUrl !== undefined)
       next.stremioAddonUrl = normalizeAddonUrl(patch.stremioAddonUrl);
+    if (patch.subtitleAddonUrls !== undefined) {
+      next.subtitleAddonUrls = [
+        ...new Set(patch.subtitleAddonUrls.map(normalizeAddonUrl).filter(Boolean)),
+      ];
+    }
+    if (patch.openSubtitlesUsername !== undefined)
+      next.openSubtitlesUsername = patch.openSubtitlesUsername.trim();
     if (patch.userAgent !== undefined)
       next.userAgent = patch.userAgent.trim() || DEFAULT_USER_AGENT;
     if (patch.downloadDir !== undefined) {
@@ -132,8 +170,10 @@ export class SettingsService {
     );
     const now = new Date().toISOString();
     const tmdbChanged = patch.tmdbApiKey !== undefined;
-    const writeSecret = (name: string, raw: string | undefined) => {
-      const value = raw?.trim() ?? '';
+    const openSubtitlesKeyChanged = patch.openSubtitlesApiKey !== undefined;
+    const openSubtitlesPasswordChanged = patch.openSubtitlesPassword !== undefined;
+    const writeSecret = (name: string, raw: string | undefined, trim = true) => {
+      const value = (trim ? raw?.trim() : raw) ?? '';
       if (value) write.run(name, JSON.stringify(value), now);
       else this.db.prepare('DELETE FROM settings WHERE key = ?').run(name);
     };
@@ -142,9 +182,16 @@ export class SettingsService {
         if (next[key] !== previous[key]) write.run(key, JSON.stringify(next[key]), now);
       }
       if (tmdbChanged) writeSecret(TMDB_KEY, patch.tmdbApiKey);
+      if (openSubtitlesKeyChanged) writeSecret(OPENSUBTITLES_KEY, patch.openSubtitlesApiKey);
+      if (openSubtitlesPasswordChanged)
+        writeSecret(OPENSUBTITLES_PASSWORD, patch.openSubtitlesPassword, false);
     });
 
     if (tmdbChanged) this.storedTmdbKey = patch.tmdbApiKey?.trim() || null;
+    if (openSubtitlesKeyChanged)
+      this.storedOpenSubtitlesKey = patch.openSubtitlesApiKey?.trim() || null;
+    if (openSubtitlesPasswordChanged)
+      this.storedOpenSubtitlesPassword = patch.openSubtitlesPassword || null;
     this.current = next;
     for (const listener of this.listeners) listener(next, previous);
     return next;

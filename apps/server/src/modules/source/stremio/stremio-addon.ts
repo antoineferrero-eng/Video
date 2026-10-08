@@ -114,7 +114,7 @@ export function normalizeAddonUrl(input: string): string {
   return url.toString();
 }
 
-function addonBase(manifestUrl: string): string {
+export function addonBase(manifestUrl: string): string {
   return manifestUrl.replace(/manifest\.json$/, '');
 }
 
@@ -149,7 +149,7 @@ export function contentIdFor(
   return null;
 }
 
-function validateManifest(data: unknown): AddonManifest {
+export function validateManifest(data: unknown): AddonManifest {
   const value = data as Partial<AddonManifest> | null;
   if (
     !value ||

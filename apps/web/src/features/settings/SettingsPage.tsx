@@ -1,4 +1,5 @@
 import {
+  Captions,
   CheckCircle2,
   Clapperboard,
   Cpu,
@@ -21,12 +22,14 @@ import type {
   SettingsUpdate,
   SourceConnection,
 } from '@lumiere/shared';
+import { errorMessage } from '../../api/client';
 import {
   useRefreshCatalog,
   useSettings,
   useSystemInfo,
   useTestAddon,
   useTestSource,
+  useTestSubtitles,
   useTestTmdb,
   useUpdateSettings,
 } from '../../api/queries';
@@ -84,16 +87,21 @@ function SettingsForm({ response }: { response: SettingsResponse }) {
   const update = useUpdateSettings();
   const [draft, setDraft] = useState<AppSettings>(response.settings);
   const [tmdbKey, setTmdbKey] = useState('');
+  const [openSubtitlesKey, setOpenSubtitlesKey] = useState('');
+  const [openSubtitlesPassword, setOpenSubtitlesPassword] = useState('');
 
   const changes = useMemo(() => {
     const patch: SettingsUpdate = {};
     for (const key of Object.keys(draft) as Array<keyof AppSettings>) {
-      if (draft[key] !== response.settings[key])
+      // Les listes sont comparées par contenu (une nouvelle liste à chaque saisie).
+      if (JSON.stringify(draft[key]) !== JSON.stringify(response.settings[key]))
         (patch as Record<string, unknown>)[key] = draft[key];
     }
     if (tmdbKey.trim()) patch.tmdbApiKey = tmdbKey.trim();
+    if (openSubtitlesKey.trim()) patch.openSubtitlesApiKey = openSubtitlesKey.trim();
+    if (openSubtitlesPassword) patch.openSubtitlesPassword = openSubtitlesPassword;
     return patch;
-  }, [draft, response.settings, tmdbKey]);
+  }, [draft, response.settings, tmdbKey, openSubtitlesKey, openSubtitlesPassword]);
   const dirty = Object.keys(changes).length > 0;
 
   const set = <K extends keyof AppSettings>(key: K, value: AppSettings[K]) =>
@@ -319,6 +327,18 @@ function SettingsForm({ response }: { response: SettingsResponse }) {
         </div>
       </Section>
 
+      <SubtitlesSection
+        response={response}
+        addonUrls={draft.subtitleAddonUrls}
+        onAddonUrlsChange={(urls) => set('subtitleAddonUrls', urls)}
+        username={draft.openSubtitlesUsername}
+        onUsernameChange={(value) => set('openSubtitlesUsername', value)}
+        apiKey={openSubtitlesKey}
+        onApiKeyChange={setOpenSubtitlesKey}
+        password={openSubtitlesPassword}
+        onPasswordChange={setOpenSubtitlesPassword}
+      />
+
       <Section
         tone="teal"
         icon={<KeyRound />}
@@ -509,6 +529,7 @@ const TONES = {
   red: 'from-rose-400 to-red-600',
   teal: 'from-teal-300 to-cyan-600',
   indigo: 'from-indigo-400 to-indigo-600',
+  orange: 'from-amber-300 to-orange-500',
   gray: 'from-zinc-400 to-zinc-600',
 } as const;
 
@@ -624,6 +645,179 @@ function AddonTester({ candidate }: { candidate: string }) {
         </span>
       )}
     </div>
+  );
+}
+
+const OPENSUBTITLES_V3 = 'https://opensubtitles-v3.strem.io/manifest.json';
+
+/** Services de sous-titres en ligne : extensions Stremio et API OpenSubtitles.com. */
+function SubtitlesSection({
+  response,
+  addonUrls,
+  onAddonUrlsChange,
+  username,
+  onUsernameChange,
+  apiKey,
+  onApiKeyChange,
+  password,
+  onPasswordChange,
+}: {
+  response: SettingsResponse;
+  addonUrls: string[];
+  onAddonUrlsChange: (urls: string[]) => void;
+  username: string;
+  onUsernameChange: (value: string) => void;
+  apiKey: string;
+  onApiKeyChange: (value: string) => void;
+  password: string;
+  onPasswordChange: (value: string) => void;
+}) {
+  // Texte libre (une adresse par ligne) : la liste enregistrée en est déduite.
+  const [addonText, setAddonText] = useState(addonUrls.join('\n'));
+  const test = useTestSubtitles();
+  const updateAddons = (text: string) => {
+    setAddonText(text);
+    onAddonUrlsChange(
+      text
+        .split('\n')
+        .map((line) => line.trim())
+        .filter(Boolean),
+    );
+  };
+  return (
+    <Section
+      tone="orange"
+      icon={<Captions />}
+      title="Sous-titres en ligne"
+      description="Cherchés pendant la lecture quand vous ouvrez le menu des sous-titres, ou d’office si la langue de sous-titres préférée manque dans le fichier."
+    >
+      <Field
+        label="Extensions Stremio de sous-titres"
+        description="Une adresse de manifeste par ligne. OpenSubtitles v3 est gratuite et sans clé ; d’autres extensions compatibles (SubDL, Subsource…) s’ajoutent par leur lien d’installation. Laissez vide pour n’en utiliser aucune."
+      >
+        <textarea
+          value={addonText}
+          onChange={(event) => updateAddons(event.target.value)}
+          rows={Math.min(5, Math.max(2, addonText.split('\n').length))}
+          placeholder={OPENSUBTITLES_V3}
+          spellCheck={false}
+          className="input resize-y font-mono text-xs"
+        />
+      </Field>
+      {!addonUrls.includes(OPENSUBTITLES_V3) && (
+        <div>
+          <Button
+            size="sm"
+            variant="glass"
+            onClick={() => updateAddons([...addonUrls, OPENSUBTITLES_V3].join('\n'))}
+          >
+            Ajouter OpenSubtitles v3
+          </Button>
+        </div>
+      )}
+
+      <div className="flex flex-col gap-3 rounded-[1rem] bg-white/[0.05] p-4">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-sm font-semibold">OpenSubtitles.com</span>
+          {response.openSubtitlesApiKeyConfigured ? (
+            <Badge tone="success" icon={<CheckCircle2 className="size-3" />}>
+              Clé configurée
+              {response.openSubtitlesApiKeyFromEnv ? ' (variable d’environnement)' : ''}
+            </Badge>
+          ) : (
+            <Badge tone="info">Facultatif</Badge>
+          )}
+        </div>
+        <p className="text-xs leading-relaxed text-zinc-400">
+          L’API officielle trouve les sous-titres faits pour votre fichier exact (empreinte du
+          fichier). Créez une clé gratuite dans votre compte, rubrique{' '}
+          <a
+            href="https://www.opensubtitles.com/consumers"
+            target="_blank"
+            rel="noreferrer"
+            className="font-medium text-brand-300 underline underline-offset-2"
+          >
+            API consumers
+          </a>
+          . Sans compte, le nombre de téléchargements par jour est réduit.
+        </p>
+        <div className="grid gap-4 sm:grid-cols-3">
+          <Field label={response.openSubtitlesApiKeyConfigured ? 'Remplacer la clé' : 'Clé d’API'}>
+            <Input
+              type="password"
+              value={apiKey}
+              onChange={(event) => onApiKeyChange(event.target.value)}
+              placeholder="••••••••••••"
+              autoComplete="off"
+            />
+          </Field>
+          <Field label="Identifiant (facultatif)">
+            <Input
+              value={username}
+              onChange={(event) => onUsernameChange(event.target.value)}
+              autoComplete="off"
+              spellCheck={false}
+            />
+          </Field>
+          <Field
+            label={
+              response.openSubtitlesPasswordConfigured
+                ? 'Remplacer le mot de passe'
+                : 'Mot de passe'
+            }
+          >
+            <Input
+              type="password"
+              value={password}
+              onChange={(event) => onPasswordChange(event.target.value)}
+              placeholder={response.openSubtitlesPasswordConfigured ? '••••••••' : ''}
+              autoComplete="new-password"
+            />
+          </Field>
+        </div>
+      </div>
+
+      <div className="flex flex-col gap-2">
+        <div>
+          <Button
+            size="sm"
+            variant="glass"
+            icon={<Server className="size-4" />}
+            loading={test.isPending}
+            onClick={() =>
+              test.mutate({
+                openSubtitlesApiKey: apiKey.trim() || undefined,
+                openSubtitlesUsername: username,
+                openSubtitlesPassword: password || undefined,
+                subtitleAddonUrls: addonUrls,
+              })
+            }
+          >
+            Tester les services
+          </Button>
+        </div>
+        {test.data?.providers.length === 0 && (
+          <p className="text-sm text-zinc-400">Aucun service configuré.</p>
+        )}
+        {test.data?.providers.map((provider) => (
+          <span
+            key={provider.name}
+            className={cn(
+              'flex min-w-0 items-center gap-1.5 text-sm',
+              provider.ok ? 'text-emerald-300' : 'text-red-300',
+            )}
+          >
+            {provider.ok ? (
+              <CheckCircle2 className="size-4 shrink-0" />
+            ) : (
+              <XCircle className="size-4 shrink-0" />
+            )}
+            <span className="font-medium">{provider.name}</span> · {provider.message}
+          </span>
+        ))}
+        {test.isError && <p className="text-sm text-red-300">{errorMessage(test.error)}</p>}
+      </div>
+    </Section>
   );
 }
 

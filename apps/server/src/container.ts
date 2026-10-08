@@ -20,6 +20,9 @@ import { LibraryService } from './modules/library/library.service';
 import { ImageCache } from './modules/metadata/image-cache';
 import { MetadataService } from './modules/metadata/metadata.service';
 import { TmdbClient } from './modules/metadata/tmdb.client';
+import { OnlineSubtitlesService } from './modules/subtitles/online-subtitles.service';
+import { OpenSubtitlesClient } from './modules/subtitles/opensubtitles.client';
+import { SubtitleAddons } from './modules/subtitles/subtitle-addons';
 import { Ffmpeg } from './modules/playback/ffmpeg';
 import { PlaybackService } from './modules/playback/playback.service';
 import { ProgressRepository } from './modules/playback/progress.repository';
@@ -51,6 +54,9 @@ export interface Container {
   ffmpeg: Ffmpeg;
   playback: PlaybackService;
   sessions: PlaybackSessions;
+  openSubtitles: OpenSubtitlesClient;
+  subtitleAddons: SubtitleAddons;
+  onlineSubtitles: OnlineSubtitlesService;
 }
 
 export function createContainer(config: AppConfig, logger: Logger): Container {
@@ -115,6 +121,23 @@ export function createContainer(config: AppConfig, logger: Logger): Container {
     logger.child({ module: 'ffmpeg' }),
   );
   const sessions = new PlaybackSessions();
+  const subtitlesLogger = logger.child({ module: 'subtitles' });
+  const openSubtitles = new OpenSubtitlesClient({
+    baseUrl: config.openSubtitles.apiBaseUrl,
+    apiKey: () => settings.getOpenSubtitlesApiKey(),
+    credentials: () => settings.getOpenSubtitlesCredentials(),
+    userAgent: `Lumiere v${config.version}`,
+    logger: subtitlesLogger,
+  });
+  const subtitleAddons = new SubtitleAddons();
+  const onlineSubtitles = new OnlineSubtitlesService(
+    settings,
+    titles,
+    tmdb,
+    openSubtitles,
+    subtitleAddons,
+    subtitlesLogger,
+  );
   const playback = new PlaybackService(
     ffmpeg,
     sessions,
@@ -126,6 +149,7 @@ export function createContainer(config: AppConfig, logger: Logger): Container {
     metadata,
     new ProgressRepository(db),
     settings,
+    onlineSubtitles,
     config,
     logger.child({ module: 'playback' }),
   );
@@ -151,6 +175,9 @@ export function createContainer(config: AppConfig, logger: Logger): Container {
     ffmpeg,
     playback,
     sessions,
+    openSubtitles,
+    subtitleAddons,
+    onlineSubtitles,
   };
 }
 

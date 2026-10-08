@@ -30,7 +30,9 @@ reflets qui suivent le pointeur, ambiance colorée par les affiches.
   l'interface (téléphone, autre PC).
 - **Lecteur vidéo intégré** : lecture directe quand c'est possible, sinon **conversion à la
   volée avec ffmpeg** (MKV, HEVC 10 bits, HDR, AC3/DTS…), choix de la **piste audio** (français
-  sélectionné automatiquement dans les releases MULTi), **sous-titres** intégrés ou externes,
+  sélectionné automatiquement dans les releases MULTi), **sous-titres** intégrés, externes ou
+  **trouvés en ligne** (OpenSubtitles.com, extensions Stremio de sous-titres comme OpenSubtitles
+  v3 : ceux faits pour votre fichier exact passent en tête), décalage des sous-titres réglable,
   **reprise là où vous vous étiez arrêté**, **épisode suivant** automatique, plein écran,
   raccourcis clavier. On peut regarder **sans télécharger** (streaming depuis le site) ou
   depuis la copie locale.
@@ -94,6 +96,18 @@ l'extension** vérifie qu'elle répond. Si vous l'avez configurée sur
 [st.111477.xyz](https://st.111477.xyz/) (nombre de liens par titre, serveurs…), collez-y le
 lien d'installation obtenu (`stremio://…` ou `https://…/manifest.json`).
 
+### 5. Sous-titres en ligne (facultatif)
+
+Sans réglage, Lumière cherche les sous-titres manquants avec l'extension Stremio
+**OpenSubtitles v3** (gratuite, sans clé) quand vous ouvrez le menu des sous-titres du lecteur,
+ou d'office si la langue de sous-titres préférée manque dans le fichier. Pour des résultats
+calés sur votre fichier exact, créez une clé gratuite sur
+[opensubtitles.com](https://www.opensubtitles.com/consumers) (rubrique « API consumers ») et
+collez-la dans **Paramètres → Sous-titres en ligne**, avec votre compte pour plus de
+téléchargements par jour. D'autres extensions de sous-titres compatibles s'ajoutent par leur lien.
+Lors d'une recherche, l'identifiant IMDb du titre, le nom et l'empreinte du fichier sont envoyés à
+ces services ; videz la liste des extensions et la clé pour n'en contacter aucun.
+
 ### Avec Docker
 
 ```bash
@@ -124,7 +138,8 @@ même fichier, comme un hébergeur strict (pour éprouver les positionnements du
 La plupart des réglages se font dans l'interface (**Paramètres**) : apparence du verre
 (propre à chaque appareil), adresse et dossiers de la source, dossier de téléchargement, téléchargements simultanés, limite de débit, qualité
 préférée, langue audio et sous-titres par défaut, qualité de conversion, clé et langue TMDB,
-extension Stremio (adresse et test), fréquence d'actualisation et source du catalogue (sans
+extension Stremio (adresse et test), sous-titres en ligne (extensions de sous-titres, clé et
+compte OpenSubtitles.com, test), fréquence d'actualisation et source du catalogue (sans
 extension : liste complète de la source, ou TMDB avec recherche des dossiers à la demande), mode
 de connexion à la source (automatique, standard ou imitation de navigateur), test de connexion à
 la source.
@@ -132,18 +147,20 @@ la source.
 Les variables d'environnement définissent les valeurs de départ. Elles peuvent aussi être
 placées dans un fichier `.env` à la racine du dépôt (copiez [`.env.example`](.env.example)) :
 
-| Variable                                    | Défaut                                | Rôle                                                                                              |
-| ------------------------------------------- | ------------------------------------- | ------------------------------------------------------------------------------------------------- |
-| `HOST`                                      | `127.0.0.1`                           | Interface réseau. `0.0.0.0` pour accéder à Lumière depuis la TV, le téléphone…                    |
-| `PORT`                                      | `8484`                                | Port HTTP.                                                                                        |
-| `DATA_DIR`                                  | `./data`                              | Base de données, caches (affiches, sous-titres).                                                  |
-| `MEDIA_DIR`                                 | `<DATA_DIR>/media`                    | Dossier des téléchargements (modifiable dans l'interface).                                        |
-| `SOURCE_BASE_URL`                           | `https://a.111477.xyz`                | Adresse de la source.                                                                             |
-| `SOURCE_MOVIES_PATH` / `SOURCE_SERIES_PATH` | `/movies/` / `/tvs/`                  | Dossiers des films et des séries sur la source.                                                   |
-| `TMDB_API_KEY`                              | —                                     | Clé TMDB (v3) ou jeton d'accès (v4).                                                              |
-| `STREMIO_ADDON_URL`                         | `https://st.111477.xyz/manifest.json` | Extension Stremio qui fournit les liens des fichiers (vide : liste de la source lue directement). |
-| `FFMPEG_PATH` / `FFPROBE_PATH`              | `ffmpeg` / `ffprobe`                  | Chemins des binaires s'ils ne sont pas dans le PATH.                                              |
-| `LOG_LEVEL`                                 | `info`                                | `debug` pour diagnostiquer.                                                                       |
+| Variable                                    | Défaut                                            | Rôle                                                                                              |
+| ------------------------------------------- | ------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| `HOST`                                      | `127.0.0.1`                                       | Interface réseau. `0.0.0.0` pour accéder à Lumière depuis la TV, le téléphone…                    |
+| `PORT`                                      | `8484`                                            | Port HTTP.                                                                                        |
+| `DATA_DIR`                                  | `./data`                                          | Base de données, caches (affiches, sous-titres).                                                  |
+| `MEDIA_DIR`                                 | `<DATA_DIR>/media`                                | Dossier des téléchargements (modifiable dans l'interface).                                        |
+| `SOURCE_BASE_URL`                           | `https://a.111477.xyz`                            | Adresse de la source.                                                                             |
+| `SOURCE_MOVIES_PATH` / `SOURCE_SERIES_PATH` | `/movies/` / `/tvs/`                              | Dossiers des films et des séries sur la source.                                                   |
+| `TMDB_API_KEY`                              | —                                                 | Clé TMDB (v3) ou jeton d'accès (v4).                                                              |
+| `STREMIO_ADDON_URL`                         | `https://st.111477.xyz/manifest.json`             | Extension Stremio qui fournit les liens des fichiers (vide : liste de la source lue directement). |
+| `SUBTITLE_ADDON_URLS`                       | `https://opensubtitles-v3.strem.io/manifest.json` | Extensions Stremio de sous-titres, séparées par des virgules (vide : aucune).                     |
+| `OPENSUBTITLES_API_KEY`                     | —                                                 | Clé d'API OpenSubtitles.com (sous-titres faits pour le fichier exact).                            |
+| `FFMPEG_PATH` / `FFPROBE_PATH`              | `ffmpeg` / `ffprobe`                              | Chemins des binaires s'ils ne sont pas dans le PATH.                                              |
+| `LOG_LEVEL`                                 | `info`                                            | `debug` pour diagnostiquer.                                                                       |
 
 > **Pourquoi une extension Stremio ?** Le site a.111477.xyz impose une vérification Cloudflare
 > que seul un vrai navigateur passe. Son extension Stremio (st.111477.xyz) donne au contraire
@@ -177,12 +194,12 @@ placées dans un fichier `.env` à la racine du dépôt (copiez [`.env.example`]
 
 Raccourcis du lecteur :
 
-| Touche         | Action                       | Touche | Action          |
-| -------------- | ---------------------------- | ------ | --------------- |
-| `Espace` / `K` | Lecture / pause              | `F`    | Plein écran     |
-| `←` / `→`      | −10 s / +10 s (`Maj` : 30 s) | `M`    | Couper le son   |
-| `↑` / `↓`      | Volume                       | `N`    | Épisode suivant |
-| `Échap`        | Quitter le lecteur           |        |                 |
+| Touche         | Action                        | Touche  | Action             |
+| -------------- | ----------------------------- | ------- | ------------------ |
+| `Espace` / `K` | Lecture / pause               | `F`     | Plein écran        |
+| `←` / `→`      | −10 s / +10 s (`Maj` : 30 s)  | `M`     | Couper le son      |
+| `↑` / `↓`      | Volume                        | `N`     | Épisode suivant    |
+| `G` / `H`      | Sous-titres −0,25 s / +0,25 s | `Échap` | Quitter le lecteur |
 
 ---
 

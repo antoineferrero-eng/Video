@@ -46,3 +46,11 @@ export const TEXT_SUBTITLE_CODECS = new Set([
   'mov_text',
   'text',
 ]);
+
+/** Format d'un fichier de sous-titres texte d'après son contenu (SubRip par défaut). */
+export function sniffSubtitleFormat(text: string): 'srt' | 'vtt' | 'ass' {
+  const start = text.replace(/^\uFEFF/, '').trimStart();
+  if (start.startsWith('WEBVTT')) return 'vtt';
+  if (/^\[(Script Info|V4\+? Styles)\]/i.test(start)) return 'ass';
+  return 'srt';
+}
