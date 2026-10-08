@@ -63,6 +63,23 @@ const TITLES: DemoTitle[] = [
 /** Popularité TMDB de chaque titre (indépendante de l'ordre des listes). */
 const POPULARITY: Record<number, number> = { 1: 30.5, 2: 90.2, 3: 60.1, 4: 5, 10: 40 };
 
+/** Films de plus servis par « Découvrir » (aucun par défaut), après ceux des listes. */
+let discoverExtra = 0;
+/** Pages de « Découvrir » demandées. */
+const discoverPages: number[] = [];
+
+function extraMovie(index: number): DemoTitle {
+  const name = `Film ${index}`;
+  return {
+    id: 1000 + index,
+    kind: 'movie',
+    fr: name,
+    en: name,
+    original: name,
+    date: '2010-01-01',
+  };
+}
+
 function item(title: DemoTitle, language: string) {
   const name = language.startsWith('en') ? title.en : title.fr;
   const common = {
@@ -72,7 +89,7 @@ function item(title: DemoTitle, language: string) {
     backdrop_path: `/b${title.id}.jpg`,
     vote_average: 7.5,
     vote_count: 100,
-    popularity: POPULARITY[title.id],
+    popularity: POPULARITY[title.id] ?? 1,
     genre_ids: [title.kind === 'movie' ? 878 : 10765],
   };
   return title.kind === 'movie'
@@ -112,6 +129,18 @@ beforeAll(async () => {
         item(title, language),
       );
       return send(200, { page: 1, results, total_pages: 1 });
+    }
+    const discover = /^\/discover\/(movie|tv)$/.exec(route);
+    if (discover) {
+      const page = Number(url.searchParams.get('page') ?? 1);
+      if (discover[1] === 'movie') discoverPages.push(page);
+      const titles = TITLES.filter((title) => title.kind === discover[1]);
+      if (discover[1] === 'movie')
+        for (let index = 0; index < discoverExtra; index += 1) titles.push(extraMovie(index));
+      const results = titles
+        .slice((page - 1) * 20, page * 20)
+        .map((title) => item(title, language));
+      return send(200, { page, results, total_pages: Math.ceil(titles.length / 20) });
     }
     if (/^\/genre\/(movie|tv)\/list$/.test(route))
       return send(200, {
@@ -236,6 +265,53 @@ describe('catalogue TMDB', () => {
   it('ajoute au catalogue les titres trouvés par la recherche TMDB', async () => {
     const results = await container.catalog.search({ q: 'forgotten' });
     expect(results.items.map((title) => title.title)).toEqual(['L’Éclipse oubliée']);
+  });
+});
+
+describe('taille du catalogue', () => {
+  it('complète les listes par « Découvrir » jusqu’à la taille choisie', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lumiere-catalog-size-'));
+    const fresh = createContainer(
+      loadConfig({
+        DATA_DIR: dir,
+        STREMIO_ADDON_URLS: '',
+        TMDB_API_KEY: 'cle',
+        TMDB_API_BASE_URL: `${tmdbUrl}/3`,
+        LOG_LEVEL: 'silent',
+      }),
+      silent,
+    );
+    discoverExtra = 250; // 254 films en 13 pages.
+    try {
+      await fresh.settings.update({ catalogSize: 50 });
+      await fresh.catalog.refresh('movie');
+      // Pages demandées par lots de 5 : le premier suffit (100 films).
+      expect(fresh.titles.count('movie')).toBe(100);
+      expect(Math.max(...discoverPages)).toBe(5);
+
+      // Catalogue agrandi : réimporté sans attendre.
+      const imported = new Promise<void>((resolve) => {
+        const unsubscribe = fresh.events.subscribe((event) => {
+          if (
+            event.type === 'catalog.updated' &&
+            event.status.kind === 'movie' &&
+            event.status.state === 'idle'
+          ) {
+            unsubscribe();
+            resolve();
+          }
+        });
+      });
+      await fresh.settings.update({ catalogSize: 10_000 });
+      await imported;
+      // Jamais au-delà de la dernière page annoncée par TMDB.
+      expect(fresh.titles.count('movie')).toBe(254);
+      expect(Math.max(...discoverPages)).toBe(13);
+    } finally {
+      discoverExtra = 0;
+      await stopServices(fresh);
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 

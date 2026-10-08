@@ -16,8 +16,8 @@ Les premières versions de Lumière reconstruisaient le catalogue en lisant ces 
 de listings générique, explorateur de dossiers). Le site exigeant désormais une vérification
 Cloudflare que seul un vrai navigateur passe (§ 11), cette lecture directe a été **retirée** :
 
-- le **catalogue** vient de **TMDB** (populaires, tendances, à l'affiche, mieux notés, et toute
-  recherche) ;
+- le **catalogue** vient de **TMDB** (populaires, tendances, à l'affiche, mieux notés,
+  « Découvrir » jusqu'à la taille choisie, et toute recherche) ;
 - les **fichiers** viennent d'**extensions Stremio** (celle de 111477, `st.111477.xyz`, et toute
   autre extension compatible), qui donnent des liens de lecture directs titre par titre.
 
@@ -222,12 +222,21 @@ Tri par **popularité** (celui de la page « Populaires » de TMDB), par défaut
 Films et Séries et pour l'accueil :
 
 - l'indice `popularity` de TMDB est gardé avec sa date : il vient des listes importées (dont
-  « Populaires » sur 10 pages, soit 200 titres), des recherches et des fiches détaillées ;
+  « Populaires » sur 10 pages, soit 200 titres), de « Découvrir », des recherches et des fiches
+  détaillées ;
 - catalogue issu de la liste du site : à chaque actualisation, les listes TMDB mettent à jour la
   popularité des titres déjà connus, sans en ajouter ;
 - une popularité de plus de 3 jours (titre sorti des listes) passe après les valeurs à jour :
   un succès d'il y a des mois ne reste pas en tête ; les titres sans données TMDB viennent en
   dernier, par date d'ajout ;
+- les listes seules ne donnaient qu'environ 250 titres par section : elles sont complétées par
+  **« Découvrir »** (`/discover/movie`, `/discover/tv`) dans l'ordre de popularité, jusqu'à la
+  **taille du catalogue** choisie (Paramètres → Catalogue : 500 à 10 000 titres par section,
+  5 000 par défaut ; TMDB ne sert pas plus de 500 pages de 20). Seuls les titres assez votés
+  (50 votes pour un film, 20 pour une série) y entrent, sans journaux télévisés ni talk-shows :
+  les inconnus n'ont ni fiche complète ni fichiers chez les extensions. Pages demandées par
+  lots de 5 ; un catalogue agrandi est réimporté sans attendre, et réduire la taille ne retire
+  aucun titre ;
 - l'accueil met en avant les plus populaires ; « récemment ajoutés » n'y figure que pour un
   catalogue issu de la liste du site (un catalogue TMDB n'a pas de date d'ajout).
 
@@ -382,7 +391,7 @@ des lecteurs vidéo ordinaires, pas pour des navigateurs : pas de vérification 
 | Protocole             | `GET <base>/manifest.json`, puis `<base>/stream/movie/tt1677720.json` (film) ou `<base>/stream/series/tt0903747:1:3.json` (épisode) ; lecture de `url`, `name`/`title`/`description` et `behaviorHints` (`filename`, `videoSize`, `proxyHeaders.request`)                                                                       | Protocole public et stable : n'importe quelle extension compatible convient, pas seulement celle de 111477. Les en-têtes demandés par l'extension sont renvoyés avec le lien.                                                           |
 | Adresses              | **Paramètres → Extensions et API** : liste ordonnée de liens d'installation `stremio://…`, adresses de configuration ou manifestes (normalisés), chacun avec son bouton de test ; `STREMIO_ADDON_URLS` pour la valeur de départ (migration de l'ancienne adresse unique)                                                        | La configuration d'une extension (serveurs, nombre de liens par titre…) est encodée dans son adresse : il suffit de coller celle obtenue sur sa page de configuration.                                                                  |
 | Plusieurs extensions  | Toutes interrogées en parallèle (seulement celles qui gèrent ce type de titre et cet identifiant, IMDb ou `tmdb:`) ; fichiers réunis par nom ; un fichier proposé par plusieurs garde un seul chemin et une liste de liens, essayés dans l'ordre des extensions ; une extension injoignable est signalée sans priver des autres | Plus d'offre, et un lien de secours quand l'hôte du premier le refuse. Deux fichiers du même nom mais de tailles différentes ne se relaient pas : leurs octets diffèrent.                                                               |
-| Catalogue             | **TMDB** (tendances, populaires, à l'affiche, mieux notés, et toute recherche) ; identifiant IMDb d'un titre obtenu une fois par `external_ids`, puis gardé                                                                                                                                                                     | L'extension ne fournit pas de catalogue, seulement des liens titre par titre ; les extensions Stremio identifient les titres par leur identifiant IMDb.                                                                                 |
+| Catalogue             | **TMDB** (tendances, populaires, à l'affiche, mieux notés, « Découvrir », et toute recherche) ; identifiant IMDb d'un titre obtenu une fois par `external_ids`, puis gardé                                                                                                                                                      | L'extension ne fournit pas de catalogue, seulement des liens titre par titre ; les extensions Stremio identifient les titres par leur identifiant IMDb.                                                                                 |
 | Identité des fichiers | **Chemin virtuel** stable par fichier : `/@stremio/movie/tt1677720/<fichier>`, `/@stremio/series/tt0903747/1x3/<fichier>`                                                                                                                                                                                                       | Les liens expirent et changent d'une demande à l'autre. Téléchargements, reprise de lecture, bibliothèque, « vu / non vu » et relais ffmpeg travaillent sur cette identité ; le lien réel n'est résolu qu'au moment de lire les octets. |
 | Économie de liens     | Liens demandés seulement à l'ouverture d'un film, à la lecture ou au téléchargement d'un épisode, ou à l'ouverture de « Choisir une version » ; jamais pour afficher une série (saisons et épisodes viennent de TMDB)                                                                                                           | Chez 111477, **chaque lien généré consomme un jeton** d'une réserve de 50 par adresse IP (un regagné toutes les 5 minutes), avec 10 requêtes par 10 s au plus.                                                                          |
 | Cache                 | Réponse de **chaque extension** gardée **en base** 12 h avec le lien de chaque fichier (3 min si la réponse est vide ou signale la limite) ; si tous les liens d'un fichier sont refusés (401, 403, 404, 410), ils sont redemandés une fois, aux seules extensions qui les avaient fournis                                      | Rouvrir une fiche, reprendre une lecture ou lancer un téléchargement plus tard ne coûte rien tant que l'hôte accepte le lien, même après un redémarrage.                                                                                |

@@ -93,7 +93,8 @@ n'est plus lu. Les extensions Stremio (`stremioAddonUrls`, par ordre de préfér
 au contraire des liens destinés aux lecteurs vidéo :
 
 1. Le catalogue vient de **TMDB** (`tmdb-catalog.ts` : populaires, tendances, à l'affiche,
-   mieux notés, et toute recherche), importé dans `titles` avec sa popularité.
+   mieux notés, « Découvrir » jusqu'à `catalogSize` titres, et toute recherche), importé dans
+   `titles` avec sa popularité.
 2. À l'ouverture d'un **film**, `AddonCatalog` obtient son identifiant IMDb (TMDB
    `external_ids`, demandé une fois puis gardé dans `titles.imdb_id`) et `StremioAddons`
    interroge en parallèle chaque extension capable de chercher ce titre (types et préfixes de

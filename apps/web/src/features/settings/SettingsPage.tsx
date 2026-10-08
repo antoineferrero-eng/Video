@@ -92,7 +92,7 @@ const TAB_FIELDS: Record<SettingsTab, Array<keyof SettingsUpdate>> = {
     'openSubtitlesUsername',
     'openSubtitlesPassword',
   ],
-  catalog: ['catalogRefreshHours'],
+  catalog: ['catalogRefreshHours', 'catalogSize'],
   system: [],
 };
 
@@ -407,6 +407,8 @@ function SettingsForm({ response }: { response: SettingsResponse }) {
           <CatalogSection
             refreshHours={draft.catalogRefreshHours}
             onRefreshHours={(value) => set('catalogRefreshHours', value)}
+            size={draft.catalogSize}
+            onSize={(value) => set('catalogSize', value)}
           />
         </div>
       )}
@@ -1105,21 +1107,31 @@ function TmdbTester({ candidate }: { candidate: string }) {
   );
 }
 
+/** Tailles proposées : TMDB ne sert pas plus de 500 pages de 20 titres (10 000). */
+const CATALOG_SIZES = [500, 1000, 2000, 5000, 10_000];
+
 function CatalogSection({
   refreshHours,
   onRefreshHours,
+  size,
+  onSize,
 }: {
   refreshHours: number;
   onRefreshHours: (value: number) => void;
+  size: number;
+  onSize: (value: number) => void;
 }) {
   const system = useSystemInfo();
   const refresh = useRefreshCatalog();
+  const sizes = CATALOG_SIZES.includes(size)
+    ? CATALOG_SIZES
+    : [...CATALOG_SIZES, size].sort((a, b) => a - b);
   return (
     <Section
       tone="indigo"
       icon={<Database />}
       title="Catalogue"
-      description="Titres importés des listes de TMDB (populaires, tendances, à l’affiche, mieux notés) et gardés localement ; la recherche couvre tout TMDB. Leurs fichiers viennent des extensions Stremio."
+      description="Titres importés de TMDB (populaires, tendances, à l’affiche, mieux notés, puis les plus populaires jusqu’à la taille choisie) et gardés localement ; la recherche couvre tout TMDB. Leurs fichiers viennent des extensions Stremio."
     >
       <div className="grid gap-3 sm:grid-cols-2">
         {system.data?.catalog.map((section) => (
@@ -1140,7 +1152,7 @@ function CatalogSection({
                     ? 'Erreur'
                     : section.state === 'refreshing'
                       ? 'Actualisation…'
-                      : `${section.count} titres`}
+                      : plural(section.count, 'titre')}
                 </Badge>
               </div>
             </div>
@@ -1154,6 +1166,15 @@ function CatalogSection({
         ))}
       </div>
       <div className="flex flex-wrap items-end gap-4">
+        <Field label="Taille (films, séries)" className="w-56">
+          <Select value={size} onChange={(event) => onSize(Number(event.target.value))}>
+            {sizes.map((value) => (
+              <option key={value} value={value}>
+                {plural(value, 'titre')}
+              </option>
+            ))}
+          </Select>
+        </Field>
         <Field label="Actualisation automatique" className="w-56">
           <Select
             value={refreshHours}
