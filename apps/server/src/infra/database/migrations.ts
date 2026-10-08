@@ -177,4 +177,26 @@ export const MIGRATIONS: Migration[] = [
       CREATE INDEX idx_titles_popularity ON titles (kind, popularity DESC);
     `,
   },
+  {
+    id: 6,
+    name: 'extensions-stremio-seules',
+    sql: /* sql */ `
+      -- L'ancienne source (liste du site) est retirée : le catalogue vient de TMDB et les
+      -- fichiers des extensions Stremio, désormais plusieurs (par ordre de préférence).
+      INSERT INTO settings (key, value, updated_at)
+        SELECT 'stremioAddonUrls', json_array(json_extract(value, '$')), updated_at
+        FROM settings
+        WHERE key = 'stremioAddonUrl' AND json_extract(value, '$') <> ''
+      ON CONFLICT (key) DO NOTHING;
+      DELETE FROM settings WHERE key IN ('stremioAddonUrl', 'sourceBaseUrl', 'moviesPath',
+        'seriesPath', 'userAgent', 'sourceConnection', 'catalogSource');
+      -- Titres de la liste du site que TMDB n'a pas reconnus : aucune extension ne peut les
+      -- chercher (téléchargements et bibliothèque gardent leurs fichiers).
+      DELETE FROM titles WHERE origin = 'listing' AND tmdb_id IS NULL;
+      UPDATE titles SET source_status = 'unknown', source_note = NULL
+        WHERE source_status = 'missing' AND remote_path NOT LIKE '/@stremio/%';
+      -- Catalogue issu de la liste du site : réimporté depuis TMDB au prochain démarrage.
+      UPDATE catalog_sections SET last_refresh_at = NULL WHERE mode <> 'addon';
+    `,
+  },
 ];

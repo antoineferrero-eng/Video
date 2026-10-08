@@ -3,32 +3,25 @@ import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
-import zlib from 'node:zlib';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { buildApp } from '../src/app';
 import { loadConfig } from '../src/config/env';
 import { createContainer, stopServices, type Container } from '../src/container';
 import { createLogger } from '../src/core/logger';
-import { DEFAULT_USER_AGENT } from '../src/modules/settings/settings.service';
 import { nodeRequest } from '../src/modules/source/node-http';
 import { SourceClient } from '../src/modules/source/source-client';
 import { SourceRelay, loopbackHost } from '../src/modules/source/source-relay';
-import {
-  CookieJar,
-  StandardTransport,
-  browserHeaders,
-  describeRefusal,
-  looksBlocked,
-  type Transport,
-} from '../src/modules/source/transport';
+import type { AddonLink, StremioAddons } from '../src/modules/source/stremio/stremio-addon';
+import { looksBlocked, type Transport } from '../src/modules/source/transport';
 
 /**
- * Connexion à la source protégée par un pare-feu anti-robot : en-têtes de navigateur,
- * cookies, bascule automatique vers l'imitation de navigateur, relais local pour ffmpeg.
+ * Lecture des liens fournis par les extensions : plages d'octets, bascule vers l'imitation de
+ * navigateur quand l'hôte filtre les robots, relais entre extensions quand un lien est
+ * refusé, relais local pour ffmpeg.
  */
-const LISTING =
-  '<html><body><pre><a href="../">../</a>\n<a href="Film%20(2020)/">Film (2020)/</a>   01-Jan-2025 10:00   -\n</pre></body></html>';
 const FILE = Buffer.from('0123456789abcdefghijklmnopqrstuvwxyz');
+const PATH = '/@stremio/movie/tt1/Film.2020.1080p.mkv';
+const silent = createLogger({ level: 'silent', pretty: false });
 
 interface Seen {
   url: string;
@@ -38,68 +31,48 @@ const seen: Seen[] = [];
 let server: http.Server;
 let baseUrl: string;
 
+function sendFile(request: http.IncomingMessage, response: http.ServerResponse): void {
+  const match = /bytes=(\d+)-(\d*)/.exec(request.headers.range ?? '');
+  if (match) {
+    const start = Number(match[1]);
+    const end = match[2] ? Number(match[2]) : FILE.length - 1;
+    response.writeHead(206, {
+      'content-range': `bytes ${start}-${end}/${FILE.length}`,
+      'content-length': end - start + 1,
+      'accept-ranges': 'bytes',
+    });
+    response.end(request.method === 'HEAD' ? undefined : FILE.subarray(start, end + 1));
+    return;
+  }
+  response.writeHead(200, { 'content-length': FILE.length, 'accept-ranges': 'bytes' });
+  response.end(request.method === 'HEAD' ? undefined : FILE);
+}
+
 /**
- * Faux « Cloudflare » :
- *  - /guarded/ : refuse (403, défi) les requêtes sans `sec-fetch-mode: navigate` ;
- *  - /fingerprint/ : refuse tout sauf le transport « navigateur » simulé ;
- *  - /cookie/ : dépose un cookie puis l'exige ;
- *  - /gzip/, /zstd/ : pages compressées ; /redirect/ : redirection ; /file.bin : plages d'octets.
+ * Faux hôtes de liens :
+ *  - /file.bin : plages d'octets ; /redirect : redirection vers /file.bin ;
+ *  - /fingerprint.bin : refuse (défi Cloudflare) tout sauf le transport « navigateur » simulé ;
+ *  - /expired.bin : lien expiré (410).
  */
 beforeAll(async () => {
   server = http.createServer((request, response) => {
     const url = new URL(request.url ?? '/', 'http://x');
     seen.push({ url: url.pathname, headers: request.headers });
-    const challenge = () => {
+    if (url.pathname === '/file.bin') return sendFile(request, response);
+    if (url.pathname === '/redirect') {
+      response.writeHead(302, { location: '/file.bin' });
+      return response.end();
+    }
+    if (url.pathname === '/fingerprint.bin') {
+      if (request.headers['x-impersonated'] === 'chrome') return sendFile(request, response);
       response.writeHead(403, {
         server: 'cloudflare',
-        'cf-ray': '8a1b-CDG',
         'cf-mitigated': 'challenge',
         'content-type': 'text/html',
       });
-      response.end('<html><head><title>Just a moment...</title></head></html>');
-    };
-    if (url.pathname.startsWith('/guarded/')) {
-      if (request.headers['sec-fetch-mode'] !== 'navigate') return challenge();
-      return response.end(LISTING);
+      return response.end('<html><head><title>Just a moment...</title></head></html>');
     }
-    if (url.pathname.startsWith('/fingerprint/')) {
-      if (request.headers['x-impersonated'] !== 'chrome') return challenge();
-      return response.end(LISTING);
-    }
-    if (url.pathname === '/cookie/') {
-      if (!/clearance=ok/.test(request.headers.cookie ?? '')) {
-        response.writeHead(403, { 'set-cookie': 'clearance=ok; Path=/; HttpOnly' });
-        return response.end('Forbidden');
-      }
-      return response.end(LISTING);
-    }
-    if (url.pathname === '/gzip/') {
-      response.writeHead(200, { 'content-encoding': 'gzip', 'content-type': 'text/html' });
-      return response.end(zlib.gzipSync(LISTING));
-    }
-    if (url.pathname === '/zstd/') {
-      response.writeHead(200, { 'content-encoding': 'zstd', 'content-type': 'text/html' });
-      return response.end(zlib.zstdCompressSync(LISTING));
-    }
-    if (url.pathname === '/redirect/') {
-      response.writeHead(302, { location: '/gzip/' });
-      return response.end();
-    }
-    if (url.pathname === '/file.bin') {
-      const match = /bytes=(\d+)-(\d*)/.exec(request.headers.range ?? '');
-      if (match) {
-        const start = Number(match[1]);
-        const end = match[2] ? Number(match[2]) : FILE.length - 1;
-        response.writeHead(206, {
-          'content-range': `bytes ${start}-${end}/${FILE.length}`,
-          'content-length': end - start + 1,
-          'accept-ranges': 'bytes',
-        });
-        return response.end(request.method === 'HEAD' ? undefined : FILE.subarray(start, end + 1));
-      }
-      response.writeHead(200, { 'content-length': FILE.length, 'accept-ranges': 'bytes' });
-      return response.end(request.method === 'HEAD' ? undefined : FILE);
-    }
+    if (url.pathname === '/expired.bin') return response.writeHead(410).end('Gone');
     response.writeHead(404).end();
   });
   baseUrl = await new Promise<string>((resolve) =>
@@ -117,95 +90,38 @@ beforeEach(() => {
   seen.length = 0;
 });
 
-describe('en-têtes de navigateur', () => {
-  it('sont cohérents avec l’identité Chrome choisie', () => {
-    const headers = browserHeaders(DEFAULT_USER_AGENT, { kind: 'document' });
-    expect(headers['sec-ch-ua']).toContain('"Google Chrome";v="141"');
-    expect(headers['sec-ch-ua-platform']).toBe('"Windows"');
-    expect(headers['sec-fetch-mode']).toBe('navigate');
-    expect(headers['accept-language']).toMatch(/^fr-FR/);
-    expect(headers.accept).toMatch(/^text\/html/);
-  });
+/** Extensions simulées : des liens fixes, puis d'autres après renouvellement. */
+function fakeAddons(
+  first: string[],
+  refreshed: string[] = first,
+): StremioAddons & { refreshes: number } {
+  const stub = {
+    enabled: true,
+    refreshes: 0,
+    links: async (_path: string, options: { refresh?: boolean } = {}): Promise<AddonLink[]> => {
+      if (options.refresh) stub.refreshes += 1;
+      return (options.refresh ? refreshed : first).map((name, index) => ({
+        url: `${baseUrl}${name}`,
+        headers: {},
+        addon: `Extension ${index + 1}`,
+      }));
+    },
+  };
+  return stub as unknown as StremioAddons & { refreshes: number };
+}
 
-  it('n’envoient pas d’indices clients pour Firefox, demandent les fichiers sans compression', () => {
-    const firefox = browserHeaders(
-      'Mozilla/5.0 (X11; Linux x86_64; rv:140.0) Gecko/20100101 Firefox/140.0',
-      { kind: 'file', range: 'bytes=10-' },
-    );
-    expect(firefox['sec-ch-ua']).toBeUndefined();
-    expect(firefox.accept).toBe('*/*');
-    expect(firefox['accept-encoding']).toBe('identity');
-    expect(firefox.range).toBe('bytes=10-');
-  });
-});
-
-describe('transport standard', () => {
-  const transport = new StandardTransport(() => DEFAULT_USER_AGENT, new CookieJar());
-
-  it('envoie une vraie navigation (fetch imposerait sec-fetch-mode: cors)', async () => {
-    const response = await transport.fetch(`${baseUrl}/guarded/`, { kind: 'document' });
-    expect(response.status).toBe(200);
-    expect(await response.text()).toContain('Film (2020)');
-    expect(seen[0]?.headers['sec-fetch-mode']).toBe('navigate');
-    expect(seen[0]?.headers['sec-fetch-dest']).toBe('document');
-  });
-
-  it('renvoie les cookies déposés par la source', async () => {
-    const first = await transport.fetch(`${baseUrl}/cookie/`, { kind: 'document' });
-    expect(first.status).toBe(403);
-    await first.body?.cancel();
-    const second = await transport.fetch(`${baseUrl}/cookie/`, { kind: 'document' });
-    expect(second.status).toBe(200);
-    await second.body?.cancel();
-  });
-
-  it('suit les redirections et décompresse les pages', async () => {
-    const response = await transport.fetch(`${baseUrl}/redirect/`, { kind: 'document' });
-    expect(response.url).toBe(`${baseUrl}/gzip/`);
-    expect(response.headers.get('content-encoding')).toBeNull();
-    expect(await response.text()).toContain('Film (2020)');
-  });
-
-  it('accepte zstd comme Chrome (encodage servi par Cloudflare)', async () => {
-    const response = await transport.fetch(`${baseUrl}/zstd/`, { kind: 'document' });
-    expect(seen[0]?.headers['accept-encoding']).toBe('gzip, deflate, br, zstd');
-    expect(await response.text()).toContain('Film (2020)');
-  });
-
-  it('transmet les plages d’octets et expose un corps stable', async () => {
-    const response = await nodeRequest(`${baseUrl}/file.bin`, {
+describe('requêtes vers les hôtes des liens', () => {
+  it('transmettent les plages d’octets, suivent les redirections, exposent un corps stable', async () => {
+    const response = await nodeRequest(`${baseUrl}/redirect`, {
       headers: { range: 'bytes=10-19' },
     });
     expect(response.status).toBe(206);
+    expect(response.url).toBe(`${baseUrl}/file.bin`);
     expect(response.body).toBe(response.body);
     expect(Buffer.from(await response.arrayBuffer()).toString()).toBe('abcdefghij');
   });
-});
 
-describe('analyse des refus', () => {
-  it('reconnaît un défi Cloudflare, une règle de pare-feu et un refus ordinaire', () => {
-    const challenge = describeRefusal(
-      403,
-      'Forbidden',
-      new Headers({ server: 'cloudflare', 'cf-mitigated': 'challenge' }),
-      '<title>Just a moment...</title>',
-    );
-    expect(challenge.message).toMatch(/vérification anti-robot/);
-    expect(challenge.details.title).toBe('Just a moment...');
-
-    const firewall = describeRefusal(
-      403,
-      'Forbidden',
-      new Headers({ server: 'cloudflare' }),
-      '<title>Attention Required! | Cloudflare</title><span>Error code: 1020</span>',
-    );
-    expect(firewall.message).toMatch(/erreur 1020/);
-
-    const origin = describeRefusal(403, 'Forbidden', new Headers({ server: 'nginx' }), 'Nope');
-    expect(origin.message).toBe('« 403 Forbidden » (serveur nginx)');
-  });
-
-  it('ne retente que les réponses de filtrage', () => {
+  it('ne retentent que les réponses de filtrage', () => {
     expect(looksBlocked({ status: 403, headers: new Headers() })).toBe(true);
     expect(looksBlocked({ status: 503, headers: new Headers({ server: 'cloudflare' }) })).toBe(
       true,
@@ -215,7 +131,7 @@ describe('analyse des refus', () => {
   });
 });
 
-describe('bascule automatique vers l’imitation de navigateur', () => {
+describe('lecture d’un fichier des extensions', () => {
   /** Transport « navigateur » simulé : se distingue par un en-tête que seul le faux pare-feu voit. */
   const fakeBrowser: Transport = {
     name: 'browser',
@@ -226,67 +142,52 @@ describe('bascule automatique vers l’imitation de navigateur', () => {
         signal: request.signal,
       }),
   };
-  let dataDir: string;
-  let container: Container;
 
-  beforeAll(() => {
-    dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lumiere-transport-'));
-    container = createContainer(
-      loadConfig({
-        DATA_DIR: dataDir,
-        SOURCE_BASE_URL: baseUrl,
-        STREMIO_ADDON_URL: '',
-        LOG_LEVEL: 'silent',
-      }),
-      createLogger({ level: 'silent', pretty: false }),
-    );
-  });
-
-  afterAll(async () => {
-    await stopServices(container);
-    fs.rmSync(dataDir, { recursive: true, force: true });
-  });
-
-  it('passe par le navigateur imité quand la connexion standard est filtrée, puis s’y tient', async () => {
-    const client = new SourceClient(
-      container.settings,
-      createLogger({ level: 'silent', pretty: false }),
-      { loadImpersonation: async () => fakeBrowser },
-    );
-    const listing = await client.list('/fingerprint/');
-    expect(listing.transport).toBe('browser');
-    expect(listing.entries.map((entry) => entry.name)).toEqual(['Film (2020)']);
+  it('imite Chrome quand l’hôte du lien filtre les robots', async () => {
+    const client = new SourceClient(fakeAddons(['/fingerprint.bin']), silent, {
+      loadImpersonation: async () => fakeBrowser,
+    });
+    const response = await client.openFile(PATH, { start: 0, end: 3 });
+    expect(response.status).toBe(206);
+    expect(Buffer.from(await response.arrayBuffer()).toString()).toBe('0123');
     expect(seen.map((request) => Boolean(request.headers['x-impersonated']))).toEqual([
       false,
       true,
     ]);
-
-    seen.length = 0;
-    await client.list('/fingerprint/sub/', { force: true }).catch(() => undefined);
-    expect(seen.every((request) => request.headers['x-impersonated'] === 'chrome')).toBe(true);
   });
 
-  it('respecte le mode « standard » et explique le refus', async () => {
-    await container.settings.update({ sourceConnection: 'standard' });
-    const client = new SourceClient(
-      container.settings,
-      createLogger({ level: 'silent', pretty: false }),
-      { loadImpersonation: async () => fakeBrowser },
-    );
-    await expect(client.list('/fingerprint/')).rejects.toThrow(/vérification anti-robot/);
-    expect(seen.some((request) => request.headers['x-impersonated'])).toBe(false);
-    await container.settings.update({ sourceConnection: 'auto' });
+  it('passe à l’extension suivante quand un lien est refusé', async () => {
+    const addons = fakeAddons(['/expired.bin', '/file.bin']);
+    const client = new SourceClient(addons, silent, { loadImpersonation: async () => null });
+    const response = await client.openFile(PATH, { range: 'bytes=0-9' });
+    expect(response.status).toBe(206);
+    expect(await response.text()).toBe('0123456789');
+    expect(seen.map((request) => request.url)).toEqual(['/expired.bin', '/file.bin']);
+    expect(addons.refreshes).toBe(0);
   });
 
-  it('se replie sur la connexion standard si l’imitation est indisponible', async () => {
-    const client = new SourceClient(
-      container.settings,
-      createLogger({ level: 'silent', pretty: false }),
-      { loadImpersonation: async () => null },
+  it('redemande les liens une fois s’ils sont tous refusés, sans boucler', async () => {
+    const addons = fakeAddons(['/expired.bin', '/missing.bin'], ['/file.bin']);
+    const client = new SourceClient(addons, silent, { loadImpersonation: async () => null });
+    const first = await client.openFile(PATH);
+    expect(first.status).toBe(200);
+    await first.body?.cancel();
+    expect(addons.refreshes).toBe(1);
+
+    // Liens renouvelés à nouveau refusés : la réponse de l'hôte est rendue telle quelle
+    // pendant le délai minimal entre deux renouvellements.
+    const stuck = fakeAddons(['/expired.bin']);
+    const other = new SourceClient(stuck, silent, { loadImpersonation: async () => null });
+    expect((await other.openFile(PATH)).status).toBe(410);
+    expect((await other.openFile(PATH)).status).toBe(410);
+    expect(stuck.refreshes).toBe(1);
+  });
+
+  it('refuse un chemin de l’ancienne source', async () => {
+    const client = new SourceClient(fakeAddons(['/file.bin']), silent);
+    await expect(client.openFile('/movies/Film (2020)/film.mkv')).rejects.toThrow(
+      /ancienne source/,
     );
-    const listing = await client.list('/guarded/');
-    expect(listing.transport).toBe('standard');
-    expect(listing.entries).toHaveLength(1);
   });
 });
 
@@ -298,14 +199,10 @@ describe('relais local pour ffmpeg', () => {
   beforeAll(async () => {
     dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lumiere-relay-'));
     container = createContainer(
-      loadConfig({
-        DATA_DIR: dataDir,
-        SOURCE_BASE_URL: baseUrl,
-        STREMIO_ADDON_URL: '',
-        LOG_LEVEL: 'silent',
-      }),
-      createLogger({ level: 'silent', pretty: false }),
+      loadConfig({ DATA_DIR: dataDir, STREMIO_ADDON_URLS: '', LOG_LEVEL: 'silent' }),
+      silent,
     );
+    container.source = new SourceClient(fakeAddons(['/file.bin']), silent);
     app = await buildApp(container);
   });
 
@@ -321,13 +218,13 @@ describe('relais local pour ffmpeg', () => {
     expect(loopbackHost('192.168.1.10')).toBe('192.168.1.10');
     expect(loopbackHost('::1')).toBe('[::1]');
     const relay = new SourceRelay({ host: '0.0.0.0', port: 8484 });
-    expect(relay.urlFor('/movies/A b.mkv')).toMatch(
-      /^http:\/\/127\.0\.0\.1:8484\/api\/internal\/source\?path=%2Fmovies%2FA\+b\.mkv&token=[0-9a-f]{48}$/,
+    expect(relay.urlFor('/@stremio/movie/tt1/A b.mkv')).toMatch(
+      /^http:\/\/127\.0\.0\.1:8484\/api\/internal\/source\?path=%2F%40stremio%2Fmovie%2Ftt1%2FA\+b\.mkv&token=[0-9a-f]{48}$/,
     );
   });
 
   it('relaie les plages d’octets avec le bon jeton et refuse les autres', async () => {
-    const url = new URL(container.relay.urlFor('/file.bin'));
+    const url = new URL(container.relay.urlFor(PATH));
     const relayed = await app.inject({
       method: 'GET',
       url: `${url.pathname}${url.search}`,
@@ -339,7 +236,7 @@ describe('relais local pour ffmpeg', () => {
 
     const forged = await app.inject({
       method: 'GET',
-      url: `/api/internal/source?path=${encodeURIComponent('/file.bin')}&token=nope`,
+      url: `/api/internal/source?path=${encodeURIComponent(PATH)}&token=nope`,
     });
     expect(forged.statusCode).toBe(403);
   });

@@ -1,65 +1,50 @@
 import type {
-  CatalogMode,
   CatalogQuery,
   CatalogSectionStatus,
-  EpisodeEntry,
   EpisodeFiles,
   GenreCount,
   HomeFeed,
   MediaAvailability,
   Page,
   RemoteFile,
-  RemoteSubtitle,
   SeasonEntry,
   TitleDetails,
   TitleKind,
   TitleSummary,
 } from '@lumiere/shared';
-import { mapWithConcurrency } from '../../core/async';
 import { BadRequestError, NotFoundError, errorMessage } from '../../core/errors';
 import type { EventBus } from '../../core/event-bus';
 import type { Logger } from '../../core/logger';
-import { normalizeText, prettifyTitle, searchTokens, sortKey } from '../../core/text';
+import { searchTokens } from '../../core/text';
 import type { EpisodeRef } from '../../domain/episode-parser';
 import { compareByQuality } from '../../domain/file-selection';
-import {
-  classifyFile,
-  guessSubtitleLanguage,
-  isSampleFile,
-  stripExtension,
-} from '../../domain/media-files';
 import { parseRelease } from '../../domain/release-parser';
-import { parseFolderTitle } from '../../domain/title-parser';
 import { emptyAvailability, type AvailabilityService } from '../availability/availability.service';
 import type { MetadataService } from '../metadata/metadata.service';
-import type { TmdbSeason } from '../metadata/tmdb.client';
 import type { SettingsService } from '../settings/settings.service';
-import { remoteBaseName, remoteParent } from '../source/remote-path';
-import type { RemoteEntry, SourceClient } from '../source/source-client';
+import { remoteBaseName } from '../source/remote-path';
 import type { AddonFile, AddonResult } from '../source/stremio/stremio-addon';
 import { parseVirtualPath } from '../source/stremio/virtual-path';
 import type { AddonCatalog, SeasonOutline } from './addon-catalog';
 import { imageUrl, toTitleSummary } from './presenters';
-import {
-  groupSeries,
-  type FolderListing,
-  type GroupedEpisode,
-  type GroupedSeason,
-} from './series-structure';
-import type { SourceResolver } from './source-resolver';
 import type { TmdbCatalog } from './tmdb-catalog';
-import type {
-  CatalogSectionsRepository,
-  TitleRow,
-  TitleUpsert,
-  TitlesRepository,
-} from './titles.repository';
+import type { CatalogSectionsRepository, TitleRow, TitlesRepository } from './titles.repository';
 
 const KINDS: TitleKind[] = ['movie', 'series'];
 
-const isVideo = (entry: RemoteEntry) =>
-  !entry.isDirectory && classifyFile(entry.name) === 'video' && !isSampleFile(entry.name);
+/** Fichier à présenter : proposé par une extension, ou copie déjà connue. */
+interface FileEntry {
+  name: string;
+  path: string;
+  size: number | null;
+  label: string | null;
+}
 
+/**
+ * Catalogue : les titres viennent des listes et de la recherche de TMDB, leurs fichiers des
+ * extensions Stremio configurées (demandés à l'ouverture d'un film, ou à la lecture et au
+ * téléchargement d'un épisode).
+ */
 export class CatalogService {
   private readonly refreshes = new Map<TitleKind, Promise<CatalogSectionStatus>>();
   /** Sections dont la popularité manquante a déjà été rattrapée depuis le démarrage. */
@@ -69,54 +54,27 @@ export class CatalogService {
   constructor(
     private readonly titles: TitlesRepository,
     private readonly sections: CatalogSectionsRepository,
-    private readonly source: SourceClient,
     private readonly settings: SettingsService,
     private readonly metadata: MetadataService,
     private readonly availability: AvailabilityService,
     private readonly events: EventBus,
     private readonly logger: Logger,
     private readonly tmdbCatalog: TmdbCatalog,
-    private readonly resolver: SourceResolver,
     private readonly addon: AddonCatalog,
   ) {
     sections.resetInterrupted();
-    settings.onChange((next, previous) => {
-      const addonToggled = (next.stremioAddonUrl === '') !== (previous.stremioAddonUrl === '');
-      const sourceChanged =
-        addonToggled ||
-        next.sourceBaseUrl !== previous.sourceBaseUrl ||
-        next.catalogSource !== previous.catalogSource;
-      if (sourceChanged || next.moviesPath !== previous.moviesPath)
-        this.refreshInBackground('movie');
-      if (sourceChanged || next.seriesPath !== previous.seriesPath)
-        this.refreshInBackground('series');
+    // Clé TMDB ajoutée ou remplacée (premier lancement…) : catalogue importé sans attendre.
+    let tmdbKey = settings.getTmdbApiKey();
+    settings.onChange(() => {
+      const key = settings.getTmdbApiKey();
+      if (key === tmdbKey) return;
+      tmdbKey = key;
+      if (key) for (const kind of KINDS) this.refreshInBackground(kind);
     });
   }
 
-  /**
-   * Extension Stremio active : le catalogue vient de TMDB et les fichiers de l'extension
-   * (la source n'est plus lue directement).
-   */
-  get addonMode(): boolean {
-    return this.addon.enabled;
-  }
-
-  /**
-   * Le catalogue vient-il de TMDB (extension Stremio, choix, ou repli automatique quand la
-   * liste complète de la source est illisible) ? La recherche interroge alors aussi TMDB.
-   */
-  tmdbActive(kind?: TitleKind): boolean {
-    if (!this.metadata.isEnabled()) return false;
-    if (this.addon.enabled) return true;
-    const source = this.settings.get().catalogSource;
-    if (source !== 'auto') return source === 'tmdb';
-    return KINDS.filter((item) => !kind || item === kind).some(
-      (item) => this.status(item).mode === 'tmdb',
-    );
-  }
-
   // -------------------------------------------------------------------------
-  // Synchronisation avec la source
+  // Import depuis TMDB
   // -------------------------------------------------------------------------
 
   start(): void {
@@ -130,13 +88,8 @@ export class CatalogService {
     this.timer = null;
   }
 
-  sectionPath(kind: TitleKind): string {
-    const settings = this.settings.get();
-    return kind === 'movie' ? settings.moviesPath : settings.seriesPath;
-  }
-
   status(kind: TitleKind): CatalogSectionStatus {
-    const status = this.sections.get(kind, this.sectionPath(kind));
+    const status = this.sections.get(kind);
     return this.refreshes.has(kind) ? { ...status, state: 'refreshing' } : status;
   }
 
@@ -149,8 +102,6 @@ export class CatalogService {
     for (const kind of KINDS) {
       const status = this.status(kind);
       const age = status.lastRefreshAt ? Date.now() - Date.parse(status.lastRefreshAt) : Infinity;
-      // Extension activée ou désactivée depuis la dernière actualisation.
-      const modeChanged = this.addon.enabled ? status.mode !== 'addon' : status.mode === 'addon';
       // Catalogue antérieur au tri par popularité : ses titres n'en ont pas encore (une fois
       // par démarrage, pour ne pas boucler si TMDB n'en fournit pas).
       let missingPopularity = false;
@@ -161,15 +112,10 @@ export class CatalogService {
         !this.titles.hasPopularity(kind)
       ) {
         this.popularityChecked.add(kind);
-        if (status.mode === 'listing') void this.refreshPopularity(kind);
-        else missingPopularity = true;
+        missingPopularity = true;
       }
       const stale =
-        !status.lastRefreshAt ||
-        status.path !== this.sectionPath(kind) ||
-        modeChanged ||
-        missingPopularity ||
-        (hours > 0 && age > hours * 3600_000);
+        !status.lastRefreshAt || missingPopularity || (hours > 0 && age > hours * 3600_000);
       if (stale) {
         await this.refresh(kind).catch((error) =>
           this.logger.warn(
@@ -196,59 +142,22 @@ export class CatalogService {
   }
 
   private async runRefresh(kind: TitleKind): Promise<CatalogSectionStatus> {
-    const path = this.sectionPath(kind);
-    const previous = this.sections.get(kind, path);
-    this.events.publish({
-      type: 'catalog.updated',
-      status: { ...previous, path, state: 'refreshing' },
-    });
-    // Extension Stremio : catalogue TMDB, la liste de la source n'est pas lue.
-    if (this.addon.enabled) return this.refreshFromTmdb(kind, path, previous, null, 'addon');
-    const source = this.settings.get().catalogSource;
-    if (source === 'tmdb') return this.refreshFromTmdb(kind, path, previous, null, 'tmdb');
-    try {
-      return await this.refreshFromListing(kind, path, previous);
-    } catch (error) {
-      // Repli : la liste complète est illisible (trop volumineuse, bloquée…) → TMDB.
-      if (source === 'auto' && this.metadata.isEnabled())
-        return this.refreshFromTmdb(kind, path, previous, error, 'tmdb');
-      throw error;
-    }
-  }
-
-  private async refreshFromTmdb(
-    kind: TitleKind,
-    path: string,
-    previous: CatalogSectionStatus,
-    listingError: unknown,
-    mode: Exclude<CatalogMode, 'listing'>,
-  ): Promise<CatalogSectionStatus> {
+    const previous = this.sections.get(kind);
+    this.events.publish({ type: 'catalog.updated', status: { ...previous, state: 'refreshing' } });
     const started = Date.now();
     try {
       if (!this.metadata.isEnabled()) {
         throw new Error(
-          mode === 'addon'
-            ? 'Avec l’extension Stremio, le catalogue vient de TMDB : ajoutez une clé TMDB (Paramètres → Extensions et API), gratuite.'
-            : 'Le catalogue TMDB nécessite une clé TMDB (Paramètres → Extensions et API), gratuite.',
+          'Le catalogue vient de TMDB : ajoutez une clé TMDB (Paramètres → Extensions et API), gratuite.',
         );
       }
       const seen = await this.tmdbCatalog.importLists(kind);
-      const reason = listingError
-        ? `La liste complète de ${path} n’a pas pu être lue (${errorMessage(listingError).slice(0, 180)}). `
-        : '';
-      const note =
-        mode === 'addon'
-          ? 'Catalogue issu de TMDB : les fichiers sont demandés à l’extension Stremio à l’ouverture d’un film, ou à la lecture et au téléchargement d’un épisode.'
-          : `${reason}Catalogue issu de TMDB : chaque titre est cherché sur la source à l’ouverture de sa fiche.`;
       const status: CatalogSectionStatus = {
         kind,
-        path,
         state: 'idle',
         count: this.titles.count(kind),
         lastRefreshAt: new Date().toISOString(),
         lastError: null,
-        mode,
-        note,
       };
       this.sections.save(status);
       this.events.publish({ type: 'catalog.updated', status });
@@ -261,109 +170,13 @@ export class CatalogService {
     } catch (error) {
       const status: CatalogSectionStatus = {
         ...previous,
-        path,
         state: 'error',
         lastError: errorMessage(error),
-        mode,
-        note: null,
       };
       this.sections.save(status);
       this.events.publish({ type: 'catalog.updated', status });
       throw error;
     }
-  }
-
-  private async refreshFromListing(
-    kind: TitleKind,
-    path: string,
-    previous: CatalogSectionStatus,
-  ): Promise<CatalogSectionStatus> {
-    const started = Date.now();
-    try {
-      const listing = await this.source.list(path, { force: true });
-      const items = this.toUpserts(kind, listing.entries);
-      if (items.length === 0) {
-        throw new Error(
-          listing.entries.length === 0
-            ? `Aucune entrée reconnue dans ${listing.url} (format de listing inattendu ?)`
-            : `Aucun titre exploitable dans ${listing.url}`,
-        );
-      }
-      const seenAt = new Date().toISOString();
-      const { total, removed } = this.titles.syncSection(kind, items, seenAt);
-      const status: CatalogSectionStatus = {
-        kind,
-        path,
-        state: 'idle',
-        count: total,
-        lastRefreshAt: seenAt,
-        lastError: null,
-        mode: 'listing',
-        note: null,
-      };
-      this.sections.save(status);
-      this.events.publish({ type: 'catalog.updated', status });
-      this.metadata.kick();
-      this.logger.info(
-        { kind, total, removed, format: listing.format, ms: Date.now() - started },
-        'Catalogue actualisé',
-      );
-      if (this.metadata.isEnabled()) void this.refreshPopularity(kind);
-      return status;
-    } catch (error) {
-      const status: CatalogSectionStatus = {
-        ...previous,
-        path,
-        state: 'error',
-        lastError: errorMessage(error),
-        mode: 'listing',
-        note: null,
-      };
-      if (this.settings.get().catalogSource === 'listing' || !this.metadata.isEnabled()) {
-        this.sections.save(status);
-        this.events.publish({ type: 'catalog.updated', status });
-      }
-      throw error;
-    }
-  }
-
-  /** Popularité TMDB à jour pour les titres de la liste de la source (tri par popularité). */
-  private async refreshPopularity(kind: TitleKind): Promise<void> {
-    try {
-      const updated = await this.tmdbCatalog.refreshPopularity(kind);
-      this.logger.debug({ kind, updated }, 'Popularité TMDB actualisée');
-    } catch (error) {
-      this.logger.debug({ kind, err: errorMessage(error) }, 'Popularité TMDB non actualisée');
-    }
-  }
-
-  private toUpserts(kind: TitleKind, entries: RemoteEntry[]): TitleUpsert[] {
-    const items: TitleUpsert[] = [];
-    for (const entry of entries) {
-      let parsed: { title: string; year: number | null };
-      if (entry.isDirectory) {
-        parsed = parseFolderTitle(entry.name);
-      } else if (kind === 'movie' && isVideo(entry)) {
-        const release = parseRelease(entry.name);
-        parsed = { title: prettifyTitle(release.title), year: release.year };
-      } else {
-        continue;
-      }
-      if (!parsed.title) continue;
-      items.push({
-        kind,
-        remotePath: entry.path,
-        folderName: entry.name,
-        isFile: !entry.isDirectory,
-        title: parsed.title,
-        year: parsed.year,
-        searchText: normalizeText(`${parsed.title} ${entry.name}`),
-        sortKey: sortKey(parsed.title),
-        modifiedAt: entry.modifiedAt,
-        size: entry.size,
-      });
-    }
-    return items;
   }
 
   // -------------------------------------------------------------------------
@@ -378,8 +191,8 @@ export class CatalogService {
 
   async search(query: CatalogQuery): Promise<Page<TitleSummary>> {
     const text = query.q?.trim() ?? '';
-    if (text.length >= 2 && (query.page ?? 1) === 1 && this.tmdbActive(query.kind)) {
-      // Catalogue TMDB : la recherche couvre tous les films et séries, pas seulement les listes.
+    if (text.length >= 2 && (query.page ?? 1) === 1 && this.metadata.isEnabled()) {
+      // La recherche couvre tous les films et séries de TMDB, pas seulement les listes.
       await this.tmdbCatalog
         .search(text, query.kind)
         .catch((error) =>
@@ -400,28 +213,11 @@ export class CatalogService {
   }
 
   home(): HomeFeed {
-    const featured = this.titles.featured(8);
-    if (featured.length < 3) {
-      const ids = new Set(featured.map((row) => row.id));
-      for (const row of [...this.titles.recent('movie', 6), ...this.titles.recent('series', 4)]) {
-        if (featured.length >= 6) break;
-        if (!ids.has(row.id)) featured.push(row);
-      }
-    }
-    const sections = this.statuses();
-    // « Récemment ajoutés » n'a de sens que pour la liste du site : un catalogue TMDB n'a pas
-    // de date d'ajout (seulement celle de son import).
-    const recent = (kind: TitleKind) =>
-      sections.find((section) => section.kind === kind)?.mode === 'listing'
-        ? this.summaries(this.titles.recent(kind, 24))
-        : [];
     return {
-      featured: this.summaries(featured),
+      featured: this.summaries(this.titles.featured(8)),
       popularMovies: this.summaries(this.titles.popular('movie', 24)),
       popularSeries: this.summaries(this.titles.popular('series', 24)),
-      recentMovies: recent('movie'),
-      recentSeries: recent('series'),
-      sections,
+      sections: this.statuses(),
     };
   }
 
@@ -447,37 +243,17 @@ export class CatalogService {
       tmdbId: row.tmdb_id,
       metadataStatus: this.metadata.isEnabled() ? row.metadata_status : 'disabled',
       files: [],
-      subtitles: [],
       seasons: [],
-      sourceTried: [],
       sourceNotice: null,
-      streamsOnDemand: false,
     };
   }
 
-  async details(id: number): Promise<TitleDetails> {
-    if (this.addon.enabled) return this.addonDetails(id);
-    // Titre venu de TMDB : son dossier est cherché sur la source à la première ouverture.
-    const row = await this.resolver.ensure(await this.metadata.ensure(this.getRow(id)));
-    const base = this.baseDetails(row);
-    if (row.source_status === 'missing') return { ...base, sourceTried: parseTried(row) };
-    if (row.kind === 'movie') {
-      const { files, subtitles } = await this.movieFiles(row);
-      return { ...base, files, subtitles };
-    }
-    return { ...base, seasons: await this.seasons(row) };
-  }
-
-  // -------------------------------------------------------------------------
-  // Extension Stremio
-  // -------------------------------------------------------------------------
-
   /**
-   * Fiche en mode extension : les versions d'un film sont demandées à l'extension à
-   * l'ouverture ; les épisodes d'une série viennent de TMDB, et leurs fichiers ne sont
-   * demandés qu'à la lecture ou au téléchargement (pour ménager la limite de liens).
+   * Fiche d'un titre : les versions d'un film sont demandées aux extensions à l'ouverture ;
+   * les épisodes d'une série viennent de TMDB, et leurs fichiers ne sont demandés qu'à la
+   * lecture ou au téléchargement (pour ménager la limite de liens des extensions).
    */
-  private async addonDetails(id: number): Promise<TitleDetails> {
+  async details(id: number): Promise<TitleDetails> {
     const row = await this.metadata.ensure(this.getRow(id));
     if (row.kind === 'movie') {
       let result: AddonResult = { files: [], notice: null, limited: false };
@@ -489,7 +265,7 @@ export class CatalogService {
       const fresh = this.titles.findById(id) ?? row;
       return {
         ...this.baseDetails(fresh),
-        files: this.addonFiles(result.files, this.addon.knownFolder(fresh)),
+        files: this.presentFiles(result.files, this.addon.knownFolder(fresh)),
         sourceNotice: result.notice,
       };
     }
@@ -503,22 +279,22 @@ export class CatalogService {
     const fresh = this.titles.findById(id) ?? row;
     let seasons: SeasonEntry[] = [];
     try {
-      seasons = await this.addonSeasons(fresh);
+      seasons = await this.seasons(fresh);
     } catch (error) {
       notice ??= `Saisons indisponibles : ${errorMessage(error)}`;
     }
-    return { ...this.baseDetails(fresh), seasons, sourceNotice: notice, streamsOnDemand: true };
+    return { ...this.baseDetails(fresh), seasons, sourceNotice: notice };
   }
 
-  /** Fichiers proposés par l'extension, complétés des copies déjà téléchargées. */
-  private addonFiles(files: AddonFile[], folder: string | null, ref?: EpisodeRef): RemoteFile[] {
+  /** Fichiers proposés par les extensions, complétés des copies déjà téléchargées. */
+  private presentFiles(files: AddonFile[], folder: string | null, ref?: EpisodeRef): RemoteFile[] {
     const offered = new Set(files.map((file) => file.path));
     const known = folder
       ? this.availability
           .knownPathsUnder(folder)
           .filter((path) => !offered.has(path) && parseVirtualPath(path)?.fileName)
       : [];
-    const entries = [
+    const entries: FileEntry[] = [
       ...files.map((file) => ({
         name: file.fileName,
         path: file.path,
@@ -528,24 +304,11 @@ export class CatalogService {
       ...known.map((path) => ({ name: remoteBaseName(path), path, size: null, label: null })),
     ].sort(compareByQuality);
     const availability = this.availability.forRemotePaths(entries.map((entry) => entry.path));
-    return entries.map((entry) => ({
-      ...toRemoteFile(
-        {
-          name: entry.name,
-          path: entry.path,
-          isDirectory: false,
-          size: entry.size,
-          modifiedAt: null,
-        },
-        availability.get(entry.path),
-        ref,
-      ),
-      label: entry.label,
-    }));
+    return entries.map((entry) => toRemoteFile(entry, availability.get(entry.path), ref));
   }
 
   /** Saisons TMDB ; les fichiers d'un épisode sont ses copies connues (téléchargées, regardées). */
-  private async addonSeasons(row: TitleRow): Promise<SeasonEntry[]> {
+  private async seasons(row: TitleRow): Promise<SeasonEntry[]> {
     const outlines = await this.addon.seasons(row);
     const folder = this.addon.knownFolder(row);
     const known = folder ? this.availability.knownPathsUnder(folder, { watched: true }) : [];
@@ -561,7 +324,6 @@ export class CatalogService {
       key: `s${season.number}`,
       number: season.number,
       name: season.name,
-      path: null,
       posterUrl: imageUrl(season.posterPath, 'w342'),
       overview: season.overview,
       episodes: season.episodes.map((episode) => {
@@ -575,13 +337,7 @@ export class CatalogService {
           airDate: episode.airDate,
           runtime: episode.runtime,
           files: (byEpisode.get(`${episode.season}x${episode.episode}`) ?? [])
-            .map((path) => ({
-              name: remoteBaseName(path),
-              path,
-              isDirectory: false,
-              size: null,
-              modifiedAt: null,
-            }))
+            .map((path) => ({ name: remoteBaseName(path), path, size: null, label: null }))
             .sort(compareByQuality)
             .map((entry) => toRemoteFile(entry, availability.get(entry.path), ref)),
         };
@@ -589,27 +345,34 @@ export class CatalogService {
     }));
   }
 
-  private requireAddonSeries(id: number): TitleRow {
+  private requireSeries(id: number): TitleRow {
     const row = this.getRow(id);
     if (row.kind !== 'series') throw new BadRequestError('Ce titre n’est pas une série.');
-    if (!this.addon.enabled)
-      throw new BadRequestError(
-        'Aucune extension Stremio n’est configurée (Paramètres → Extensions et API).',
-      );
     return row;
   }
 
-  /** Versions d'un épisode proposées par l'extension (une demande de liens). */
+  /** Versions d'un film proposées par les extensions (une demande de liens). */
+  async movieFiles(row: TitleRow): Promise<AddonFile[]> {
+    const result = await this.addon.movieFiles(row);
+    if (result.files.length === 0) {
+      throw new NotFoundError(
+        result.notice ?? 'Aucune extension Stremio ne propose de fichier pour ce film.',
+      );
+    }
+    return result.files;
+  }
+
+  /** Versions d'un épisode proposées par les extensions (une demande de liens). */
   async episodeFiles(
     id: number,
     season: number,
     episode: number,
   ): Promise<EpisodeFiles & { limited: boolean }> {
-    const row = this.requireAddonSeries(id);
+    const row = this.requireSeries(id);
     const result = await this.addon.episodeFiles(row, season, episode);
     const folder = await this.addon.episodeFolder(this.titles.findById(id) ?? row, season, episode);
     return {
-      files: this.addonFiles(result.files, folder, { season, episode, episodeEnd: null }),
+      files: this.presentFiles(result.files, folder, { season, episode, episodeEnd: null }),
       notice: result.notice,
       limited: result.limited,
     };
@@ -617,14 +380,14 @@ export class CatalogService {
 
   /** Copies d'un épisode déjà téléchargées ou en file (sans demande de liens). */
   async episodeCopies(id: number, season: number, episode: number): Promise<string[]> {
-    const row = this.requireAddonSeries(id);
+    const row = this.requireSeries(id);
     const folder = await this.addon.episodeFolder(row, season, episode);
     return folder ? this.availability.knownPathsUnder(folder) : [];
   }
 
-  /** Saisons et épisodes (TMDB) d'une série en mode extension. */
+  /** Saisons et épisodes (TMDB) d'une série. */
   episodeOutline(id: number): Promise<SeasonOutline[]> {
-    return this.addon.seasons(this.requireAddonSeries(id));
+    return this.addon.seasons(this.requireSeries(id));
   }
 
   nextEpisode(
@@ -634,158 +397,10 @@ export class CatalogService {
   ): Promise<{ season: number; episode: number } | null> {
     return this.addon.nextEpisode(row, season, episode);
   }
-
-  // -------------------------------------------------------------------------
-  // Fichiers sur la source
-  // -------------------------------------------------------------------------
-
-  /** Fichiers vidéo (et sous-titres) d'un film. */
-  async movieEntries(row: TitleRow): Promise<{ videos: RemoteEntry[]; subtitles: RemoteEntry[] }> {
-    if (this.addon.enabled) {
-      const result = await this.addon.movieFiles(row);
-      if (result.files.length === 0) {
-        throw new NotFoundError(
-          result.notice ?? 'L’extension Stremio ne propose aucun fichier pour ce film.',
-        );
-      }
-      return {
-        videos: result.files.map((file) => ({
-          name: file.fileName,
-          path: file.path,
-          isDirectory: false,
-          size: file.size,
-          modifiedAt: null,
-        })),
-        subtitles: [],
-      };
-    }
-    let entries: RemoteEntry[];
-    if (row.is_file) {
-      const listing = await this.source
-        .list(remoteParent(row.remote_path) ?? '/')
-        .catch(() => null);
-      const stem = stripExtension(row.folder_name).toLowerCase();
-      const self = listing?.entries.find((entry) => entry.path === row.remote_path);
-      entries = [
-        self ?? {
-          name: row.folder_name,
-          path: row.remote_path,
-          isDirectory: false,
-          size: row.remote_size,
-          modifiedAt: row.remote_modified_at,
-        },
-        ...(listing?.entries.filter(
-          (entry) =>
-            classifyFile(entry.name) === 'subtitle' && entry.name.toLowerCase().startsWith(stem),
-        ) ?? []),
-      ];
-    } else {
-      const listing = await this.source.list(row.remote_path);
-      entries = listing.entries;
-      if (!entries.some(isVideo)) {
-        // Certaines releases sont rangées dans un sous-dossier supplémentaire.
-        const nested = await mapWithConcurrency(
-          entries.filter((entry) => entry.isDirectory).slice(0, 10),
-          3,
-          (dir) =>
-            this.source
-              .list(dir.path)
-              .then((sub) => sub.entries)
-              .catch(() => [] as RemoteEntry[]),
-        );
-        entries = [...entries, ...nested.flat()];
-      }
-    }
-    return {
-      videos: entries.filter(isVideo),
-      subtitles: entries.filter(
-        (entry) => !entry.isDirectory && classifyFile(entry.name) === 'subtitle',
-      ),
-    };
-  }
-
-  private async movieFiles(
-    row: TitleRow,
-  ): Promise<{ files: RemoteFile[]; subtitles: RemoteSubtitle[] }> {
-    const { videos, subtitles } = await this.movieEntries(row);
-    const availability = this.availability.forRemotePaths(videos.map((video) => video.path));
-    return {
-      files: [...videos]
-        .sort(compareByQuality)
-        .map((video) => toRemoteFile(video, availability.get(video.path))),
-      subtitles: subtitles.map((subtitle) => ({
-        name: subtitle.name,
-        path: subtitle.path,
-        language: guessSubtitleLanguage(subtitle.name),
-      })),
-    };
-  }
-
-  /** Structure distante d'une série (dossiers de saison explorés en parallèle). */
-  async seriesStructure(row: TitleRow): Promise<GroupedSeason[]> {
-    const root = await this.source.list(row.remote_path);
-    const dirs = root.entries.filter((entry) => entry.isDirectory).slice(0, 80);
-    const folders: FolderListing[] = await mapWithConcurrency(dirs, 4, async (dir) => {
-      let entries = (await this.source.list(dir.path).catch(() => null))?.entries ?? [];
-      if (!entries.some(isVideo)) {
-        const nested = await mapWithConcurrency(
-          entries.filter((entry) => entry.isDirectory).slice(0, 30),
-          3,
-          (sub) =>
-            this.source
-              .list(sub.path)
-              .then((listing) => listing.entries)
-              .catch(() => [] as RemoteEntry[]),
-        );
-        entries = [...entries, ...nested.flat()];
-      }
-      return { dir, entries };
-    });
-    return groupSeries(root.entries, folders);
-  }
-
-  private async seasons(row: TitleRow): Promise<SeasonEntry[]> {
-    const structure = await this.seriesStructure(row);
-    const paths = structure.flatMap((season) =>
-      season.episodes.flatMap((episode) => episode.files.map((file) => file.path)),
-    );
-    const availability = this.availability.forRemotePaths(paths);
-    const numbers = structure
-      .map((season) => season.number)
-      .filter((number): number is number => number !== null);
-    const tmdbSeasons = new Map<number, TmdbSeason | null>();
-    await mapWithConcurrency(numbers, 3, async (number) => {
-      tmdbSeasons.set(number, await this.metadata.season(row, number));
-    });
-
-    return structure.map((season) => {
-      const tmdb = season.number !== null ? tmdbSeasons.get(season.number) : null;
-      return {
-        key: season.key,
-        number: season.number,
-        name: season.name,
-        path: season.path,
-        posterUrl: imageUrl(tmdb?.poster_path, 'w342'),
-        overview: tmdb?.overview?.trim() || null,
-        episodes: season.episodes.map((episode) =>
-          toEpisodeEntry(episode, tmdb ?? null, availability),
-        ),
-      };
-    });
-  }
-}
-
-function parseTried(row: TitleRow): string[] {
-  try {
-    const value = JSON.parse(row.source_note ?? '[]') as unknown;
-    return Array.isArray(value) ? value.filter((item) => typeof item === 'string') : [];
-  } catch {
-    return [];
-  }
 }
 
 function toRemoteFile(
-  entry: RemoteEntry,
+  entry: FileEntry,
   availability: MediaAvailability | undefined,
   ref?: EpisodeRef,
 ): RemoteFile {
@@ -793,44 +408,12 @@ function toRemoteFile(
     name: entry.name,
     path: entry.path,
     size: entry.size,
-    modifiedAt: entry.modifiedAt,
+    modifiedAt: null,
     release: parseRelease(entry.name).info,
     season: ref?.season ?? null,
     episode: ref?.episode ?? null,
     episodeEnd: ref?.episodeEnd ?? null,
     availability: availability ?? emptyAvailability(),
-    label: null,
-  };
-}
-
-function episodeFallbackTitle(episode: GroupedEpisode): string {
-  if (episode.episode === null) return stripExtension(episode.files[0]?.name ?? 'Épisode');
-  return episode.episodeEnd
-    ? `Épisodes ${episode.episode}-${episode.episodeEnd}`
-    : `Épisode ${episode.episode}`;
-}
-
-function toEpisodeEntry(
-  episode: GroupedEpisode,
-  tmdb: TmdbSeason | null,
-  availability: Map<string, MediaAvailability>,
-): EpisodeEntry {
-  const info =
-    episode.episode !== null
-      ? tmdb?.episodes.find((item) => item.episode_number === episode.episode)
-      : undefined;
-  return {
-    key: episode.key,
-    season: episode.season,
-    episode: episode.episode,
-    episodeEnd: episode.episodeEnd,
-    title: info?.name?.trim() || episodeFallbackTitle(episode),
-    overview: info?.overview?.trim() || null,
-    stillUrl: imageUrl(info?.still_path, 'w300'),
-    airDate: info?.air_date ?? null,
-    runtime: info?.runtime ?? null,
-    files: [...episode.files]
-      .sort(compareByQuality)
-      .map((file) => toRemoteFile(file, availability.get(file.path), episode)),
+    label: entry.label,
   };
 }

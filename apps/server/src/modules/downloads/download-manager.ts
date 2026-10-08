@@ -25,7 +25,6 @@ import { parseRelease } from '../../domain/release-parser';
 import type { CatalogService } from '../catalog/catalog.service';
 import { displayTitle, posterUrlFor } from '../catalog/presenters';
 import type { TitleRow, TitlesRepository } from '../catalog/titles.repository';
-import type { ExplorerService } from '../explorer/explorer.service';
 import type { LibraryService } from '../library/library.service';
 import type { MetadataService } from '../metadata/metadata.service';
 import type { SettingsService } from '../settings/settings.service';
@@ -91,7 +90,7 @@ export class DownloadManager {
   private statsTimer: NodeJS.Timeout | null = null;
   private lastStatsActive = -1;
   private stopping = false;
-  /** Épisodes à demander à l'extension Stremio avant de les ajouter à la file. */
+  /** Épisodes à demander aux extensions Stremio avant de les ajouter à la file. */
   private readonly episodes: EpisodeQueue;
 
   constructor(
@@ -100,7 +99,6 @@ export class DownloadManager {
     private readonly library: LibraryService,
     private readonly catalog: CatalogService,
     private readonly titles: TitlesRepository,
-    private readonly explorer: ExplorerService,
     private readonly metadata: MetadataService,
     private readonly settings: SettingsService,
     private readonly events: EventBus,
@@ -264,37 +262,26 @@ export class DownloadManager {
     const row = this.catalog.getRow(titleId);
     const { preferredQuality, preferredAudioLanguage } = this.settings.get();
     if (row.kind === 'movie') {
-      const { videos } = await this.catalog.movieEntries(row);
-      const best = pickPreferredFile(videos, preferredQuality, preferredAudioLanguage);
+      const files = await this.catalog.movieFiles(row);
+      const best = pickPreferredFile(
+        files.map((file) => ({ name: file.fileName, path: file.path, size: file.size })),
+        preferredQuality,
+        preferredAudioLanguage,
+      );
       if (!best) throw new NotFoundError('Aucun fichier vidéo pour ce film.');
       return this.enqueueFiles([{ path: best.path, size: best.size, titleId }]);
     }
-    if (this.catalog.addonMode)
-      return this.enqueueAddonEpisodes(row, season ?? null, episode ?? null);
-    const structure = await this.catalog.seriesStructure(row);
-    const seasons =
-      season === undefined || season === null
-        ? structure
-        : structure.filter((item) => item.number === season);
-    const files = seasons
-      .flatMap((item) =>
-        item.episodes
-          .filter((entry) => episode === undefined || episode === null || entry.episode === episode)
-          .map((entry) => pickPreferredFile(entry.files, preferredQuality, preferredAudioLanguage)),
-      )
-      .filter((file): file is NonNullable<typeof file> => file !== null);
-    if (files.length === 0) throw new NotFoundError('Aucun épisode trouvé.');
-    return this.enqueueFiles(files.map((file) => ({ path: file.path, size: file.size, titleId })));
+    return this.enqueueAddonEpisodes(row, season ?? null, episode ?? null);
   }
 
   // -------------------------------------------------------------------------
-  // Épisodes fournis par l'extension Stremio
+  // Épisodes fournis par les extensions Stremio
   // -------------------------------------------------------------------------
 
   /**
-   * Épisodes d'une série en mode extension : un épisode est demandé tout de suite ; une
-   * saison ou une série entière part dans la file des demandes (une à la fois, en
-   * arrière-plan), sans redemander les épisodes déjà téléchargés.
+   * Épisodes d'une série : un épisode est demandé tout de suite ; une saison ou une série
+   * entière part dans la file des demandes (une à la fois, en arrière-plan), sans redemander
+   * les épisodes déjà téléchargés.
    */
   private async enqueueAddonEpisodes(
     row: TitleRow,
@@ -341,7 +328,7 @@ export class DownloadManager {
     return copies.length > 0;
   }
 
-  /** Version préférée d'un épisode parmi celles que propose l'extension (une demande). */
+  /** Version préférée d'un épisode parmi celles que proposent les extensions (une demande). */
   private async pickAddonEpisode(
     titleId: number,
     target: EpisodeTarget,
@@ -357,7 +344,7 @@ export class DownloadManager {
     const best = pickPreferredFile(files, preferredQuality, preferredAudioLanguage);
     if (!best) {
       return {
-        reason: notice ?? 'L’extension Stremio ne propose aucun fichier pour cet épisode.',
+        reason: notice ?? 'Aucune extension Stremio ne propose de fichier pour cet épisode.',
         limited,
       };
     }
@@ -401,12 +388,6 @@ export class DownloadManager {
           : `${label} : ${added} épisode${added > 1 ? 's' : ''} ajouté${added > 1 ? 's' : ''} aux téléchargements`,
       description: details.join(' ') || null,
     });
-  }
-
-  async enqueueFolder(folderPath: string): Promise<EnqueueResult> {
-    const videos = await this.explorer.collectVideos(folderPath);
-    if (videos.length === 0) throw new NotFoundError('Aucune vidéo trouvée dans ce dossier.');
-    return this.enqueueFiles(videos.map((video) => ({ path: video.path, size: video.size })));
   }
 
   private describe(

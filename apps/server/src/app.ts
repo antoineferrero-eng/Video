@@ -17,7 +17,6 @@ import { AppError } from './core/errors';
 import { registerCatalogRoutes } from './modules/catalog/catalog.routes';
 import { registerDownloadRoutes } from './modules/downloads/downloads.routes';
 import { registerEventRoutes } from './modules/events/events.routes';
-import { registerExplorerRoutes } from './modules/explorer/explorer.routes';
 import { registerLibraryRoutes } from './modules/library/library.routes';
 import { registerMetadataRoutes } from './modules/metadata/metadata.routes';
 import { registerPlaybackRoutes } from './modules/playback/playback.routes';
@@ -88,7 +87,6 @@ export async function buildApp(container: Container): Promise<FastifyInstance> {
       registerSettingsRoutes(api, container);
       registerCatalogRoutes(api, container);
       registerMetadataRoutes(api, container);
-      registerExplorerRoutes(api, container);
       registerDownloadRoutes(api, container);
       registerLibraryRoutes(api, container);
       registerPlaybackRoutes(api, container);

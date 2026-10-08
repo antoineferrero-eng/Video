@@ -10,6 +10,8 @@ import { ButtonLink } from '../../components/ui/Button';
 import { EmptyState, ErrorState, Skeleton } from '../../components/ui/States';
 import { episodeCode, formatBytes } from '../../lib/format';
 import { playerUrl } from '../../lib/routes';
+import { SetupCard } from '../setup/SetupCard';
+import { useSetupStatus } from '../setup/setup-status';
 import { Hero } from './Hero';
 
 export function HomePage() {
@@ -17,23 +19,27 @@ export function HomePage() {
   const continueWatching = useContinueWatching();
   const library = useLibrary();
   const removeProgress = useRemoveProgress();
+  const setup = useSetupStatus();
 
   if (home.isPending) return <HomeSkeleton />;
   if (home.isError) return <ErrorState error={home.error} onRetry={() => void home.refetch()} />;
 
   const feed = home.data;
-  const failing = feed.sections.filter((section) => section.state === 'error');
-  const isEmpty = [
-    feed.popularMovies,
-    feed.popularSeries,
-    feed.recentMovies,
-    feed.recentSeries,
-  ].every((row) => row.length === 0);
+  // Premier lancement : la carte de bienvenue remplace les erreurs dues à une clé manquante.
+  const needsSetup = setup !== null && !setup.complete;
+  const failing = feed.sections.filter(
+    (section) => section.state === 'error' && setup?.tmdb !== false,
+  );
+  const isEmpty = [feed.popularMovies, feed.popularSeries].every((row) => row.length === 0);
   const recentLibrary = (library.data ?? []).filter((item) => item.exists).slice(0, 16);
 
   return (
     <div className="flex flex-col gap-10">
       {feed.featured.length > 0 && <Hero titles={feed.featured} />}
+
+      {needsSetup && (
+        <SetupCard status={setup} className={feed.featured.length > 0 ? '' : 'mt-4'} />
+      )}
 
       {failing.length > 0 && (
         <div className="flex flex-col gap-3 rounded-card bg-red-500/[0.1] p-5 shadow-[inset_0_0_0_1px_rgb(248_113_113/0.25)] sm:flex-row sm:items-center">
@@ -42,26 +48,25 @@ export function HomePage() {
             <p className="font-semibold text-red-200">Le catalogue n'a pas pu être actualisé</p>
             {failing.map((section) => (
               <p key={section.kind} className="text-red-200/70">
-                {section.kind === 'movie' ? 'Films' : 'Séries'} ({section.path}) :{' '}
-                {section.lastError}
+                {section.kind === 'movie' ? 'Films' : 'Séries'} : {section.lastError}
               </p>
             ))}
           </div>
           <ButtonLink
-            to="/parametres?onglet=source"
+            to="/parametres?onglet=services"
             size="sm"
             icon={<Settings className="size-4" />}
           >
-            Vérifier la source
+            Vérifier la clé TMDB
           </ButtonLink>
         </div>
       )}
 
-      {isEmpty && failing.length === 0 && (
+      {isEmpty && failing.length === 0 && !needsSetup && (
         <EmptyState
           icon={<Film />}
           title="Le catalogue est en cours de chargement"
-          description="La liste des films et séries est récupérée depuis la source. Cela ne prend généralement que quelques secondes."
+          description="La liste des films et séries est récupérée depuis TMDB. Cela ne prend généralement que quelques secondes."
         />
       )}
 
@@ -79,8 +84,6 @@ export function HomePage() {
 
       <TitleRow title="Films populaires" to="/films" titles={feed.popularMovies} />
       <TitleRow title="Séries populaires" to="/series" titles={feed.popularSeries} />
-      <TitleRow title="Films récemment ajoutés" to="/films" titles={feed.recentMovies} />
-      <TitleRow title="Séries récemment ajoutées" to="/series" titles={feed.recentSeries} />
 
       {recentLibrary.length > 0 && (
         <MediaRow title="Dans ma bibliothèque" action={{ label: 'Tout voir', to: '/bibliotheque' }}>

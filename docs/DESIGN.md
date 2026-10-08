@@ -68,19 +68,22 @@ Variables du matériau (`glass.css`) : `--lg-alpha`, `--lg-blur`, `--lg-dim` (no
 
 ## Matériaux et composants
 
-| Besoin                             | À utiliser                                                         |
-| ---------------------------------- | ------------------------------------------------------------------ |
-| Panneau ou barre flottante         | `<Glass as="aside" lens={{ bezel, strength }}>`                    |
-| Groupe d'actions dans une barre    | `<Glass className="rounded-full p-1">` + boutons `variant="ghost"` |
-| Bouton flottant (sur image, barre) | `<Button variant="glass">` (`glass-clear` sur une vidéo)           |
-| Action principale                  | `<Button variant="primary">` (verre proéminent ambré)              |
-| Action secondaire dans le contenu  | `<Button variant="secondary">` (remplissage)                       |
-| Choix exclusif (saisons, réglages) | `<Tabs>` (contrôle segmenté, `kind="radio"` pour un réglage)       |
-| Liste de choix                     | `<Menu>` (verre épais qui jaillit du bouton)                       |
-| Interrupteur                       | `<Switch>` (curseur qui devient lentille pendant l'appui)          |
-| Confirmation                       | `<Dialog>` (verre épais, matérialisation)                          |
-| Affiche ou vignette cliquable      | `.media-frame` + `data-glow` dans un lien `group`                  |
-| Section de contenu                 | `.fill rounded-card`                                               |
+| Besoin                             | À utiliser                                                                                                  |
+| ---------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| Panneau ou barre flottante         | `<Glass as="aside" lens={{ bezel, strength }}>`                                                             |
+| Groupe d'actions dans une barre    | `<Glass className="rounded-full p-1">` + boutons `variant="ghost"`                                          |
+| Bouton flottant (sur image, barre) | `<Button variant="glass">` (`glass-clear` sur une vidéo)                                                    |
+| Action principale                  | `<Button variant="primary">` (verre proéminent ambré)                                                       |
+| Action secondaire dans le contenu  | `<Button variant="secondary">` (remplissage)                                                                |
+| Choix exclusif (saisons, réglages) | `<Tabs>` (contrôle segmenté, `kind="radio"` pour un réglage)                                                |
+| Liste de choix                     | `<Menu>` (verre épais qui jaillit du bouton)                                                                |
+| Champ de formulaire à choix        | `<Select>` (liste en verre épais, jamais le `<select>` natif, dont la liste suit le thème clair du système) |
+| Progression                        | `<ProgressBar>` (remplissage découpé par `clip-path`, segment animé sans valeur, reflet `active`)           |
+| Configuration à terminer           | `<SetupCard>` (accueil, catalogue vide) ou `<SetupBanner>` (rappel compact)                                 |
+| Interrupteur                       | `<Switch>` (curseur qui devient lentille pendant l'appui)                                                   |
+| Confirmation                       | `<Dialog>` (verre épais, matérialisation)                                                                   |
+| Affiche ou vignette cliquable      | `.media-frame` + `data-glow` dans un lien `group`                                                           |
+| Section de contenu                 | `.fill rounded-card`                                                                                        |
 
 ### Ajouter la réfraction à un nouvel élément
 

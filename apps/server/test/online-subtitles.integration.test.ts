@@ -12,18 +12,19 @@ import { loadConfig } from '../src/config/env';
 import { createContainer, stopServices, type Container } from '../src/container';
 import { createLogger } from '../src/core/logger';
 import { openSubtitlesHash } from '../src/modules/subtitles/opensubtitles-hash';
+import { addonRoute, listen, tmdbCatalogRoute } from './helpers/fakes';
 
 /**
  * Sous-titres en ligne de bout en bout : un film lu sans être téléchargé (relais), son
- * empreinte calculée à distance, un faux OpenSubtitles.com et une fausse extension Stremio.
+ * empreinte calculée à distance, un faux OpenSubtitles.com et une fausse extension Stremio
+ * de sous-titres (à côté de celle qui fournit le fichier).
  */
 const hasFfmpeg =
   spawnSync('ffmpeg', ['-hide_banner', '-version']).status === 0 &&
   spawnSync('ffprobe', ['-hide_banner', '-version']).status === 0;
 
-const FOLDER = 'Ready Player One (2018)';
 const FILE_NAME = 'Ready.Player.One.2018.1080p.WEB.H264.AC3-GRP.mkv';
-const FILE_PATH = `/movies/${FOLDER}/${FILE_NAME}`;
+const FILE_PATH = `/@stremio/movie/tt1677720/${FILE_NAME}`;
 const CHROME = {
   videoCodecs: ['h264', 'vp9'],
   audioCodecs: ['aac', 'opus'],
@@ -41,15 +42,13 @@ const searches: URLSearchParams[] = [];
 const addonRequests: string[] = [];
 let downloads = 0;
 
-function listing(entries: string[]): string {
-  const links = entries
-    .map(
-      (name) =>
-        `<a href="${encodeURIComponent(name)}${name.endsWith('/') ? '' : ''}">${name}</a>   01-Jan-2025 10:00   -`,
-    )
-    .join('\n');
-  return `<html><body><pre><a href="../">../</a>\n${links}\n</pre></body></html>`;
-}
+const streams = addonRoute({
+  prefix: '/streams',
+  base: () => base,
+  get streams() {
+    return { tt1677720: [{ fileName: FILE_NAME, bytes: media }] };
+  },
+});
 
 function startServer(): Promise<string> {
   server = http.createServer((request, response) => {
@@ -58,21 +57,24 @@ function startServer(): Promise<string> {
     const send = (status: number, body: unknown) =>
       response.writeHead(status, { 'content-type': 'application/json' }).end(JSON.stringify(body));
 
-    // --- Source (liste façon nginx + fichier avec Range)
-    if (pathname === '/movies/') return void response.end(listing([`${FOLDER}/`]));
-    if (pathname === '/tvs/') return void response.end(listing([]));
-    if (pathname === `/movies/${FOLDER}/`) return void response.end(listing([FILE_NAME]));
-    if (pathname === FILE_PATH) {
-      const match = /bytes=(\d+)-(\d*)/.exec(request.headers.range ?? '');
-      const start = match ? Number(match[1]) : 0;
-      const end = match?.[2] ? Math.min(Number(match[2]), media.length - 1) : media.length - 1;
-      response.writeHead(match ? 206 : 200, {
-        'content-length': end - start + 1,
-        'accept-ranges': 'bytes',
-        ...(match ? { 'content-range': `bytes ${start}-${end}/${media.length}` } : {}),
-      });
-      return void response.end(media.subarray(start, end + 1));
-    }
+    // --- TMDB (catalogue) et extension qui fournit le fichier (Range)
+    if (streams(request, response)) return;
+    if (
+      tmdbCatalogRoute(
+        [
+          {
+            id: 333339,
+            kind: 'movie',
+            name: 'Ready Player One',
+            date: '2018-03-28',
+            imdb: 'tt1677720',
+          },
+        ],
+        pathname.replace(/^\/3/, ''),
+        response,
+      )
+    )
+      return;
 
     // --- Faux OpenSubtitles.com
     // Lien temporaire : téléchargeable sans clé, comme chez OpenSubtitles.
@@ -127,11 +129,7 @@ function startServer(): Promise<string> {
     }
     response.writeHead(404).end();
   });
-  return new Promise((resolve) =>
-    server.listen(0, '127.0.0.1', () =>
-      resolve(`http://127.0.0.1:${(server.address() as AddressInfo).port}`),
-    ),
-  );
+  return listen(server);
 }
 
 describe.skipIf(!hasFfmpeg)('sous-titres en ligne', () => {
@@ -153,8 +151,9 @@ describe.skipIf(!hasFfmpeg)('sous-titres en ligne', () => {
 
     const config = loadConfig({
       DATA_DIR: path.join(workDir, 'data'),
-      STREMIO_ADDON_URL: '',
-      SOURCE_BASE_URL: base,
+      STREMIO_ADDON_URLS: `${base}/streams/manifest.json`,
+      TMDB_API_KEY: 'tmdb',
+      TMDB_API_BASE_URL: `${base}/3`,
       OPENSUBTITLES_API_KEY: 'cle',
       OPENSUBTITLES_API_URL: `${base}/os/api/v1`,
       SUBTITLE_ADDON_URLS: `${base}/addon/manifest.json`,
@@ -171,7 +170,8 @@ describe.skipIf(!hasFfmpeg)('sous-titres en ligne', () => {
 
     await container.catalog.refresh('movie');
     const [title] = (await container.catalog.search({ kind: 'movie' })).items;
-    container.titles.setImdbId(title!.id, 'tt1677720');
+    // Fiche ouverte : le titre est rattaché à son identifiant IMDb et à ses fichiers.
+    await container.catalog.details(title!.id);
 
     const response = await app.inject({
       method: 'POST',

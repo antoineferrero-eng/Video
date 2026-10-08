@@ -210,8 +210,7 @@ beforeAll(async () => {
   container = createContainer(
     loadConfig({
       DATA_DIR: dataDir,
-      SOURCE_BASE_URL: 'http://127.0.0.1:9',
-      STREMIO_ADDON_URL: `${addonBase}/manifest.json`,
+      STREMIO_ADDON_URLS: `${addonBase}/manifest.json`,
       TMDB_API_KEY: 'cle',
       TMDB_API_BASE_URL: `${tmdbUrl}/3`,
       LOG_LEVEL: 'silent',
@@ -235,14 +234,11 @@ async function titleId(name: string): Promise<number> {
   return found.id;
 }
 
-describe('mode extension Stremio', () => {
-  it('construit le catalogue depuis TMDB sans lire la source', async () => {
+describe('catalogue TMDB et fichiers de l’extension Stremio', () => {
+  it('construit le catalogue depuis TMDB', async () => {
     const movies = await container.catalog.refresh('movie');
-    expect(movies).toMatchObject({ state: 'idle', mode: 'addon', count: 2, lastError: null });
-    expect(movies.note).toMatch(/extension Stremio/);
+    expect(movies).toMatchObject({ state: 'idle', count: 2, lastError: null });
     await container.catalog.refresh('series');
-    expect(container.catalog.addonMode).toBe(true);
-    expect(container.catalog.tmdbActive()).toBe(true);
   });
 
   it('demande les versions d’un film à l’ouverture de sa fiche, une seule fois', async () => {
@@ -269,7 +265,6 @@ describe('mode extension Stremio', () => {
     const id = await titleId('Breaking Bad');
     addonRequests.length = 0;
     const details = await container.catalog.details(id);
-    expect(details.streamsOnDemand).toBe(true);
     expect(details.remotePath).toBe('/@stremio/series/tt0903747/');
     expect(details.seasons.map((season) => [season.name, season.episodes.length])).toEqual([
       ['Saison 1', 3],

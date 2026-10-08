@@ -2,7 +2,7 @@
   "name": "@lumiere/demo-source",
   "version": "1.0.0",
   "private": true,
-  "description": "Serveur d'index HTTP de démonstration (listing façon nginx + vidéos d'exemple générées avec ffmpeg).",
+  "description": "Services de démonstration hors ligne (faux TMDB, extensions Stremio, sous-titres) et vidéos d’exemple générées avec ffmpeg.",
   "type": "module",
   "scripts": {
     "generate": "tsx src/generate-media.ts",

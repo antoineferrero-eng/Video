@@ -9,12 +9,10 @@ import { KeyValueCache, openDatabase, type Db } from './infra/database/database'
 import { AvailabilityService } from './modules/availability/availability.service';
 import { AddonCatalog } from './modules/catalog/addon-catalog';
 import { CatalogService } from './modules/catalog/catalog.service';
-import { SourceResolver } from './modules/catalog/source-resolver';
 import { TmdbCatalog } from './modules/catalog/tmdb-catalog';
 import { CatalogSectionsRepository, TitlesRepository } from './modules/catalog/titles.repository';
 import { DownloadManager } from './modules/downloads/download-manager';
 import { DownloadsRepository } from './modules/downloads/downloads.repository';
-import { ExplorerService } from './modules/explorer/explorer.service';
 import { LibraryRepository } from './modules/library/library.repository';
 import { LibraryService } from './modules/library/library.service';
 import { ImageCache } from './modules/metadata/image-cache';
@@ -30,7 +28,8 @@ import { PlaybackSessions } from './modules/playback/sessions';
 import { SettingsService } from './modules/settings/settings.service';
 import { SourceClient } from './modules/source/source-client';
 import { SourceRelay } from './modules/source/source-relay';
-import { StremioAddon } from './modules/source/stremio/stremio-addon';
+import { StremioAddons } from './modules/source/stremio/stremio-addon';
+import { virtualFolder } from './modules/source/stremio/virtual-path';
 
 /** Racine de composition : instancie et relie tous les services (injection manuelle). */
 export interface Container {
@@ -39,7 +38,7 @@ export interface Container {
   db: Db;
   events: EventBus;
   settings: SettingsService;
-  addon: StremioAddon;
+  addons: StremioAddons;
   source: SourceClient;
   relay: SourceRelay;
   titles: TitlesRepository;
@@ -48,7 +47,6 @@ export interface Container {
   metadata: MetadataService;
   images: ImageCache;
   catalog: CatalogService;
-  explorer: ExplorerService;
   library: LibraryService;
   downloads: DownloadManager;
   ffmpeg: Ffmpeg;
@@ -64,10 +62,12 @@ export function createContainer(config: AppConfig, logger: Logger): Container {
   const events = new EventBus();
   const settings = new SettingsService(db, config);
   const kvCache = new KeyValueCache(db);
-  const addon = new StremioAddon(settings, kvCache, logger.child({ module: 'stremio' }));
-  const source = new SourceClient(settings, logger.child({ module: 'source' }), { addon });
-  const relay = new SourceRelay(config);
   const titles = new TitlesRepository(db);
+  const addons = new StremioAddons(settings, kvCache, logger.child({ module: 'stremio' }), {
+    tmdbIdOf: (kind, id) => titles.findByRemotePath(virtualFolder(kind, id))?.tmdb_id ?? null,
+  });
+  const source = new SourceClient(addons, logger.child({ module: 'source' }));
+  const relay = new SourceRelay(config);
   const availability = new AvailabilityService(db);
   const tmdb = new TmdbClient(() => settings.getTmdbApiKey(), config.tmdb.apiBaseUrl);
   const metadata = new MetadataService(
@@ -83,17 +83,14 @@ export function createContainer(config: AppConfig, logger: Logger): Container {
   const catalog = new CatalogService(
     titles,
     new CatalogSectionsRepository(db),
-    source,
     settings,
     metadata,
     availability,
     events,
     catalogLogger,
     new TmdbCatalog(titles, tmdb, settings, kvCache, catalogLogger),
-    new SourceResolver(titles, tmdb, source, settings, catalogLogger),
-    new AddonCatalog(titles, tmdb, metadata, addon, settings, kvCache, catalogLogger),
+    new AddonCatalog(titles, tmdb, metadata, addons, settings, kvCache, catalogLogger),
   );
-  const explorer = new ExplorerService(source, availability);
   const library = new LibraryService(
     new LibraryRepository(db),
     titles,
@@ -109,7 +106,6 @@ export function createContainer(config: AppConfig, logger: Logger): Container {
     library,
     catalog,
     titles,
-    explorer,
     metadata,
     settings,
     events,
@@ -160,7 +156,7 @@ export function createContainer(config: AppConfig, logger: Logger): Container {
     db,
     events,
     settings,
-    addon,
+    addons,
     source,
     relay,
     titles,
@@ -169,7 +165,6 @@ export function createContainer(config: AppConfig, logger: Logger): Container {
     metadata,
     images,
     catalog,
-    explorer,
     library,
     downloads,
     ffmpeg,

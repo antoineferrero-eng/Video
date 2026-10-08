@@ -25,7 +25,3 @@ export function mediaFromSearch(params: URLSearchParams): MediaRef | null {
   const library = Number(params.get('library'));
   return Number.isInteger(library) && library > 0 ? { type: 'library', id: library } : null;
 }
-
-export function explorerUrl(path: string): string {
-  return `/explorateur?path=${encodeURIComponent(path)}`;
-}

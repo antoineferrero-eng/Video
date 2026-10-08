@@ -8,10 +8,9 @@ import type { SettingsService } from '../settings/settings.service';
 import type { TitlesRepository, TmdbTitleUpsert } from './titles.repository';
 
 /**
- * Catalogue construit à partir de TMDB, quand la liste complète de la source n'est pas
- * lisible (bloquée, ou trop volumineuse) : tendances, titres populaires, à
- * l'affiche, mieux notés, et toute recherche. Le dossier de chaque titre sur la source
- * n'est cherché qu'à l'ouverture de sa fiche (voir SourceResolver).
+ * Catalogue construit à partir de TMDB : titres populaires, tendances, à l'affiche, mieux
+ * notés, et toute recherche. Les fichiers de chaque titre sont demandés aux extensions
+ * Stremio (voir AddonCatalog).
  */
 
 // « Populaires » en premier et sur 10 pages (200 titres) : c'est l'ordre du site de TMDB.
@@ -31,6 +30,11 @@ const LISTS: Record<TitleKind, Array<{ path: string; pages: number }>> = {
 };
 
 const GENRES_TTL_MS = 7 * 24 * 3600_000;
+/**
+ * Préfixe des chemins provisoires des titres (le chemin d'un titre est unique) : remplacé par
+ * son dossier virtuel à la première demande aux extensions.
+ */
+const PLACEHOLDER_ROOT: Record<TitleKind, string> = { movie: '/movies/', series: '/tvs/' };
 const SEARCH_TTL_MS = 3600_000;
 
 function yearOf(date: string | null | undefined): number | null {
@@ -47,11 +51,6 @@ export class TmdbCatalog {
     private readonly logger: Logger,
   ) {}
 
-  private sectionPath(kind: TitleKind): string {
-    const settings = this.settings.get();
-    return kind === 'movie' ? settings.moviesPath : settings.seriesPath;
-  }
-
   /** Importe les listes TMDB d'une section ; renvoie le nombre de titres vus. */
   async importLists(kind: TitleKind): Promise<number> {
     const language = this.settings.get().metadataLanguage;
@@ -62,22 +61,6 @@ export class TmdbCatalog {
       if (this.importItem(kind, item, genres, language) !== null) seen.add(item.id);
     });
     return seen.size;
-  }
-
-  /**
-   * Catalogue issu de la liste de la source : met à jour la popularité des titres déjà
-   * connus d'après les listes TMDB, sans en ajouter. Renvoie le nombre de titres mis à jour.
-   */
-  async refreshPopularity(kind: TitleKind): Promise<number> {
-    const language = this.settings.get().metadataLanguage;
-    const seen = new Set<number>();
-    let updated = 0;
-    await this.eachListItem(kind, language, (item) => {
-      if (seen.has(item.id) || typeof item.popularity !== 'number') return;
-      seen.add(item.id);
-      updated += this.titles.setPopularity(kind, item.id, item.popularity);
-    });
-    return updated;
   }
 
   private async eachListItem(
@@ -151,7 +134,7 @@ export class TmdbCatalog {
         .map((id) => genres.get(id))
         .filter((name): name is string => !!name),
       language,
-      remotePath: `${this.sectionPath(kind)}${folderName}/`,
+      remotePath: `${PLACEHOLDER_ROOT[kind]}${folderName}/`,
       folderName,
     };
     try {

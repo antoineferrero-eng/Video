@@ -53,7 +53,7 @@ export function useServerEvents(): { connected: boolean } {
           const before = previousStatus.get(event.download.id);
           if (before !== event.download.status) {
             previousStatus.set(event.download.id, event.download.status);
-            invalidate(['title'], ['explorer']);
+            invalidate(['title']);
           }
           break;
         }
@@ -85,7 +85,7 @@ export function useServerEvents(): { connected: boolean } {
           invalidate(queryKeys.title(event.titleId), queryKeys.home, ['titles'], ['genres']);
           break;
         case 'downloads.notice': {
-          // Bilan d'un ajout fait en arrière-plan (épisodes demandés à l'extension).
+          // Bilan d'un ajout fait en arrière-plan (épisodes demandés aux extensions).
           const options = { description: event.description ?? undefined, duration: 8000 };
           if (event.level === 'success') toast.success(event.message, options);
           else if (event.level === 'warning') toast.warning(event.message, options);

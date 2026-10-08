@@ -1,36 +1,33 @@
 import {
+  ArrowDown,
+  ArrowUp,
   CheckCircle2,
   Cpu,
   Database,
   Download,
-  Globe,
+  ExternalLink,
   KeyRound,
   Languages,
   Play,
   PlayCircle,
+  Plus,
   Puzzle,
   RefreshCw,
   Save,
   Server,
   Sparkles,
+  Trash2,
   XCircle,
 } from 'lucide-react';
-import { useMemo, useState, type ReactNode } from 'react';
-import { useSearchParams } from 'react-router';
-import type {
-  AppSettings,
-  CatalogSource,
-  SettingsResponse,
-  SettingsUpdate,
-  SourceConnection,
-} from '@lumiere/shared';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useLocation, useSearchParams } from 'react-router';
+import type { AppSettings, SettingsResponse, SettingsUpdate } from '@lumiere/shared';
 import { errorMessage } from '../../api/client';
 import {
   useRefreshCatalog,
   useSettings,
   useSystemInfo,
   useTestAddon,
-  useTestSource,
   useTestSubtitles,
   useTestTmdb,
   useUpdateSettings,
@@ -56,26 +53,6 @@ const LANGUAGES = [
   { value: 'ja', label: 'Japonais' },
 ];
 
-const CONNECTIONS: Array<{ value: SourceConnection; label: string; description: string }> = [
-  {
-    value: 'auto',
-    label: 'Automatique (recommandé)',
-    description:
-      'Connexion standard, puis imitation complète de Chrome si la source filtre les robots.',
-  },
-  {
-    value: 'standard',
-    label: 'Standard',
-    description: 'Requêtes avec les en-têtes d’un navigateur et le User-Agent ci-contre.',
-  },
-  {
-    value: 'browser',
-    label: 'Imitation de navigateur',
-    description:
-      'Reproduit l’empreinte réseau de Chrome (TLS, HTTP/2) pour toutes les requêtes vers la source.',
-  },
-];
-
 export function SettingsPage() {
   const settings = useSettings();
   if (settings.isPending) return <PageLoader />;
@@ -85,12 +62,12 @@ export function SettingsPage() {
   return <SettingsForm key={JSON.stringify(settings.data)} response={settings.data} />;
 }
 
-type SettingsTab = 'general' | 'services' | 'source' | 'system';
+type SettingsTab = 'general' | 'services' | 'catalog' | 'system';
 
 const TABS: Array<{ value: SettingsTab; label: string }> = [
   { value: 'general', label: 'Général' },
   { value: 'services', label: 'Extensions et API' },
-  { value: 'source', label: 'Source et catalogue' },
+  { value: 'catalog', label: 'Catalogue' },
   { value: 'system', label: 'Système' },
 ];
 
@@ -108,26 +85,20 @@ const TAB_FIELDS: Record<SettingsTab, Array<keyof SettingsUpdate>> = {
     'preferredQuality',
   ],
   services: [
-    'stremioAddonUrl',
+    'stremioAddonUrls',
     'subtitleAddonUrls',
     'tmdbApiKey',
     'openSubtitlesApiKey',
     'openSubtitlesUsername',
     'openSubtitlesPassword',
   ],
-  source: [
-    'sourceBaseUrl',
-    'moviesPath',
-    'seriesPath',
-    'sourceConnection',
-    'userAgent',
-    'catalogSource',
-    'catalogRefreshHours',
-  ],
+  catalog: ['catalogRefreshHours'],
   system: [],
 };
 
 function parseTab(value: string | null): SettingsTab {
+  // « source » : ancien nom de l'onglet du catalogue (liens enregistrés).
+  if (value === 'source') return 'catalog';
   return TABS.some((tab) => tab.value === value) ? (value as SettingsTab) : 'general';
 }
 
@@ -143,6 +114,13 @@ function SettingsForm({ response }: { response: SettingsResponse }) {
   const update = useUpdateSettings();
   const [params, setParams] = useSearchParams();
   const tab = parseTab(params.get('onglet'));
+  const { hash } = useLocation();
+  // Lien direct vers un réglage (« #tmdb », « #extensions ») : la rubrique est amenée à l'écran.
+  useEffect(() => {
+    if (!hash) return;
+    const target = document.getElementById(decodeURIComponent(hash.slice(1)));
+    target?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }, [hash, tab]);
   const [draft, setDraft] = useState<AppSettings>(response.settings);
   const [tmdbKey, setTmdbKey] = useState('');
   const [openSubtitlesKey, setOpenSubtitlesKey] = useState('');
@@ -172,7 +150,6 @@ function SettingsForm({ response }: { response: SettingsResponse }) {
     setOpenSubtitlesKey('');
     setOpenSubtitlesPassword('');
   };
-  const addonEnabled = draft.stremioAddonUrl.trim() !== '';
 
   return (
     <div className="mx-auto flex max-w-4xl flex-col gap-6 pb-16">
@@ -180,7 +157,7 @@ function SettingsForm({ response }: { response: SettingsResponse }) {
         <div>
           <h1 className="large-title">Paramètres</h1>
           <p className="mt-1 text-sm text-zinc-400">
-            Préférences de lecture et d’apparence, services connectés et source des fichiers.
+            Préférences de lecture et d’apparence, extensions Stremio et services connectés.
           </p>
         </div>
         <Tabs<SettingsTab>
@@ -349,39 +326,10 @@ function SettingsForm({ response }: { response: SettingsResponse }) {
             title="Extensions Stremio"
             description="Services au protocole des extensions Stremio : liens des fichiers et sous-titres en ligne."
           >
-            <Group
-              title="Films et séries"
-              badge={
-                addonEnabled ? (
-                  <Badge tone="success">Activée</Badge>
-                ) : (
-                  <Badge tone="info">Désactivée : liste du site</Badge>
-                )
-              }
-              description="Fournit les liens des films et des épisodes quand le site lui-même est protégé (vérification Cloudflare)."
-            >
-              <Field
-                label="Adresse de l’extension"
-                description="Lien d’installation (stremio://… ou https://…/manifest.json), par exemple celui de st.111477.xyz après configuration. Laissez vide pour lire directement la liste de la source."
-              >
-                <Input
-                  value={draft.stremioAddonUrl}
-                  onChange={(event) => set('stremioAddonUrl', event.target.value)}
-                  placeholder="https://st.111477.xyz/manifest.json"
-                  spellCheck={false}
-                  className="font-mono text-xs"
-                />
-              </Field>
-              <AddonTester candidate={draft.stremioAddonUrl} />
-              {addonEnabled && (
-                <p className="text-xs leading-relaxed text-zinc-400">
-                  Le catalogue vient alors de TMDB (clé requise, ci-dessous) et les liens ne sont
-                  demandés qu’à l’ouverture d’un film, ou à la lecture et au téléchargement d’un
-                  épisode. Chez 111477, chaque lien consomme un jeton d’une réserve limitée par
-                  adresse IP : réglez l’extension pour qu’elle propose peu de liens par titre.
-                </p>
-              )}
-            </Group>
+            <StreamAddonsGroup
+              urls={draft.stremioAddonUrls}
+              onChange={(urls) => set('stremioAddonUrls', urls)}
+            />
             <SubtitleAddonsGroup
               urls={draft.subtitleAddonUrls}
               onChange={(urls) => set('subtitleAddonUrls', urls)}
@@ -395,16 +343,21 @@ function SettingsForm({ response }: { response: SettingsResponse }) {
             description="Services en ligne qui demandent une clé personnelle, gratuite. Les clés et mots de passe ne sont jamais réaffichés."
           >
             <Group
+              id="tmdb"
               title="TMDB"
+              attention={!response.tmdbApiKeyConfigured}
+              action={
+                <ServiceLink href="https://www.themoviedb.org/settings/api">
+                  Obtenir une clé
+                </ServiceLink>
+              }
               badge={
                 response.tmdbApiKeyConfigured ? (
                   <Badge tone="success" icon={<CheckCircle2 className="size-3" />}>
                     Clé configurée{response.tmdbApiKeyFromEnv ? ' (variable d’environnement)' : ''}
                   </Badge>
                 ) : (
-                  <Badge tone="warning">
-                    {addonEnabled ? 'Indispensable avec l’extension' : 'Aucune clé'}
-                  </Badge>
+                  <Badge tone="warning">Indispensable : le catalogue en dépend</Badge>
                 )
               }
               description="Catalogue (tendances, populaires, recherche), affiches, résumés, notes et titres des épisodes."
@@ -449,82 +402,11 @@ function SettingsForm({ response }: { response: SettingsResponse }) {
         </div>
       )}
 
-      {tab === 'source' && (
-        <div role="tabpanel" aria-label="Source et catalogue" className="flex flex-col gap-6">
-          <Section
-            tone="blue"
-            icon={<Globe />}
-            title="Source"
-            description={
-              addonEnabled
-                ? 'Index HTTP du site : les fichiers viennent de l’extension Stremio, il ne sert qu’à l’explorateur.'
-                : 'Index HTTP (listing de dossiers) depuis lequel les films et séries sont récupérés.'
-            }
-          >
-            <Field label="Adresse de la source" description="Exemple : https://a.111477.xyz">
-              <Input
-                value={draft.sourceBaseUrl}
-                onChange={(event) => set('sourceBaseUrl', event.target.value)}
-                spellCheck={false}
-              />
-            </Field>
-            <div className="grid gap-4 sm:grid-cols-2">
-              <Field label="Dossier des films" description="Chemin relatif sur la source.">
-                <Input
-                  value={draft.moviesPath}
-                  onChange={(event) => set('moviesPath', event.target.value)}
-                  spellCheck={false}
-                />
-              </Field>
-              <Field label="Dossier des séries">
-                <Input
-                  value={draft.seriesPath}
-                  onChange={(event) => set('seriesPath', event.target.value)}
-                  spellCheck={false}
-                />
-              </Field>
-            </div>
-            <div className="grid gap-4 sm:grid-cols-[15rem_1fr]">
-              <Field
-                label="Connexion à la source"
-                description={
-                  CONNECTIONS.find((item) => item.value === draft.sourceConnection)?.description
-                }
-              >
-                <Select
-                  value={draft.sourceConnection}
-                  onChange={(event) =>
-                    set('sourceConnection', event.target.value as SourceConnection)
-                  }
-                >
-                  {CONNECTIONS.map((item) => (
-                    <option key={item.value} value={item.value}>
-                      {item.label}
-                    </option>
-                  ))}
-                </Select>
-              </Field>
-              <Field
-                label="User-Agent HTTP"
-                description="Identité de la connexion standard (l’imitation de navigateur utilise celle de Chrome)."
-              >
-                <Input
-                  value={draft.userAgent}
-                  onChange={(event) => set('userAgent', event.target.value)}
-                  spellCheck={false}
-                  className="font-mono text-xs"
-                />
-              </Field>
-            </div>
-            <SourceTester />
-          </Section>
-
+      {tab === 'catalog' && (
+        <div role="tabpanel" aria-label="Catalogue" className="flex flex-col gap-6">
           <CatalogSection
             refreshHours={draft.catalogRefreshHours}
             onRefreshHours={(value) => set('catalogRefreshHours', value)}
-            catalogSource={draft.catalogSource}
-            onCatalogSource={(value) => set('catalogSource', value)}
-            addonEnabled={response.settings.stremioAddonUrl !== ''}
           />
         </div>
       )}
@@ -744,72 +626,183 @@ function Section({
   );
 }
 
-const TRANSPORT_LABELS = {
-  standard: '',
-  browser: ' · via l’imitation de Chrome',
-} as const;
+/** Extension de 111477 (celle par défaut), qui fournit ses fichiers. */
+const DEFAULT_STREAM_ADDON = 'https://st.111477.xyz/manifest.json';
 
-function SourceTester() {
-  const test = useTestSource();
-  const result = test.data;
+/**
+ * Extensions Stremio qui fournissent les fichiers, par ordre de préférence : toutes sont
+ * interrogées, leurs fichiers réunis ; un fichier proposé par plusieurs garde la première
+ * comme lien principal et les suivantes en secours.
+ */
+function StreamAddonsGroup({
+  urls,
+  onChange,
+}: {
+  urls: string[];
+  onChange: (urls: string[]) => void;
+}) {
+  const [input, setInput] = useState('');
+  const add = (value: string) => {
+    const url = value.trim();
+    if (!url || urls.includes(url)) return;
+    onChange([...urls, url]);
+    setInput('');
+  };
+  const move = (index: number, offset: number) => {
+    const next = [...urls];
+    const [item] = next.splice(index, 1);
+    if (item === undefined) return;
+    next.splice(index + offset, 0, item);
+    onChange(next);
+  };
   return (
-    <div className="flex flex-col gap-3 rounded-[1rem] bg-white/[0.05] p-4">
-      <div className="flex flex-wrap items-center gap-3">
-        <Button
-          size="sm"
-          variant="glass"
-          icon={<Server className="size-4" />}
-          loading={test.isPending}
-          onClick={() => test.mutate(undefined)}
-        >
-          Tester la source enregistrée
-        </Button>
-        {result && (
-          <span
-            className={cn(
-              'flex items-center gap-1.5 text-sm',
-              result.ok ? 'text-emerald-300' : 'text-red-300',
-            )}
-          >
-            {result.ok ? <CheckCircle2 className="size-4" /> : <XCircle className="size-4" />}
-            {result.ok
-              ? `Source joignable · ${result.directories} dossier(s), ${result.files} fichier(s) · format ${result.format} · ${result.durationMs} ms${TRANSPORT_LABELS[result.transport ?? 'standard']}`
-              : (result.error ?? 'Échec')}
-          </span>
-        )}
-      </div>
-      {result?.ok && result.sample.length > 0 && (
-        <ul className="grid gap-1 font-mono text-xs text-zinc-400 sm:grid-cols-2">
-          {result.sample.map((entry) => (
-            <li key={entry.path} className="truncate">
-              {entry.kind === 'directory' ? '📁' : '📄'} {entry.name}
-            </li>
+    <Group
+      id="extensions"
+      title="Films et séries"
+      attention={urls.length === 0}
+      action={<ServiceLink href="https://st.111477.xyz/">Configurer 111477</ServiceLink>}
+      badge={
+        <Badge tone={urls.length > 0 ? 'success' : 'warning'}>
+          {urls.length > 0 ? plural(urls.length, 'extension') : 'Aucune : rien à lire'}
+        </Badge>
+      }
+      description="Fournissent les liens des films et des épisodes du catalogue (qui, lui, vient de TMDB). Toutes sont interrogées et leurs fichiers réunis ; quand plusieurs proposent le même fichier, la première de la liste sert, les suivantes prennent le relais si son lien est refusé."
+    >
+      {urls.length > 0 && (
+        <ol className="flex flex-col gap-2" aria-label="Extensions, par ordre de préférence">
+          {urls.map((url, index) => (
+            <StreamAddonRow
+              key={url}
+              url={url}
+              position={index + 1}
+              first={index === 0}
+              last={index === urls.length - 1}
+              onUp={() => move(index, -1)}
+              onDown={() => move(index, 1)}
+              onRemove={() => onChange(urls.filter((item) => item !== url))}
+            />
           ))}
-        </ul>
+        </ol>
       )}
-    </div>
+      <form
+        className="flex flex-col gap-2 sm:flex-row"
+        onSubmit={(event) => {
+          event.preventDefault();
+          add(input);
+        }}
+      >
+        <Input
+          value={input}
+          onChange={(event) => setInput(event.target.value)}
+          placeholder="stremio://… ou https://…/manifest.json"
+          aria-label="Adresse d’une extension à ajouter"
+          spellCheck={false}
+          className="min-w-0 flex-1 font-mono text-xs"
+        />
+        <Button
+          type="submit"
+          variant="glass"
+          className="h-11"
+          icon={<Plus className="size-4" />}
+          disabled={!input.trim() || urls.includes(input.trim())}
+        >
+          Ajouter
+        </Button>
+      </form>
+      {!urls.includes(DEFAULT_STREAM_ADDON) && (
+        <div>
+          <Button size="sm" variant="glass" onClick={() => add(DEFAULT_STREAM_ADDON)}>
+            Ajouter l’extension de 111477
+          </Button>
+        </div>
+      )}
+      <p className="text-xs leading-relaxed text-zinc-400">
+        Collez le lien d’installation d’une extension (après l’avoir configurée sur sa page, si elle
+        le demande). Pour celle de 111477 : ouvrez{' '}
+        <a
+          href="https://st.111477.xyz/"
+          target="_blank"
+          rel="noreferrer"
+          className="font-medium text-brand-300 underline underline-offset-2"
+        >
+          st.111477.xyz
+        </a>
+        , choisissez vos réglages, copiez le lien d’installation et collez-le ci-dessus. Les liens
+        ne sont demandés qu’à l’ouverture d’un film, ou à la lecture et au téléchargement d’un
+        épisode : chez 111477, chaque lien consomme un jeton d’une réserve limitée par adresse IP,
+        réglez l’extension pour qu’elle propose peu de liens par titre.
+      </p>
+    </Group>
   );
 }
 
-function AddonTester({ candidate }: { candidate: string }) {
+function StreamAddonRow({
+  url,
+  position,
+  first,
+  last,
+  onUp,
+  onDown,
+  onRemove,
+}: {
+  url: string;
+  position: number;
+  first: boolean;
+  last: boolean;
+  onUp: () => void;
+  onDown: () => void;
+  onRemove: () => void;
+}) {
   const test = useTestAddon();
   const result = test.data;
   return (
-    <div className="flex flex-wrap items-center gap-3">
-      <Button
-        size="sm"
-        variant="glass"
-        icon={<Server className="size-4" />}
-        loading={test.isPending}
-        disabled={!candidate.trim()}
-        onClick={() => test.mutate(candidate.trim() || undefined)}
-      >
-        Tester l’extension
-      </Button>
+    <li className="flex flex-col gap-2 rounded-[0.85rem] bg-white/[0.05] px-3 py-2.5">
+      <div className="flex items-center gap-2">
+        <span className="grid size-6 shrink-0 place-items-center rounded-full bg-white/[0.08] text-xs font-semibold text-zinc-300 tabular-nums">
+          {position}
+        </span>
+        <span className="min-w-0 flex-1 truncate font-mono text-xs text-zinc-200" title={url}>
+          {url}
+        </span>
+        <div className="flex shrink-0 items-center gap-0.5">
+          <Button
+            size="icon-sm"
+            variant="ghost"
+            aria-label="Monter (préférer cette extension)"
+            disabled={first}
+            onClick={onUp}
+            icon={<ArrowUp className="size-4" />}
+          />
+          <Button
+            size="icon-sm"
+            variant="ghost"
+            aria-label="Descendre"
+            disabled={last}
+            onClick={onDown}
+            icon={<ArrowDown className="size-4" />}
+          />
+          <Button
+            size="sm"
+            variant="ghost"
+            loading={test.isPending}
+            onClick={() => test.mutate(url)}
+            icon={<Server className="size-4" />}
+          >
+            <span className="hidden sm:inline">Tester</span>
+          </Button>
+          <Button
+            size="icon-sm"
+            variant="ghost"
+            aria-label="Retirer cette extension"
+            onClick={onRemove}
+            icon={<Trash2 className="size-4" />}
+          />
+        </div>
+      </div>
       {result && (
         <span
           className={cn(
-            'flex min-w-0 items-center gap-1.5 text-sm',
+            'flex min-w-0 items-start gap-1.5 text-xs',
             result.ok ? 'text-emerald-300' : 'text-red-300',
           )}
         >
@@ -821,7 +814,8 @@ function AddonTester({ candidate }: { candidate: string }) {
           {result.message}
         </span>
       )}
-    </div>
+      {test.isError && <p className="text-xs text-red-300">{errorMessage(test.error)}</p>}
+    </li>
   );
 }
 
@@ -829,27 +823,57 @@ const OPENSUBTITLES_V3 = 'https://opensubtitles-v3.strem.io/manifest.json';
 
 /** Sous-partie d'une section : un service, avec son état et ses réglages. */
 function Group({
+  id,
   title,
   badge,
+  action,
+  attention = false,
   description,
   children,
 }: {
+  id?: string;
   title: string;
   badge?: ReactNode;
+  /** Lien vers le service (où obtenir la clé, configurer l'extension…). */
+  action?: ReactNode;
+  /** Réglage indispensable encore manquant : mis en évidence. */
+  attention?: boolean;
   description?: ReactNode;
   children: ReactNode;
 }) {
   return (
-    <div className="flex flex-col gap-3 rounded-[1rem] bg-white/[0.05] p-4">
+    <div
+      id={id}
+      className={cn(
+        'flex scroll-mt-28 flex-col gap-3 rounded-[1rem] bg-white/[0.05] p-4',
+        attention && 'ring-1 ring-amber-300/40 ring-inset',
+      )}
+    >
       <div className="flex flex-col gap-1">
         <div className="flex flex-wrap items-center gap-2">
           <h3 className="text-sm font-semibold">{title}</h3>
           {badge}
+          {action && <div className="ml-auto">{action}</div>}
         </div>
         {description && <p className="text-xs leading-relaxed text-zinc-400">{description}</p>}
       </div>
       {children}
     </div>
+  );
+}
+
+/** Lien vers un service externe (nouvel onglet). */
+function ServiceLink({ href, children }: { href: string; children: ReactNode }) {
+  return (
+    <a
+      href={href}
+      target="_blank"
+      rel="noreferrer"
+      className="fill inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium text-brand-200 transition hover:bg-white/[0.12] hover:text-brand-100"
+    >
+      {children}
+      <ExternalLink aria-hidden className="size-3.5" />
+    </a>
   );
 }
 
@@ -969,7 +993,11 @@ function OpenSubtitlesGroup({
   const hasKey = response.openSubtitlesApiKeyConfigured || apiKey.trim() !== '';
   return (
     <Group
+      id="opensubtitles"
       title="OpenSubtitles.com"
+      action={
+        <ServiceLink href="https://www.opensubtitles.com/fr/consumers">Obtenir une clé</ServiceLink>
+      }
       badge={
         response.openSubtitlesApiKeyConfigured ? (
           <Badge tone="success" icon={<CheckCircle2 className="size-3" />}>
@@ -984,7 +1012,7 @@ function OpenSubtitlesGroup({
           Sous-titres faits pour votre fichier exact (empreinte du fichier). Créez une clé gratuite
           dans votre compte, rubrique{' '}
           <a
-            href="https://www.opensubtitles.com/consumers"
+            href="https://www.opensubtitles.com/fr/consumers"
             target="_blank"
             rel="noreferrer"
             className="font-medium text-brand-300 underline underline-offset-2"
@@ -1077,38 +1105,12 @@ function TmdbTester({ candidate }: { candidate: string }) {
   );
 }
 
-const CATALOG_SOURCES: Array<{ value: CatalogSource; label: string; description: string }> = [
-  {
-    value: 'auto',
-    label: 'Automatique (recommandé)',
-    description:
-      'Liste complète de la source si elle est lisible ; sinon films et séries de TMDB, cherchés sur la source à l’ouverture de leur fiche.',
-  },
-  {
-    value: 'listing',
-    label: 'Liste complète de la source',
-    description: 'Le catalogue reflète exactement les dossiers /movies/ et /tvs/ de la source.',
-  },
-  {
-    value: 'tmdb',
-    label: 'TMDB (recherche à la demande)',
-    description:
-      'Tendances, titres populaires et recherche viennent de TMDB ; le dossier de chaque titre est cherché sur la source quand vous ouvrez sa fiche (clé TMDB requise).',
-  },
-];
-
 function CatalogSection({
   refreshHours,
   onRefreshHours,
-  catalogSource,
-  onCatalogSource,
-  addonEnabled,
 }: {
   refreshHours: number;
   onRefreshHours: (value: number) => void;
-  catalogSource: CatalogSource;
-  onCatalogSource: (value: CatalogSource) => void;
-  addonEnabled: boolean;
 }) {
   const system = useSystemInfo();
   const refresh = useRefreshCatalog();
@@ -1117,7 +1119,7 @@ function CatalogSection({
       tone="indigo"
       icon={<Database />}
       title="Catalogue"
-      description="Liste des titres lue sur la source et mise en cache localement."
+      description="Titres importés des listes de TMDB (populaires, tendances, à l’affiche, mieux notés) et gardés localement ; la recherche couvre tout TMDB. Leurs fichiers viennent des extensions Stremio."
     >
       <div className="grid gap-3 sm:grid-cols-2">
         {system.data?.catalog.map((section) => (
@@ -1125,8 +1127,6 @@ function CatalogSection({
             <div className="flex items-center justify-between">
               <span className="font-semibold">{section.kind === 'movie' ? 'Films' : 'Séries'}</span>
               <div className="flex items-center gap-1.5">
-                {section.mode === 'tmdb' && <Badge tone="info">TMDB</Badge>}
-                {section.mode === 'addon' && <Badge tone="info">TMDB · extension</Badge>}
                 <Badge
                   tone={
                     section.state === 'error'
@@ -1144,39 +1144,15 @@ function CatalogSection({
                 </Badge>
               </div>
             </div>
-            <p className="mt-1 font-mono text-xs text-zinc-400">{section.path}</p>
             <p className="mt-1 text-xs text-zinc-400">
               {section.lastRefreshAt
                 ? `Actualisé ${formatRelativeDate(section.lastRefreshAt)}`
                 : 'Jamais actualisé'}
             </p>
             {section.lastError && <p className="mt-1 text-xs text-red-300">{section.lastError}</p>}
-            {section.note && (
-              <p className="mt-1 text-xs leading-relaxed text-zinc-400">{section.note}</p>
-            )}
           </div>
         ))}
       </div>
-      <Field
-        label="Source du catalogue"
-        description={
-          addonEnabled
-            ? 'Avec l’extension Stremio, le catalogue vient toujours de TMDB (tendances, titres populaires et recherche).'
-            : CATALOG_SOURCES.find((item) => item.value === catalogSource)?.description
-        }
-      >
-        <Select
-          value={catalogSource}
-          disabled={addonEnabled}
-          onChange={(event) => onCatalogSource(event.target.value as CatalogSource)}
-        >
-          {CATALOG_SOURCES.map((item) => (
-            <option key={item.value} value={item.value}>
-              {item.label}
-            </option>
-          ))}
-        </Select>
-      </Field>
       <div className="flex flex-wrap items-end gap-4">
         <Field label="Actualisation automatique" className="w-56">
           <Select

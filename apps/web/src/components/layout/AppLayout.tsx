@@ -1,4 +1,4 @@
-import { ArrowDownToLine, ChevronLeft, FolderTree, Search, Settings } from 'lucide-react';
+import { ArrowDownToLine, ChevronLeft, Search, Settings } from 'lucide-react';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Link, NavLink, Outlet, useLocation, useNavigate, useSearchParams } from 'react-router';
 import { useDownloads } from '../../api/queries';
@@ -21,7 +21,8 @@ export function AppLayout({ connected }: { connected: boolean }) {
   const { scrolled, minimized, expand } = useScrollState();
 
   useEffect(() => {
-    window.scrollTo({ top: 0 });
+    // Un lien vers une ancre (« #tmdb ») amène lui-même la rubrique à l'écran.
+    if (!window.location.hash) window.scrollTo({ top: 0 });
   }, [location.pathname]);
 
   return (
@@ -214,9 +215,6 @@ function Toolbar() {
         )}
         <SearchField />
         <Glass className="flex items-center gap-0.5 rounded-full p-1 lg:hidden">
-          <ToolbarIcon to="/explorateur" label="Explorateur">
-            <FolderTree className="size-[18px]" />
-          </ToolbarIcon>
           <ToolbarIcon to="/parametres" label="Paramètres">
             <Settings className="size-[18px]" />
           </ToolbarIcon>

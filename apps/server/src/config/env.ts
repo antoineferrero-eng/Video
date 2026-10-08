@@ -15,14 +15,10 @@ const EnvSchema = z.object({
   DATA_DIR: z.string().default('data'),
   MEDIA_DIR: optionalString,
   WEB_DIST_DIR: optionalString,
-  SOURCE_BASE_URL: z.preprocess(
-    (value) => (typeof value === 'string' && value.trim() === '' ? undefined : value),
-    z.url({ protocol: /^https?$/ }).default('https://a.111477.xyz'),
-  ),
-  SOURCE_MOVIES_PATH: z.string().default('/movies/'),
-  SOURCE_SERIES_PATH: z.string().default('/tvs/'),
-  // Vide : pas d'extension (fichiers lus directement sur la source).
-  STREMIO_ADDON_URL: z.string().default('https://st.111477.xyz/manifest.json'),
+  // Extensions Stremio qui fournissent les fichiers, par ordre de préférence (adresses
+  // séparées par des virgules). STREMIO_ADDON_URL : ancien nom, une seule adresse.
+  STREMIO_ADDON_URLS: z.string().optional(),
+  STREMIO_ADDON_URL: z.string().optional(),
   TMDB_API_KEY: optionalString,
   TMDB_API_BASE_URL: z.url().default('https://api.themoviedb.org/3'),
   TMDB_IMAGE_BASE_URL: z.url().default('https://image.tmdb.org/t/p'),
@@ -45,11 +41,8 @@ export interface AppConfig {
   cacheDir: string;
   webDistDir: string;
   defaults: {
-    sourceBaseUrl: string;
-    moviesPath: string;
-    seriesPath: string;
     downloadDir: string;
-    stremioAddonUrl: string;
+    stremioAddonUrls: string[];
     subtitleAddonUrls: string[];
   };
   tmdb: {
@@ -65,6 +58,17 @@ export interface AppConfig {
   ffprobePath: string;
   logLevel: string;
   prettyLogs: boolean;
+}
+
+/** Extension Stremio de 111477, qui fournit ses fichiers. */
+const DEFAULT_ADDON_URL = 'https://st.111477.xyz/manifest.json';
+
+/** Liste d'adresses séparées par des virgules (vide : aucune). */
+function urlList(value: string): string[] {
+  return value
+    .split(',')
+    .map((url) => url.trim())
+    .filter(Boolean);
 }
 
 /** Dossier de lancement : npm exécute les scripts d'un workspace depuis son propre dossier. */
@@ -114,13 +118,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     cacheDir: path.join(dataDir, 'cache'),
     webDistDir: e.WEB_DIST_DIR ? path.resolve(baseDir, e.WEB_DIST_DIR) : defaultWebDist,
     defaults: {
-      sourceBaseUrl: e.SOURCE_BASE_URL.replace(/\/+$/, ''),
-      moviesPath: e.SOURCE_MOVIES_PATH,
-      seriesPath: e.SOURCE_SERIES_PATH,
-      stremioAddonUrl: e.STREMIO_ADDON_URL.trim(),
-      subtitleAddonUrls: e.SUBTITLE_ADDON_URLS.split(',')
-        .map((url) => url.trim())
-        .filter(Boolean),
+      stremioAddonUrls: urlList(e.STREMIO_ADDON_URLS ?? e.STREMIO_ADDON_URL ?? DEFAULT_ADDON_URL),
+      subtitleAddonUrls: urlList(e.SUBTITLE_ADDON_URLS),
       downloadDir: e.MEDIA_DIR ? path.resolve(baseDir, e.MEDIA_DIR) : path.join(dataDir, 'media'),
     },
     tmdb: {

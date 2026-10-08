@@ -1,13 +1,4 @@
-import {
-  Download,
-  Film,
-  FolderTree,
-  Home,
-  Library,
-  Settings,
-  Tv,
-  type LucideIcon,
-} from 'lucide-react';
+import { Download, Film, Home, Library, Settings, Tv, type LucideIcon } from 'lucide-react';
 
 export interface NavItem {
   to: string;
@@ -36,7 +27,6 @@ export const NAV_ITEMS: NavItem[] = [
     icon: Download,
     mobile: true,
   },
-  { to: '/explorateur', label: 'Explorateur', shortLabel: 'Explorer', icon: FolderTree },
   { to: '/parametres', label: 'Paramètres', shortLabel: 'Réglages', icon: Settings },
 ];
 

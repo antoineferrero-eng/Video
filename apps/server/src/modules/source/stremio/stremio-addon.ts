@@ -8,19 +8,20 @@ import { BrowserTransport, CookieJar, type Transport } from '../transport';
 import { parseVirtualPath, safeFileName, virtualFilePath, type AddonKind } from './virtual-path';
 
 /**
- * Client d'une extension Stremio (protocole « addon ») : l'extension reçoit l'identifiant
- * d'un film ou d'un épisode et renvoie des liens de lecture directs. C'est le canal que
- * 111477 propose pour ses fichiers (st.111477.xyz) : ses liens sont faits pour des lecteurs
- * vidéo ordinaires, là où les pages du site exigent une vérification de navigateur.
+ * Client des extensions Stremio (protocole « addon ») qui fournissent les fichiers : une
+ * extension reçoit l'identifiant d'un film ou d'un épisode et renvoie des liens de lecture
+ * directs. Plusieurs extensions peuvent être configurées, par ordre de préférence : elles
+ * sont interrogées ensemble et leurs fichiers réunis (un fichier proposé par plusieurs
+ * extensions garde un seul chemin, avec un lien chez chacune pour se relayer).
  *
  *   GET <base>/manifest.json                      description de l'extension
  *   GET <base>/stream/movie/tt1677720.json        liens d'un film
  *   GET <base>/stream/series/tt0903747:1:3.json   liens d'un épisode (saison 1, épisode 3)
  *
- * Les liens sont limités (chez 111477, chaque lien généré consomme un jeton d'une réserve
- * propre à l'adresse IP) : ils ne sont demandés qu'au moment d'une action (ouverture d'un
- * film, lecture ou téléchargement d'un épisode) et les réponses sont gardées en base, pour
- * être réutilisées jusqu'à ce qu'un lien soit refusé.
+ * Les liens peuvent être limités (chez 111477, chaque lien généré consomme un jeton d'une
+ * réserve propre à l'adresse IP) : ils ne sont demandés qu'au moment d'une action (ouverture
+ * d'un film, lecture ou téléchargement d'un épisode) et la réponse de chaque extension est
+ * gardée en base, pour être réutilisée jusqu'à ce qu'un lien soit refusé.
  */
 
 export interface AddonManifest {
@@ -46,7 +47,8 @@ interface StreamEntry {
   };
 }
 
-export interface AddonFile {
+/** Fichier tel que le propose une extension. */
+interface StoredFile {
   /** Chemin virtuel stable (voir virtual-path.ts). */
   path: string;
   fileName: string;
@@ -55,34 +57,62 @@ export interface AddonFile {
   label: string | null;
 }
 
+export interface AddonFile extends StoredFile {
+  /** Extension qui propose ce fichier (la première, s'il est proposé par plusieurs). */
+  addon: string;
+}
+
 export interface AddonLink {
   url: string;
   /** En-têtes que l'extension demande d'envoyer avec le lien. */
   headers: Record<string, string>;
+  /** Extension qui a fourni le lien. */
+  addon?: string;
 }
 
 export interface AddonQuery {
   kind: AddonKind;
-  /** Identifiant compris par l'extension (« tt… » ou « tmdb:… »). */
+  /**
+   * Identifiant du titre, celui de ses chemins virtuels : IMDb (« tt… », la convention de
+   * Stremio) s'il est connu, sinon « tmdb:… ».
+   */
   id: string;
+  /** Identifiant TMDB, pour une extension qui l'accepte mais pas l'identifiant IMDb. */
+  tmdb?: number | null;
   season?: number | null;
   episode?: number | null;
 }
 
 export interface AddonResult {
   files: AddonFile[];
-  /** Message de l'extension (limite atteinte…), sinon null. */
+  /** Messages des extensions (limite atteinte, extension injoignable…), sinon null. */
   notice: string | null;
-  /** L'extension signale que sa limite de liens est atteinte (ou presque). */
+  /**
+   * Une extension a atteint sa limite de liens ou n'a pas répondu : une liste vide ne veut
+   * alors pas dire que le titre est absent.
+   */
   limited: boolean;
 }
 
-/** Réponse gardée en base : fichiers, et lien actuel de chacun. */
-interface StoredResult extends AddonResult {
+/** Réponse d'une extension gardée en base : fichiers, et lien actuel de chacun. */
+interface StoredResult {
+  files: StoredFile[];
+  notice: string | null;
+  limited: boolean;
   links: Record<string, AddonLink>;
 }
 
+/** Extension configurée, et identifiant sous lequel elle connaît le titre demandé. */
+interface Provider {
+  manifestUrl: string;
+  manifest: AddonManifest;
+  /** Identifiant envoyé à cette extension (« tt… » ou « tmdb:… »). */
+  id: string;
+}
+
 const MANIFEST_TTL_MS = 60 * 60_000;
+/** Manifeste injoignable : nouvel essai après ce délai. */
+const MANIFEST_ERROR_TTL_MS = 60_000;
 /** Réponse complète : gardée longtemps, un lien refusé déclenche une nouvelle demande. */
 const RESULT_TTL_MS = 12 * 3600_000;
 /** Réponse vide ou limitée : redemandée rapidement. */
@@ -94,7 +124,7 @@ const LIMIT_NOTICE =
 
 /**
  * Adresse du manifeste à partir de ce que l'utilisateur colle : lien d'installation
- * `stremio://…`, adresse de configuration, ou manifeste complet. Chaîne vide : désactivé.
+ * `stremio://…`, adresse de configuration, ou manifeste complet. Chaîne vide : ignorée.
  */
 export function normalizeAddonUrl(input: string): string {
   let value = input.trim();
@@ -114,29 +144,47 @@ export function normalizeAddonUrl(input: string): string {
   return url.toString();
 }
 
+/** Adresses d'extensions normalisées, dans l'ordre et sans doublon (vides ignorées). */
+export function normalizeAddonUrls(inputs: string[]): string[] {
+  return [...new Set(inputs.map(normalizeAddonUrl).filter(Boolean))];
+}
+
 export function addonBase(manifestUrl: string): string {
   return manifestUrl.replace(/manifest\.json$/, '');
 }
 
-function requestId(query: AddonQuery): string {
+/** Nom court d'une extension dont le manifeste est illisible : son hôte. */
+export function addonHost(manifestUrl: string): string {
+  try {
+    return new URL(manifestUrl).host;
+  } catch {
+    return manifestUrl;
+  }
+}
+
+function requestId(id: string, query: AddonQuery): string {
   return query.kind === 'series' && query.season !== null && query.season !== undefined
-    ? `${query.id}:${query.season}:${query.episode ?? 1}`
-    : query.id;
+    ? `${id}:${query.season}:${query.episode ?? 1}`
+    : id;
 }
 
 /**
- * Identifiant à envoyer à l'extension, selon les préfixes qu'elle accepte : IMDb (« tt… »,
- * la convention de Stremio), ou « tmdb:… » si elle le déclare. Null si elle ne peut pas
- * chercher ce titre (mieux vaut ne rien demander que gaspiller un lien).
+ * Identifiant à envoyer à une extension, selon le type de titre et les préfixes qu'elle
+ * accepte : IMDb (« tt… », la convention de Stremio), ou « tmdb:… » si elle le déclare.
+ * Null si elle ne peut pas chercher ce titre (mieux vaut ne rien demander que gaspiller un
+ * lien).
  */
 export function contentIdFor(
   manifest: AddonManifest,
+  kind: AddonKind,
   ids: { imdb: string | null; tmdb: number | null },
 ): string | null {
   const stream = manifest.resources.find(
     (resource) => (typeof resource === 'string' ? resource : resource.name) === 'stream',
   );
   if (!stream) return null;
+  const types = (typeof stream === 'object' ? stream.types : undefined) ?? manifest.types;
+  if (!types.includes(kind)) return null;
   const prefixes =
     (typeof stream === 'object' ? stream.idPrefixes : undefined) ?? manifest.idPrefixes ?? [];
   if (
@@ -208,45 +256,73 @@ export function fileNameFromUrl(link: string): string | null {
   }
 }
 
-export class StremioAddon {
-  private manifestCache: { url: string; at: number; manifest: AddonManifest } | null = null;
+/** Deux propositions du même nom désignent le même fichier, sauf tailles différentes. */
+function sameFile(a: StoredFile, b: StoredFile): boolean {
+  return a.size === null || b.size === null || a.size === b.size;
+}
+
+export interface StremioAddonsOptions {
+  /** Transport d'imitation de Chrome (impit), chargé à la première utilisation. */
+  loadImpersonation?: (cookies: CookieJar) => Promise<Transport | null>;
+  /**
+   * Identifiant TMDB d'un titre d'après l'identifiant de ses chemins virtuels : pour
+   * interroger une extension qui n'accepte que « tmdb:… » quand la demande part d'un chemin.
+   */
+  tmdbIdOf?: (kind: AddonKind, id: string) => number | null;
+}
+
+export class StremioAddons {
+  private readonly manifests = new Map<
+    string,
+    { at: number; manifest: AddonManifest | null; error: unknown }
+  >();
+  private readonly manifestRequests = new InFlight<string, AddonManifest>();
   private readonly inflight = new InFlight<string, StoredResult>();
   private impersonation: Promise<Transport | null> | null = null;
+  private readonly loadImpersonation: (cookies: CookieJar) => Promise<Transport | null>;
+  private readonly tmdbIdOf: (kind: AddonKind, id: string) => number | null;
 
   constructor(
     private readonly settings: SettingsService,
     private readonly cache: KeyValueCache,
     private readonly logger: Logger,
-    private readonly loadImpersonation: (
-      cookies: CookieJar,
-    ) => Promise<Transport | null> = BrowserTransport.load,
+    options: StremioAddonsOptions = {},
   ) {
+    this.loadImpersonation = options.loadImpersonation ?? BrowserTransport.load;
+    this.tmdbIdOf = options.tmdbIdOf ?? (() => null);
     settings.onChange((next, previous) => {
-      if (next.stremioAddonUrl !== previous.stremioAddonUrl) this.manifestCache = null;
+      if (next.stremioAddonUrls.join('\n') !== previous.stremioAddonUrls.join('\n'))
+        this.manifests.clear();
     });
   }
 
-  get manifestUrl(): string {
-    return this.settings.get().stremioAddonUrl;
+  /** Manifestes des extensions configurées, par ordre de préférence. */
+  get manifestUrls(): string[] {
+    return this.settings.get().stremioAddonUrls;
   }
 
   get enabled(): boolean {
-    return this.manifestUrl !== '';
+    return this.manifestUrls.length > 0;
   }
 
-  async manifest(options: { force?: boolean } = {}): Promise<AddonManifest> {
-    const url = this.manifestUrl;
-    if (!url)
-      throw new UpstreamError(
-        'Aucune extension Stremio configurée (Paramètres → Extensions et API).',
-      );
-    const cached = this.manifestCache;
-    if (!options.force && cached?.url === url && Date.now() - cached.at < MANIFEST_TTL_MS) {
-      return cached.manifest;
+  /** Manifeste d'une extension (gardé une heure ; un échec est gardé une minute). */
+  async manifest(url: string, options: { force?: boolean } = {}): Promise<AddonManifest> {
+    const cached = this.manifests.get(url);
+    if (!options.force && cached) {
+      const age = Date.now() - cached.at;
+      if (cached.manifest && age < MANIFEST_TTL_MS) return cached.manifest;
+      if (!cached.manifest && age < MANIFEST_ERROR_TTL_MS) throw cached.error;
     }
-    const manifest = validateManifest(await this.getJson(url));
-    this.manifestCache = { url, at: Date.now(), manifest };
-    return manifest;
+    return this.manifestRequests.run(url, async () => {
+      try {
+        const manifest = validateManifest(await this.getJson(url));
+        this.manifests.set(url, { at: Date.now(), manifest, error: null });
+        return manifest;
+      } catch (error) {
+        this.manifests.set(url, { at: Date.now(), manifest: null, error });
+        throw error;
+      }
+    });
   }
 
   /** Manifeste d'une adresse quelconque (test depuis les paramètres, sans l'enregistrer). */
@@ -256,60 +332,216 @@ export class StremioAddon {
     return { manifestUrl, manifest: validateManifest(await this.getJson(manifestUrl)) };
   }
 
-  /** Identifiant d'un titre pour l'extension (null si elle ne gère pas ce type de titre). */
+  /** Message préfixé du nom de l'extension, quand il y en a plusieurs. */
+  private describe(name: string, message: string): string {
+    return this.manifestUrls.length > 1 ? `${name} : ${message}` : message;
+  }
+
+  /**
+   * Extensions capables de chercher ce titre, avec l'identifiant à envoyer à chacune ; les
+   * extensions dont le manifeste est illisible sont signalées à part.
+   */
+  private async providers(
+    query: AddonQuery,
+  ): Promise<{ providers: Provider[]; failures: string[] }> {
+    if (!this.enabled) {
+      throw new UpstreamError(
+        'Aucune extension Stremio configurée (Paramètres → Extensions et API).',
+      );
+    }
+    const urls = this.manifestUrls;
+    const tmdb = /^tmdb:(\d+)$/.exec(query.id);
+    const ids = {
+      imdb: tmdb ? null : query.id,
+      tmdb: tmdb ? Number(tmdb[1]) : (query.tmdb ?? null),
+    };
+    const outcomes = await Promise.allSettled(urls.map((url) => this.manifest(url)));
+    const providers: Provider[] = [];
+    const failures: string[] = [];
+    outcomes.forEach((outcome, index) => {
+      const manifestUrl = urls[index] as string;
+      if (outcome.status === 'rejected') {
+        failures.push(this.describe(addonHost(manifestUrl), errorMessage(outcome.reason)));
+        return;
+      }
+      // Identifiant TMDB cherché seulement si une extension en a besoin.
+      if (
+        ids.imdb &&
+        ids.tmdb === null &&
+        !contentIdFor(outcome.value, query.kind, ids) &&
+        contentIdFor(outcome.value, query.kind, { imdb: null, tmdb: 0 })
+      ) {
+        ids.tmdb = this.tmdbIdOf(query.kind, query.id);
+      }
+      const id = contentIdFor(outcome.value, query.kind, ids);
+      if (id) providers.push({ manifestUrl, manifest: outcome.value, id });
+    });
+    return { providers, failures };
+  }
+
+  /**
+   * Identifiant des chemins virtuels d'un titre (IMDb s'il est connu, sinon « tmdb:… »), ou
+   * null si aucune extension ne peut le chercher.
+   */
   async contentId(
     kind: AddonKind,
     ids: { imdb: string | null; tmdb: number | null },
   ): Promise<string | null> {
-    const manifest = await this.manifest();
-    if (!manifest.types.includes(kind)) return null;
-    return contentIdFor(manifest, ids);
+    const id = ids.imdb ?? (ids.tmdb !== null ? `tmdb:${ids.tmdb}` : null);
+    if (!id) return null;
+    const { providers, failures } = await this.providers({ kind, id, tmdb: ids.tmdb });
+    // Extension injoignable : on ne peut pas exclure qu'elle connaisse ce titre.
+    return providers.length > 0 || failures.length > 0 ? id : null;
   }
 
   /** Clé en base d'une demande (l'adresse du manifeste porte la configuration de l'extension). */
-  private cacheKey(query: AddonQuery): string {
-    const config = createHash('sha1').update(this.manifestUrl).digest('hex').slice(0, 12);
-    return `stremio:${config}:${query.kind}:${requestId(query)}`;
+  private cacheKey(provider: Provider, query: AddonQuery): string {
+    const config = createHash('sha1').update(provider.manifestUrl).digest('hex').slice(0, 12);
+    return `stremio:${config}:${query.kind}:${requestId(provider.id, query)}`;
   }
 
-  private load(query: AddonQuery, force: boolean): Promise<StoredResult> {
-    const key = this.cacheKey(query);
+  private load(provider: Provider, query: AddonQuery, force: boolean): Promise<StoredResult> {
+    const key = this.cacheKey(provider, query);
     if (!force) {
       const stored = this.cache.get<StoredResult>(key);
       if (stored) return Promise.resolve(stored);
     }
-    return this.inflight.run(key, () => this.fetchFiles(query, key));
+    return this.inflight.run(key, () => this.fetchFiles(provider, query, key));
   }
 
-  /** Fichiers proposés pour un film ou un épisode (réponse gardée en base). */
+  /** Fichiers proposés pour un film ou un épisode, toutes extensions réunies. */
   async files(query: AddonQuery, options: { force?: boolean } = {}): Promise<AddonResult> {
-    const { files, notice, limited } = await this.load(query, options.force ?? false);
-    return { files, notice, limited };
+    const { providers, failures } = await this.providers(query);
+    if (providers.length === 0 && failures.length === 0) {
+      return {
+        files: [],
+        notice:
+          this.manifestUrls.length > 1
+            ? 'Aucune des extensions configurées ne peut chercher ce titre.'
+            : 'L’extension configurée ne peut pas chercher ce titre.',
+        limited: false,
+      };
+    }
+    const outcomes = await Promise.allSettled(
+      providers.map((provider) => this.load(provider, query, options.force ?? false)),
+    );
+    const errors = outcomes.map((outcome, index) =>
+      outcome.status === 'rejected'
+        ? this.describe((providers[index] as Provider).manifest.name, errorMessage(outcome.reason))
+        : null,
+    );
+    if (outcomes.every((outcome) => outcome.status === 'rejected')) {
+      // Aucune extension n'a répondu : l'erreur remonte (limite de requêtes, refus…).
+      const [only] = outcomes;
+      if (failures.length === 0 && outcomes.length === 1 && only?.status === 'rejected')
+        throw only.reason;
+      throw new UpstreamError([...failures, ...errors.filter(Boolean)].join(' · '));
+    }
+    const files: AddonFile[] = [];
+    const notices = [...failures];
+    let limited = failures.length > 0;
+    outcomes.forEach((outcome, index) => {
+      const name = (providers[index] as Provider).manifest.name;
+      if (outcome.status === 'rejected') {
+        limited = true;
+        notices.push(errors[index] as string);
+        return;
+      }
+      const stored = outcome.value;
+      if (stored.notice) notices.push(this.describe(name, stored.notice));
+      if (stored.limited) limited = true;
+      for (const file of stored.files) {
+        const existing = files.find((item) => item.path === file.path);
+        if (existing) {
+          existing.size ??= file.size;
+          continue;
+        }
+        // Plusieurs extensions : leur nom distingue les fichiers (sauf s'il y figure déjà).
+        const named =
+          this.manifestUrls.length > 1 &&
+          !(file.label ?? '').toLowerCase().includes(name.toLowerCase());
+        const label = (named ? [name, file.label] : [file.label]).filter(Boolean).join(' · ');
+        files.push({ ...file, label: label || null, addon: name });
+      }
+    });
+    return {
+      files,
+      notice: notices.length > 0 ? notices.join(' · ').slice(0, 600) : null,
+      limited,
+    };
   }
 
-  /** Lien actuel d'un fichier désigné par son chemin virtuel (nouvelle demande si besoin). */
-  async resolve(path: string, options: { refresh?: boolean } = {}): Promise<AddonLink> {
+  /**
+   * Liens d'un fichier désigné par son chemin virtuel, par ordre de préférence des
+   * extensions (nouvelle demande si aucune réponse gardée ne le contient). `refresh` : les
+   * liens précédents ont été refusés, ils sont redemandés aux extensions qui les avaient
+   * fournis.
+   */
+  async links(path: string, options: { refresh?: boolean } = {}): Promise<AddonLink[]> {
     const ref = parseVirtualPath(path);
     if (!ref?.fileName) throw new NotFoundError(`Chemin d’extension invalide : ${path}`);
-    const query = { kind: ref.kind, id: ref.id, season: ref.season, episode: ref.episode };
-    let stored = await this.load(query, options.refresh ?? false);
-    if (!stored.links[path] && !options.refresh) stored = await this.load(query, true);
-    const link = stored.links[path];
-    if (!link) {
+    const query: AddonQuery = {
+      kind: ref.kind,
+      id: ref.id,
+      season: ref.season,
+      episode: ref.episode,
+    };
+    const { providers, failures } = await this.providers(query);
+    if (providers.length === 0) {
+      if (failures.length > 0) throw new UpstreamError(failures.join(' · '));
+      throw new NotFoundError('Aucune extension configurée ne propose ce fichier.');
+    }
+    const collect = async (targets: Provider[], force: boolean) => {
+      const outcomes = await Promise.allSettled(
+        targets.map((provider) => this.load(provider, query, force)),
+      );
+      return outcomes.map((outcome) => (outcome.status === 'fulfilled' ? outcome.value : null));
+    };
+    let stored = await collect(providers, false);
+    const holders = providers.filter((_, index) => stored[index]?.links[path]);
+    if (options.refresh || holders.length === 0) {
+      // Seules les extensions concernées sont redemandées : chaque demande peut coûter un jeton.
+      const targets = holders.length > 0 ? holders : providers;
+      const fresh = await collect(targets, true);
+      stored = providers.map((provider, index) => {
+        const position = targets.indexOf(provider);
+        return (position >= 0 ? fresh[position] : null) ?? stored[index] ?? null;
+      });
+    }
+    // Un fichier du même nom mais d'une autre taille chez une autre extension n'est pas le
+    // même : ses octets ne peuvent pas prendre le relais.
+    const reference = stored
+      .flatMap((result) => result?.files ?? [])
+      .find((file) => file.path === path);
+    const links: AddonLink[] = [];
+    stored.forEach((result, index) => {
+      const link = result?.links[path];
+      const file = result?.files.find((item) => item.path === path);
+      if (!link || (reference && file && !sameFile(reference, file))) return;
+      links.push({ ...link, addon: (providers[index] as Provider).manifest.name });
+    });
+    if (links.length === 0) {
+      const limitedNotice = stored.find((result) => result?.limited && result.notice)?.notice;
       throw new NotFoundError(
-        (stored.limited && stored.notice) ||
-          'L’extension ne propose plus ce fichier (version retirée ?).',
+        limitedNotice ||
+          (this.manifestUrls.length > 1
+            ? 'Aucune extension ne propose plus ce fichier (version retirée ?).'
+            : 'L’extension ne propose plus ce fichier (version retirée ?).'),
       );
     }
-    return link;
+    return links;
   }
 
-  private async fetchFiles(query: AddonQuery, key: string): Promise<StoredResult> {
-    const id = requestId(query);
-    const url = `${addonBase(this.manifestUrl)}stream/${query.kind}/${encodeURIComponent(id)}.json`;
+  private async fetchFiles(
+    provider: Provider,
+    query: AddonQuery,
+    key: string,
+  ): Promise<StoredResult> {
+    const id = requestId(provider.id, query);
+    const url = `${addonBase(provider.manifestUrl)}stream/${query.kind}/${encodeURIComponent(id)}.json`;
     const data = (await this.getJson(url)) as { streams?: StreamEntry[] } | null;
     const entries = Array.isArray(data?.streams) ? data.streams : [];
-    const files: AddonFile[] = [];
+    const files: StoredFile[] = [];
     const links: Record<string, AddonLink> = {};
     const notices: string[] = [];
     const seen = new Set<string>();
@@ -343,6 +575,8 @@ export class StremioAddon {
       // Le même fichier peut être proposé sur plusieurs serveurs : un seul suffit.
       if (seen.has(fileName)) continue;
       seen.add(fileName);
+      // Le chemin porte l'identifiant du titre, pas celui propre à l'extension : il est le
+      // même quelle que soit l'extension qui propose le fichier.
       const path = virtualFilePath({
         kind: query.kind,
         id: query.id,
@@ -383,7 +617,7 @@ export class StremioAddon {
     };
     this.cache.set(key, result, files.length > 0 && !limited ? RESULT_TTL_MS : SHORT_TTL_MS);
     this.logger.info(
-      { id, files: files.length, notice: result.notice },
+      { addon: provider.manifest.name, id, files: files.length, notice: result.notice },
       'Liens obtenus de l’extension Stremio',
     );
     return result;
@@ -394,7 +628,7 @@ export class StremioAddon {
     return this.impersonation;
   }
 
-  /** Requête JSON vers l'extension ; imitation de Chrome si l'extension refuse la première. */
+  /** Requête JSON vers une extension ; imitation de Chrome si l'extension refuse la première. */
   private async getJson(url: string): Promise<unknown> {
     const signal = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
     let status: number;

@@ -1,23 +1,17 @@
 import http from 'node:http';
 import https from 'node:https';
-import { Readable, type Transform } from 'node:stream';
+import { Readable } from 'node:stream';
 import type { ReadableStream as NodeReadableStream } from 'node:stream/web';
-import zlib from 'node:zlib';
 import type { SourceResponse } from './transport';
 
 /**
- * Requête HTTP(S) bas niveau qui envoie exactement les en-têtes fournis.
- * `fetch` (undici) impose `sec-fetch-mode: cors` quel que soit l'en-tête demandé : une
- * signature contradictoire avec une navigation que les pare-feu anti-robot repèrent.
+ * Requête HTTP(S) bas niveau qui envoie exactement les en-têtes fournis (`fetch` en ajoute
+ * et en réécrit), avec des connexions réutilisées : un lecteur vidéo enchaîne les plages.
  */
 const agents = {
   'http:': new http.Agent({ keepAlive: true, maxSockets: 16 }),
   'https:': new https.Agent({ keepAlive: true, maxSockets: 16 }),
 };
-
-/** Encodages annoncés pour une page, comme Chrome (zstd si cette version de Node.js le gère). */
-export const PAGE_ENCODINGS =
-  typeof zlib.createZstdDecompress === 'function' ? 'gzip, deflate, br, zstd' : 'gzip, deflate, br';
 
 const MAX_REDIRECTS = 5;
 const REDIRECTS = new Set([301, 302, 303, 307, 308]);
@@ -26,12 +20,6 @@ export interface NodeRequestInit {
   method?: 'GET' | 'HEAD';
   headers: Record<string, string>;
   signal?: AbortSignal;
-  /** Décompresse les corps gzip/deflate/br (pages HTML ; jamais pour les fichiers). */
-  decompress?: boolean;
-  /** Appelé pour chaque en-tête Set-Cookie reçu (y compris pendant les redirections). */
-  onSetCookie?: (url: string, cookie: string) => void;
-  /** En-tête Cookie à envoyer pour une URL donnée (recalculé après chaque redirection). */
-  cookieFor?: (url: string) => string;
 }
 
 class NodeResponse implements SourceResponse {
@@ -85,31 +73,12 @@ function toHeaders(raw: string[]): Headers {
   return headers;
 }
 
-function decoderFor(encoding: string | null): Transform | null {
-  switch ((encoding ?? '').trim().toLowerCase()) {
-    case 'gzip':
-    case 'x-gzip':
-      return zlib.createGunzip();
-    case 'deflate':
-      return zlib.createInflate();
-    case 'br':
-      return zlib.createBrotliDecompress();
-    case 'zstd':
-      return typeof zlib.createZstdDecompress === 'function' ? zlib.createZstdDecompress() : null;
-    default:
-      return null;
-  }
-}
-
 function once(url: URL, init: NodeRequestInit): Promise<http.IncomingMessage> {
   const client = url.protocol === 'https:' ? https : http;
-  const headers = { ...init.headers };
-  const cookie = init.cookieFor?.(url.toString());
-  if (cookie) headers.cookie = cookie;
   return new Promise((resolve, reject) => {
     const request = client.request(url, {
       method: init.method ?? 'GET',
-      headers,
+      headers: init.headers,
       agent: agents[url.protocol as 'http:' | 'https:'],
       signal: init.signal,
     });
@@ -123,8 +92,6 @@ export async function nodeRequest(target: string, init: NodeRequestInit): Promis
   let url = new URL(target);
   for (let redirects = 0; ; redirects += 1) {
     const response = await once(url, init);
-    for (const cookie of [response.headers['set-cookie'] ?? []].flat())
-      init.onSetCookie?.(url.toString(), cookie);
     const location = response.headers.location;
     if (REDIRECTS.has(response.statusCode ?? 0) && location && redirects < MAX_REDIRECTS) {
       response.resume();
@@ -133,13 +100,6 @@ export async function nodeRequest(target: string, init: NodeRequestInit): Promis
     }
     const headers = toHeaders(response.rawHeaders);
     let stream: Readable | null = response;
-    const decoder = init.decompress ? decoderFor(headers.get('content-encoding')) : null;
-    if (decoder) {
-      stream = response.pipe(decoder);
-      response.on('error', (error) => decoder.destroy(error));
-      headers.delete('content-encoding');
-      headers.delete('content-length');
-    }
     if ((init.method ?? 'GET') === 'HEAD') {
       response.resume();
       stream = null;

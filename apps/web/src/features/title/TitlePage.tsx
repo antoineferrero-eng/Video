@@ -1,33 +1,24 @@
-import {
-  AlertTriangle,
-  Clock,
-  Download,
-  FolderOpen,
-  Info,
-  Play,
-  SearchX,
-  Star,
-} from 'lucide-react';
+import { AlertTriangle, Clock, Download, Info, Play, SearchX, Star } from 'lucide-react';
 import { Link, useNavigate, useParams } from 'react-router';
 import type { MediaRef, TitleDetails } from '@lumiere/shared';
 import { useEnqueueTitle, useTitle } from '../../api/queries';
 import { Backdrop, Poster } from '../../components/media/Poster';
 import { Badge } from '../../components/ui/Badge';
-import { Button, ButtonLink } from '../../components/ui/Button';
+import { Button } from '../../components/ui/Button';
 import { EmptyState, ErrorState, Skeleton } from '../../components/ui/States';
 import { useAmbient } from '../../design/ambient/ambient';
 import { formatClock, formatDuration, formatRating, episodeCode } from '../../lib/format';
-import { explorerUrl, playerUrl } from '../../lib/routes';
-import { isAddonPath, mediaRefFor } from './file-utils';
+import { playerUrl } from '../../lib/routes';
+import { mediaRefFor } from './file-utils';
 import { MovieVersions } from './MovieVersions';
 import { SeriesSeasons } from './SeriesSeasons';
 
-/** Épisode dont le fichier sera choisi à la lecture (extension Stremio). */
+/** Épisode dont le fichier sera choisi à la lecture, parmi ceux des extensions Stremio. */
 function onDemand(
   title: TitleDetails,
   episode: { season: number | null; episode: number | null },
 ): MediaRef | null {
-  if (!title.streamsOnDemand || episode.season === null || episode.episode === null) return null;
+  if (episode.season === null || episode.episode === null) return null;
   return { type: 'episode', titleId: title.id, season: episode.season, episode: episode.episode };
 }
 
@@ -85,7 +76,6 @@ export function TitlePage() {
 
   const title = query.data;
   const primary = primaryAction(title);
-  const viaAddon = isAddonPath(title.remotePath);
   const rating = formatRating(title.rating);
   const episodeCount = title.seasons.reduce((total, season) => total + season.episodes.length, 0);
 
@@ -157,7 +147,7 @@ export function TitlePage() {
             {title.overview && (
               <p className="max-w-3xl leading-relaxed text-zinc-200">{title.overview}</p>
             )}
-            {/* Rien à lire ni à télécharger quand le titre est introuvable sur la source. */}
+            {/* Rien à lire ni à télécharger quand aucune extension ne propose le titre. */}
             {title.sourceStatus !== 'missing' && (
               <div className="mt-1 flex flex-wrap gap-3">
                 {primary && (
@@ -177,25 +167,13 @@ export function TitlePage() {
                   loading={enqueue.isPending}
                   onClick={() => enqueue.mutate({ titleId: title.id })}
                   title={
-                    title.streamsOnDemand
-                      ? 'Chaque épisode est demandé à l’extension Stremio, un par un'
+                    title.kind === 'series'
+                      ? 'Chaque épisode est demandé aux extensions Stremio, un par un'
                       : undefined
                   }
                 >
                   {title.kind === 'movie' ? 'Télécharger' : 'Tout télécharger'}
                 </Button>
-                {/* Les fichiers d'une extension n'ont pas de dossier à parcourir. */}
-                {!viaAddon && (
-                  <ButtonLink
-                    to={explorerUrl(title.remotePath)}
-                    variant="glass"
-                    size="icon-lg"
-                    title="Ouvrir le dossier source dans l'explorateur"
-                    aria-label="Dossier source"
-                  >
-                    <FolderOpen className="size-5" />
-                  </ButtonLink>
-                )}
               </div>
             )}
           </div>
@@ -225,14 +203,14 @@ export function TitlePage() {
         >
           <AlertTriangle className="mt-0.5 size-4 shrink-0 text-amber-300" />
           <p>
-            <span className="font-semibold">Extension Stremio : </span>
+            <span className="font-semibold">Extensions Stremio : </span>
             {title.sourceNotice}
           </p>
         </div>
       )}
 
       {title.sourceStatus === 'missing' ? (
-        <SourceMissing title={title} viaAddon={viaAddon} />
+        <SourceMissing title={title} />
       ) : title.kind === 'movie' ? (
         <MovieVersions title={title} />
       ) : (
@@ -242,39 +220,24 @@ export function TitlePage() {
   );
 }
 
-/** Titre venu de TMDB que la source ne propose pas (sous les noms de dossier essayés). */
-function SourceMissing({ title, viaAddon }: { title: TitleDetails; viaAddon: boolean }) {
-  if (viaAddon) {
-    return (
-      <EmptyState
-        icon={<SearchX />}
-        title="Aucun fichier proposé"
-        description={`L’extension Stremio ne propose aucun fichier pour ${title.kind === 'movie' ? 'ce film' : 'cette série'} pour l’instant. Réessayez plus tard : son offre évolue.`}
-      />
-    );
-  }
+/** Titre qu'aucune extension Stremio ne propose (pour l'instant). */
+function SourceMissing({ title }: { title: TitleDetails }) {
   return (
     <EmptyState
       icon={<SearchX />}
-      title="Introuvable sur la source"
+      title="Aucun fichier proposé"
       description={
         <>
-          <p>
-            {title.kind === 'movie' ? 'Ce film' : 'Cette série'} n’a pas été trouvé sur la source.
-            Il n’y est peut-être pas, ou son dossier porte un autre nom. Nouvel essai automatique
-            dans 24 h.
-          </p>
-          {title.sourceTried.length > 0 && (
-            <p className="mt-3 text-xs text-zinc-500">
-              Dossiers essayés :{' '}
-              {title.sourceTried.map((folder, index) => (
-                <span key={folder}>
-                  {index > 0 && ', '}
-                  <span className="font-mono text-zinc-400">{folder}</span>
-                </span>
-              ))}
-            </p>
-          )}
+          Aucune extension Stremio ne propose de fichier pour{' '}
+          {title.kind === 'movie' ? 'ce film' : 'cette série'} pour l’instant. Réessayez plus tard
+          (leur offre évolue), ou ajoutez une autre extension dans les{' '}
+          <Link
+            to="/parametres?onglet=services"
+            className="font-medium text-brand-300 underline-offset-2 hover:underline"
+          >
+            paramètres
+          </Link>
+          .
         </>
       }
     />

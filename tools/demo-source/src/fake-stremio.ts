@@ -1,5 +1,5 @@
 /**
- * Fausse extension Stremio pour la démonstration hors ligne : même protocole que les
+ * Fausses extensions Stremio pour la démonstration hors ligne : même protocole que les
  * extensions réelles (manifest.json, /stream/<type>/<id>.json), avec ce qui compte pour
  * Lumière chez 111477 : des liens qui expirent, une réserve de liens qui se vide (un jeton
  * par lien) et se remplit lentement, et une limite de requêtes en rafale.
@@ -9,9 +9,14 @@
  *   GET /stremio/stream/series/tt9100201%3A1%3A2.json
  *   GET /stremio/link/<jeton>/<fichier>            (lien de lecture, avec Range)
  *
- * Réglages : DEMO_ADDON_TOKENS (réserve, 0 = illimitée), DEMO_ADDON_REFILL_S (un jeton
- * regagné toutes les N secondes), DEMO_ADDON_LINK_TTL_S (durée de vie d'un lien),
- * DEMO_ADDON_BURST (requêtes par 10 s, 0 = sans limite).
+ * Deux extensions sont servies, pour montrer plusieurs sources à la fois : « Lumière démo »
+ * (/stremio/, films et séries) et « Miroir démo » (/stremio-miroir/, films seulement). Une
+ * partie de leurs fichiers est commune (l'une prend le relais si le lien de l'autre est
+ * refusé), le reste n'est proposé que par l'une ou l'autre.
+ *
+ * Réglages (première extension) : DEMO_ADDON_TOKENS (réserve, 0 = illimitée),
+ * DEMO_ADDON_REFILL_S (un jeton regagné toutes les N secondes), DEMO_ADDON_LINK_TTL_S (durée
+ * de vie d'un lien), DEMO_ADDON_BURST (requêtes par 10 s, 0 = sans limite).
  */
 import { randomBytes } from 'node:crypto';
 import fs from 'node:fs';
@@ -21,36 +26,53 @@ import { DEMO_TITLES, type DemoTitle } from './fake-tmdb';
 
 export interface FakeStremioOptions {
   root: string;
+  /** Préfixe des routes de l'extension (« /stremio »). */
+  prefix: string;
+  id: string;
+  name: string;
+  types: Array<'movie' | 'series'>;
+  /** Fichiers proposés par cette extension (d'après leur nom). */
+  accepts: (fileName: string) => boolean;
   tokens: number;
   refillSeconds: number;
   linkTtlSeconds: number;
   burst: number;
 }
 
-export function fakeStremioOptions(root: string): FakeStremioOptions {
-  return {
-    root,
-    tokens: Number(process.env.DEMO_ADDON_TOKENS ?? 0),
-    refillSeconds: Number(process.env.DEMO_ADDON_REFILL_S ?? 300),
-    linkTtlSeconds: Number(process.env.DEMO_ADDON_LINK_TTL_S ?? 3600),
-    burst: Number(process.env.DEMO_ADDON_BURST ?? 10),
-  };
+/** Les deux extensions de la démonstration. */
+export function fakeStremioOptions(root: string): FakeStremioOptions[] {
+  return [
+    {
+      root,
+      prefix: '/stremio',
+      id: 'org.lumiere.demo-addon',
+      name: 'Lumière démo',
+      types: ['movie', 'series'],
+      // Les versions sous-titrées ne sont proposées que par le miroir.
+      accepts: (name) => !/VOSTFR/i.test(name),
+      tokens: Number(process.env.DEMO_ADDON_TOKENS ?? 0),
+      refillSeconds: Number(process.env.DEMO_ADDON_REFILL_S ?? 300),
+      linkTtlSeconds: Number(process.env.DEMO_ADDON_LINK_TTL_S ?? 3600),
+      burst: Number(process.env.DEMO_ADDON_BURST ?? 10),
+    },
+    {
+      root,
+      prefix: '/stremio-miroir',
+      id: 'org.lumiere.demo-mirror',
+      name: 'Miroir démo',
+      types: ['movie'],
+      // Pas de 4K sur le miroir.
+      accepts: (name) => !/2160p/i.test(name),
+      tokens: 0,
+      refillSeconds: 300,
+      linkTtlSeconds: 3600,
+      burst: 0,
+    },
+  ];
 }
 
 const VIDEO = /\.(mkv|mp4|webm|avi|mov)$/i;
 const LIMIT_TITLE = '⚠️ Slow down — rate limit reached';
-
-const MANIFEST = {
-  id: 'org.lumiere.demo-addon',
-  name: 'Lumière démo',
-  version: '1.0.0',
-  description: 'Extension Stremio de démonstration (fichiers de la source locale).',
-  resources: ['stream'],
-  types: ['movie', 'series'],
-  idPrefixes: ['tt'],
-  catalogs: [],
-  behaviorHints: { configurable: false },
-};
 
 function send(response: http.ServerResponse, status: number, body: unknown): void {
   response.writeHead(status, {
@@ -127,14 +149,26 @@ export class FakeStremio {
   }
 
   /**
-   * Traite une requête /stremio/… : true si la réponse est envoyée, le chemin d'un fichier
-   * à servir (lien de lecture valide), ou false si la route n'est pas concernée.
+   * Traite une requête de l'extension (sous son préfixe) : true si la réponse est envoyée, le
+   * chemin d'un fichier à servir (lien de lecture valide), ou false si la route n'est pas
+   * concernée.
    */
   handle(url: URL, request: http.IncomingMessage, response: http.ServerResponse): boolean | string {
-    if (!url.pathname.startsWith('/stremio/')) return false;
-    const route = url.pathname.slice('/stremio'.length);
+    const { prefix } = this.options;
+    if (!url.pathname.startsWith(`${prefix}/`)) return false;
+    const route = url.pathname.slice(prefix.length);
     if (route === '/manifest.json') {
-      send(response, 200, MANIFEST);
+      send(response, 200, {
+        id: this.options.id,
+        name: this.options.name,
+        version: '1.0.0',
+        description: 'Extension Stremio de démonstration (vidéos d’exemple générées localement).',
+        resources: ['stream'],
+        types: this.options.types,
+        idPrefixes: ['tt'],
+        catalogs: [],
+        behaviorHints: { configurable: false },
+      });
       return true;
     }
     const link = /^\/link\/([a-f0-9]+)\//.exec(route);
@@ -159,8 +193,14 @@ export class FakeStremio {
     const title = DEMO_TITLES.find(
       (item) => item.imdb === imdb && (item.kind === 'movie') === (stream[1] === 'movie'),
     );
-    const files = title ? filesFor(this.options.root, title, Number(season), Number(episode)) : [];
-    const base = `http://${request.headers.host ?? '127.0.0.1'}/stremio/link`;
+    const kind = stream[1] === 'movie' ? 'movie' : 'series';
+    const files =
+      title && this.options.types.includes(kind)
+        ? filesFor(this.options.root, title, Number(season), Number(episode)).filter((file) =>
+            this.options.accepts(path.basename(file)),
+          )
+        : [];
+    const base = `http://${request.headers.host ?? '127.0.0.1'}${prefix}/link`;
     const streams: unknown[] = [];
     let limited = false;
     for (const file of files) {
@@ -176,13 +216,13 @@ export class FakeStremio {
       const name = path.basename(file);
       const size = fs.statSync(file).size;
       streams.push({
-        name: `Lumière démo\n${resolution(name)}`,
+        name: `${this.options.name}\n${resolution(name)}`,
         title: `${name}\n💾 ${formatSize(size)}`,
         url: `${base}/${token}/${encodeURIComponent(name)}`,
         behaviorHints: { filename: name, videoSize: size, bingeGroup: 'lumiere-demo' },
       });
     }
-    if (limited) streams.push({ name: 'Lumière démo', title: LIMIT_TITLE });
+    if (limited) streams.push({ name: this.options.name, title: LIMIT_TITLE });
     send(response, 200, { streams });
     return true;
   }

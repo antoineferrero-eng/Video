@@ -4,11 +4,7 @@ import type { AppConfig } from '../../config/env';
 import { BadRequestError, errorMessage } from '../../core/errors';
 import { assertWritableDir } from '../../core/fs';
 import { transaction, type Db } from '../../infra/database/database';
-import { normalizeDirPath } from '../source/remote-path';
-import { normalizeAddonUrl } from '../source/stremio/stremio-addon';
-
-export const DEFAULT_USER_AGENT =
-  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36';
+import { normalizeAddonUrl, normalizeAddonUrls } from '../source/stremio/stremio-addon';
 
 const TMDB_KEY = 'tmdbApiKey';
 const OPENSUBTITLES_KEY = 'openSubtitlesApiKey';
@@ -16,12 +12,7 @@ const OPENSUBTITLES_PASSWORD = 'openSubtitlesPassword';
 
 export function defaultSettings(config: AppConfig): AppSettings {
   return {
-    sourceBaseUrl: config.defaults.sourceBaseUrl,
-    moviesPath: normalizeDirPath(config.defaults.moviesPath),
-    seriesPath: normalizeDirPath(config.defaults.seriesPath),
-    userAgent: DEFAULT_USER_AGENT,
-    sourceConnection: 'auto',
-    stremioAddonUrl: defaultAddonUrl(config.defaults.stremioAddonUrl),
+    stremioAddonUrls: validAddonUrls(config.defaults.stremioAddonUrls),
     downloadDir: config.defaults.downloadDir,
     maxConcurrentDownloads: 2,
     maxDownloadSpeedKbps: 0,
@@ -29,10 +20,9 @@ export function defaultSettings(config: AppConfig): AppSettings {
     metadataLanguage: 'fr-FR',
     preferredAudioLanguage: 'fr',
     preferredSubtitleLanguage: '',
-    subtitleAddonUrls: normalizeAddonUrls(config.defaults.subtitleAddonUrls),
+    subtitleAddonUrls: validAddonUrls(config.defaults.subtitleAddonUrls),
     openSubtitlesUsername: '',
     catalogRefreshHours: 12,
-    catalogSource: 'auto',
     transcodePreset: 'balanced',
     maxTranscodeHeight: 1080,
   };
@@ -47,7 +37,7 @@ function defaultAddonUrl(value: string): string {
 }
 
 /** Adresses d'extensions valides et sans doublon (les adresses invalides sont ignorées). */
-function normalizeAddonUrls(values: string[]): string[] {
+function validAddonUrls(values: string[]): string[] {
   return [...new Set(values.map(defaultAddonUrl).filter(Boolean))];
 }
 
@@ -121,22 +111,12 @@ export class SettingsService {
     const previous = this.current;
     const next: AppSettings = { ...previous };
 
-    if (patch.sourceBaseUrl !== undefined) {
-      next.sourceBaseUrl = patch.sourceBaseUrl.trim().replace(/\/+$/, '');
-    }
-    if (patch.moviesPath !== undefined) next.moviesPath = normalizeDirPath(patch.moviesPath);
-    if (patch.seriesPath !== undefined) next.seriesPath = normalizeDirPath(patch.seriesPath);
-    if (patch.stremioAddonUrl !== undefined)
-      next.stremioAddonUrl = normalizeAddonUrl(patch.stremioAddonUrl);
-    if (patch.subtitleAddonUrls !== undefined) {
-      next.subtitleAddonUrls = [
-        ...new Set(patch.subtitleAddonUrls.map(normalizeAddonUrl).filter(Boolean)),
-      ];
-    }
+    if (patch.stremioAddonUrls !== undefined)
+      next.stremioAddonUrls = normalizeAddonUrls(patch.stremioAddonUrls);
+    if (patch.subtitleAddonUrls !== undefined)
+      next.subtitleAddonUrls = normalizeAddonUrls(patch.subtitleAddonUrls);
     if (patch.openSubtitlesUsername !== undefined)
       next.openSubtitlesUsername = patch.openSubtitlesUsername.trim();
-    if (patch.userAgent !== undefined)
-      next.userAgent = patch.userAgent.trim() || DEFAULT_USER_AGENT;
     if (patch.downloadDir !== undefined) {
       const dir = path.resolve(patch.downloadDir.trim());
       try {
@@ -149,7 +129,6 @@ export class SettingsService {
       next.downloadDir = dir;
     }
     for (const key of [
-      'sourceConnection',
       'maxConcurrentDownloads',
       'maxDownloadSpeedKbps',
       'preferredQuality',
@@ -157,7 +136,6 @@ export class SettingsService {
       'preferredAudioLanguage',
       'preferredSubtitleLanguage',
       'catalogRefreshHours',
-      'catalogSource',
       'transcodePreset',
       'maxTranscodeHeight',
     ] as const) {

@@ -10,10 +10,12 @@ import { Spinner } from '../../components/ui/Spinner';
 import { EmptyState, ErrorState } from '../../components/ui/States';
 import { cn } from '../../lib/cn';
 import { formatRelativeDate, plural } from '../../lib/format';
+import { SetupBanner, SetupCard } from '../setup/SetupCard';
+import { useSetupStatus } from '../setup/setup-status';
 
 const SORTS: Array<{ value: CatalogSort; label: string; hint?: string }> = [
   { value: 'popular', label: 'Popularité', hint: 'Comme la page « Populaires » de TMDB' },
-  { value: 'recent', label: 'Ajouts récents' },
+  { value: 'recent', label: 'Sorties récentes' },
   { value: 'title', label: 'Titre (A → Z)' },
   { value: 'year', label: 'Année' },
   { value: 'rating', label: 'Note' },
@@ -51,6 +53,8 @@ export function CatalogPage({ kind }: { kind: TitleKind }) {
   const system = useSystemInfo();
   const refresh = useRefreshCatalog();
   const section = system.data?.catalog.find((item) => item.kind === kind);
+  const setup = useSetupStatus();
+  const needsSetup = setup !== null && !setup.complete;
   const sentinel = useRef<HTMLDivElement>(null);
   const { fetchNextPage, hasNextPage, isFetchingNextPage } = catalog;
 
@@ -124,7 +128,7 @@ export function CatalogPage({ kind }: { kind: TitleKind }) {
             className="size-11"
             onClick={() => refresh.mutate(kind)}
             disabled={section?.state === 'refreshing'}
-            title="Relire la liste depuis la source"
+            title="Réimporter les listes de TMDB"
             aria-label="Actualiser le catalogue"
           >
             <RefreshCw
@@ -152,6 +156,8 @@ export function CatalogPage({ kind }: { kind: TitleKind }) {
         </div>
       )}
 
+      {needsSetup && items.length > 0 && <SetupBanner status={setup} />}
+
       {catalog.isError ? (
         <ErrorState error={catalog.error} onRetry={() => void catalog.refetch()} />
       ) : catalog.isPending ? (
@@ -160,6 +166,8 @@ export function CatalogPage({ kind }: { kind: TitleKind }) {
             <PosterCardSkeleton key={index} />
           ))}
         </div>
+      ) : items.length === 0 && needsSetup && !deferredQ && !genre ? (
+        <SetupCard status={setup} />
       ) : items.length === 0 ? (
         <EmptyState
           icon={<Icon />}
@@ -169,7 +177,7 @@ export function CatalogPage({ kind }: { kind: TitleKind }) {
               ? 'Essayez un autre mot-clé ou retirez le filtre de genre.'
               : section?.lastError
                 ? `Dernière erreur : ${section.lastError}`
-                : 'Le catalogue est vide pour le moment. Vérifiez la source dans les paramètres.'
+                : 'Le catalogue est vide pour le moment. Vérifiez la clé TMDB dans les paramètres.'
           }
         />
       ) : (
