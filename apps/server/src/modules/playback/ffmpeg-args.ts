@@ -18,7 +18,7 @@ const X264_PRESETS: Record<TranscodePreset, { preset: string; crf: number }> = {
   fast: { preset: 'superfast', crf: 24 },
 };
 
-function remoteInputArgs(isRemote: boolean, userAgent: string): string[] {
+export function remoteInputArgs(isRemote: boolean, userAgent: string): string[] {
   if (!isRemote) return [];
   return [
     '-user_agent',

@@ -3,6 +3,7 @@ import { TtlCache } from '../../core/async';
 import { errorMessage } from '../../core/errors';
 import type { Logger } from '../../core/logger';
 import { stripExtension } from '../../domain/media-files';
+import { parseRelease } from '../../domain/release-parser';
 import type { TitleRow, TitlesRepository } from '../catalog/titles.repository';
 import type { TmdbClient } from '../metadata/tmdb.client';
 import type { SettingsService } from '../settings/settings.service';
@@ -44,6 +45,8 @@ export interface OnlineSubtitleCandidate {
   hearingImpaired: boolean;
   /** Ne traduit que les passages en langue étrangère. */
   forced: boolean;
+  /** Cadence déclarée de la vidéo sur laquelle ils ont été calés. */
+  fps: number | null;
   ref: OnlineSubtitleRef;
 }
 
@@ -123,6 +126,7 @@ export class OnlineSubtitlesService {
               hashMatch: hit.hashMatch,
               hearingImpaired: hit.hearingImpaired,
               forced: hit.foreignPartsOnly,
+              fps: hit.fps,
               ref: { provider: 'opensubtitles' as const, fileId: hit.fileId },
             })),
           )
@@ -159,6 +163,7 @@ export class OnlineSubtitlesService {
               hashMatch: false,
               hearingImpaired: false,
               forced: false,
+              fps: null,
               ref: { provider: 'addon' as const, url: hit.url },
             }));
           })
@@ -172,7 +177,7 @@ export class OnlineSubtitlesService {
     const found = (await Promise.all(tasks)).flat();
     if (!imdbId && this.settings.get().subtitleAddonUrls.length > 0 && !this.openSubtitles.enabled)
       notices.push('Titre non identifié (identifiant IMDb inconnu) : extensions non interrogées.');
-    return { candidates: rank(found, languages), providers, notices };
+    return { candidates: rank(found, languages, media.fileName), providers, notices };
   }
 
   async download(ref: OnlineSubtitleRef): Promise<{ data: Buffer; fileName: string | null }> {
@@ -214,18 +219,41 @@ export class OnlineSubtitlesService {
 }
 
 /**
+ * Proximité entre la release pour laquelle des sous-titres ont été faits et le fichier lu :
+ * même équipe, même source (BluRay, WEB-DL…), même résolution ; une édition différente
+ * (version longue, director's cut) annonce des scènes en plus ou en moins.
+ */
+export function releaseAffinity(release: string | null, fileName: string | null): number {
+  if (!release || !fileName) return 0;
+  const subtitle = parseRelease(release).info;
+  const file = parseRelease(fileName).info;
+  let affinity = 0;
+  if (subtitle.group && file.group && subtitle.group.toLowerCase() === file.group.toLowerCase())
+    affinity += 3;
+  if (subtitle.source && subtitle.source === file.source) affinity += 2;
+  if (subtitle.resolution && subtitle.resolution === file.resolution) affinity += 1;
+  if (subtitle.edition !== file.edition) affinity -= 6;
+  return affinity;
+}
+
+/**
  * Ordre d'affichage : langues dans l'ordre de préférence ; dans chaque langue, d'abord les
- * sous-titres faits pour ce fichier, puis complets avant « forcés », puis les plus téléchargés.
- * Les doublons (même fichier proposé par deux services) sont retirés.
+ * sous-titres faits pour ce fichier, puis pour la release la plus proche, complets avant
+ * « forcés », puis les plus téléchargés. Les doublons (même fichier proposé par deux
+ * services) sont retirés.
  */
 export function rank(
   candidates: OnlineSubtitleCandidate[],
   languages: string[],
+  fileName: string | null = null,
 ): OnlineSubtitleCandidate[] {
   const order = (language: string | null) => {
     const index = language ? languages.indexOf(language) : -1;
     return index >= 0 ? index : languages.length;
   };
+  const affinity = new Map(
+    candidates.map((candidate) => [candidate, releaseAffinity(candidate.release, fileName)]),
+  );
   const seen = new Set<string>();
   const perLanguage = new Map<string, number>();
   return candidates
@@ -234,6 +262,7 @@ export function rank(
       (a, b) =>
         order(a.language) - order(b.language) ||
         Number(b.hashMatch) - Number(a.hashMatch) ||
+        affinity.get(b)! - affinity.get(a)! ||
         Number(a.forced) - Number(b.forced) ||
         Number(a.hearingImpaired) - Number(b.hearingImpaired) ||
         (b.downloads ?? -1) - (a.downloads ?? -1),

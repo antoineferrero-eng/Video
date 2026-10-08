@@ -23,7 +23,7 @@ import {
   NotFoundError,
   ServiceUnavailableError,
 } from '../../core/errors';
-import { ensureDir } from '../../core/fs';
+import { ensureDir, pathExists } from '../../core/fs';
 import type { Logger } from '../../core/logger';
 import { formatEpisodeCode, prettifyTitle } from '../../core/text';
 import { parseEpisode, parseSeasonFolder } from '../../domain/episode-parser';
@@ -790,18 +790,7 @@ export class PlaybackService {
     if (track.source === 'online' && track.online) return this.loadOnlineSubtitles(track.online);
 
     // Piste intégrée : extraction (mise en cache disque, l'opération lit tout le fichier).
-    let cacheKey = `${
-      session.isRemote && session.remotePath ? `remote:${session.remotePath}` : session.input
-    }#${track.streamIndex}`;
-    if (!session.isRemote) {
-      const stats = await fsp.stat(session.input);
-      cacheKey += `:${stats.size}:${stats.mtimeMs}`;
-    }
-    const cacheFile = path.join(
-      this.config.cacheDir,
-      'subtitles',
-      `${createHash('sha1').update(cacheKey).digest('hex')}.vtt`,
-    );
+    const cacheFile = await this.embeddedCacheFile(session, track);
     const cached = await fsp.readFile(cacheFile, 'utf8').catch(() => null);
     if (cached) return cached;
     if (!this.ffmpeg.info.available) {
@@ -823,6 +812,61 @@ export class PlaybackService {
     await ensureDir(path.dirname(cacheFile));
     await fsp.writeFile(cacheFile, vtt, 'utf8');
     return vtt;
+  }
+
+  private async embeddedCacheFile(
+    session: PlaybackSessionState,
+    track: SubtitleSource,
+  ): Promise<string> {
+    let cacheKey = `${
+      session.isRemote && session.remotePath ? `remote:${session.remotePath}` : session.input
+    }#${track.streamIndex}`;
+    if (!session.isRemote) {
+      const stats = await fsp.stat(session.input);
+      cacheKey += `:${stats.size}:${stats.mtimeMs}`;
+    }
+    return path.join(
+      this.config.cacheDir,
+      'subtitles',
+      `${createHash('sha1').update(cacheKey).digest('hex')}.vtt`,
+    );
+  }
+
+  private onlineCacheFile(candidate: OnlineSubtitleCandidate): string {
+    return path.join(this.config.cacheDir, 'subtitles', `online-${candidate.key}.vtt`);
+  }
+
+  /** État d'une session (recalage des sous-titres). */
+  session(sessionId: string): PlaybackSessionState {
+    return this.sessions.get(sessionId);
+  }
+
+  /** Piste de sous-titres de la session (pistes en ligne trouvées comprises). */
+  subtitleTrack(sessionId: string, trackId: string): SubtitleSource | null {
+    const session = this.sessions.get(sessionId);
+    return (
+      session.subtitles.find((item) => item.id === trackId) ??
+      (trackId.startsWith('onl-') ? (this.onlineTracks.get(trackId) ?? null) : null)
+    );
+  }
+
+  /**
+   * Sous-titres d'une piste s'ils s'obtiennent sans lire tout un fichier distant ni rien
+   * télécharger (référence pour recaler une autre piste) ; null sinon.
+   */
+  async subtitlesIfAvailable(sessionId: string, trackId: string): Promise<string | null> {
+    const session = this.sessions.get(sessionId);
+    const track = this.subtitleTrack(sessionId, trackId);
+    if (!track?.supported) return null;
+    let available = session.subtitleCache.has(trackId) || track.source === 'external';
+    if (!available && track.source === 'embedded') {
+      available =
+        !session.isRemote ||
+        (await pathExists(await this.embeddedCacheFile(session, track)).catch(() => false));
+    }
+    if (!available && track.source === 'online' && track.online)
+      available = await pathExists(this.onlineCacheFile(track.online));
+    return available ? this.subtitles(sessionId, trackId).catch(() => null) : null;
   }
 
   /** Fichier de sous-titres texte (SRT, WebVTT, ASS/SSA) converti en WebVTT. */
@@ -848,7 +892,7 @@ export class PlaybackService {
    * compte chaque téléchargement dans un quota quotidien).
    */
   private async loadOnlineSubtitles(candidate: OnlineSubtitleCandidate): Promise<string> {
-    const cacheFile = path.join(this.config.cacheDir, 'subtitles', `online-${candidate.key}.vtt`);
+    const cacheFile = this.onlineCacheFile(candidate);
     const cached = await fsp.readFile(cacheFile, 'utf8').catch(() => null);
     if (cached) return cached;
     const { data, fileName } = await this.onlineSubtitles.download(candidate.ref);

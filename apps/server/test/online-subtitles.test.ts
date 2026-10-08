@@ -175,6 +175,7 @@ describe('classement des sous-titres en ligne', () => {
     hashMatch: false,
     hearingImpaired: false,
     forced: false,
+    fps: null,
     ref: { provider: 'addon', url: `https://x/${key}` },
     ...overrides,
   });
@@ -193,6 +194,23 @@ describe('classement des sous-titres en ligne', () => {
       ['fr', 'en'],
     );
     expect(ranked.map((item) => item.key)).toEqual(['exact', 'popular', 'addon', 'forced', 'en']);
+  });
+
+  it('préfère, à langue égale, les sous-titres de la même release que le fichier', () => {
+    const ranked = rank(
+      [
+        candidate('populaire', { release: 'Film.2019.720p.HDTV.x264-AUTRE', downloads: 9000 }),
+        candidate('longue', {
+          release: 'Film.2019.EXTENDED.1080p.BluRay.x264-GRP',
+          downloads: 5000,
+        }),
+        candidate('meme', { release: 'Film.2019.1080p.BluRay.x264-GRP', downloads: 10 }),
+        candidate('source', { release: 'Film 2019 BluRay 1080p', downloads: 20 }),
+      ],
+      ['fr'],
+      'Film.2019.1080p.BluRay.x264-GRP.mkv',
+    );
+    expect(ranked.map((item) => item.key)).toEqual(['meme', 'source', 'populaire', 'longue']);
   });
 });
 

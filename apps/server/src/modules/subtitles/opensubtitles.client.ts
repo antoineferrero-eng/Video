@@ -36,6 +36,8 @@ export interface OpenSubtitlesHit {
   hearingImpaired: boolean;
   foreignPartsOnly: boolean;
   machineTranslated: boolean;
+  /** Cadence de la vidéo sur laquelle les sous-titres ont été calés (déclarée). */
+  fps: number | null;
 }
 
 interface RawSubtitle {
@@ -43,6 +45,7 @@ interface RawSubtitle {
     language?: string;
     release?: string;
     download_count?: number;
+    fps?: number;
     moviehash_match?: boolean;
     hearing_impaired?: boolean;
     foreign_parts_only?: boolean;
@@ -137,6 +140,7 @@ export class OpenSubtitlesClient {
         foreignPartsOnly: attributes.foreign_parts_only === true,
         machineTranslated:
           attributes.machine_translated === true || attributes.ai_translated === true,
+        fps: typeof attributes.fps === 'number' && attributes.fps > 0 ? attributes.fps : null,
       });
     }
     return hits;

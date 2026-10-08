@@ -25,6 +25,7 @@ import { Ffmpeg } from './modules/playback/ffmpeg';
 import { PlaybackService } from './modules/playback/playback.service';
 import { ProgressRepository } from './modules/playback/progress.repository';
 import { PlaybackSessions } from './modules/playback/sessions';
+import { SubtitleSyncService } from './modules/playback/subtitle-sync.service';
 import { SettingsService } from './modules/settings/settings.service';
 import { SourceClient } from './modules/source/source-client';
 import { SourceRelay } from './modules/source/source-relay';
@@ -52,6 +53,7 @@ export interface Container {
   ffmpeg: Ffmpeg;
   playback: PlaybackService;
   sessions: PlaybackSessions;
+  subtitleSync: SubtitleSyncService;
   openSubtitles: OpenSubtitlesClient;
   subtitleAddons: SubtitleAddons;
   onlineSubtitles: OnlineSubtitlesService;
@@ -149,6 +151,13 @@ export function createContainer(config: AppConfig, logger: Logger): Container {
     config,
     logger.child({ module: 'playback' }),
   );
+  const subtitleSync = new SubtitleSyncService(
+    playback,
+    ffmpeg,
+    kvCache,
+    source.userAgent,
+    subtitlesLogger,
+  );
 
   return {
     config,
@@ -170,6 +179,7 @@ export function createContainer(config: AppConfig, logger: Logger): Container {
     ffmpeg,
     playback,
     sessions,
+    subtitleSync,
     openSubtitles,
     subtitleAddons,
     onlineSubtitles,
