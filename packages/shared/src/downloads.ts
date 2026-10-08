@@ -54,15 +54,11 @@ export interface EnqueueSeriesRequest {
   season?: number | null;
 }
 
-export interface EnqueueFolderRequest {
-  path: string;
-}
-
 export interface EnqueueResult {
   created: DownloadItem[];
   skipped: Array<{ path: string; reason: string }>;
   /**
-   * Épisodes dont le fichier est demandé à l'extension Stremio en arrière-plan : ils
+   * Épisodes dont le fichier est demandé aux extensions Stremio en arrière-plan : ils
    * rejoignent la file un par un (bilan annoncé par l'événement `downloads.notice`).
    */
   pending?: number;

@@ -8,6 +8,8 @@ import { PosterCard, PosterCardSkeleton } from '../../components/media/PosterCar
 import { EmptyState } from '../../components/ui/States';
 import { Glass } from '../../design/glass/Glass';
 import { plural } from '../../lib/format';
+import { SetupBanner } from '../setup/SetupCard';
+import { useSetupStatus } from '../setup/setup-status';
 
 export function SearchPage() {
   const [params, setParams] = useSearchParams();
@@ -17,6 +19,7 @@ export function SearchPage() {
   const series = useTitleSearch(query, 'series');
   const loading = movies.isPending || series.isPending;
   const total = (movies.data?.total ?? 0) + (series.data?.total ?? 0);
+  const setup = useSetupStatus();
 
   return (
     <div className="flex flex-col gap-8">
@@ -45,6 +48,7 @@ export function SearchPage() {
             : 'Saisissez un titre : la recherche ignore les accents et les majuscules.'}
         </p>
       </header>
+      {setup && !setup.complete && <SetupBanner status={setup} />}
       {query && !loading && total === 0 && (
         <EmptyState
           icon={<SearchX />}

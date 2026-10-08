@@ -45,6 +45,8 @@
   --animate-fade-in: fade-in 0.35s var(--ease-fluid) both;
   --animate-materialize: materialize 0.45s var(--ease-spring-soft) both;
   --animate-shimmer: shimmer 1.6s linear infinite;
+  --animate-progress-indeterminate: progress-indeterminate 1.5s var(--ease-fluid) infinite;
+  --animate-progress-sheen: progress-sheen 2.4s ease-in-out infinite;
 
   @keyframes fade-in {
     from {
@@ -77,6 +79,27 @@
     }
     to {
       background-position: 200% 0;
+    }
+  }
+
+  /* Barre de progression sans valeur (connexion en cours) : un segment qui traverse la piste. */
+  @keyframes progress-indeterminate {
+    from {
+      transform: translateX(-100%);
+    }
+    to {
+      transform: translateX(250%);
+    }
+  }
+
+  /* Reflet qui parcourt une barre de progression active. */
+  @keyframes progress-sheen {
+    from {
+      transform: translateX(-100%);
+    }
+    60%,
+    to {
+      transform: translateX(100%);
     }
   }
 }

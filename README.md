@@ -81,13 +81,16 @@ npm run build
 npm start
 ```
 
-Ouvrez ensuite **<http://localhost:8484>**.
+Ouvrez ensuite **<http://localhost:8484>**. Au premier lancement, une carte de bienvenue indique
+ce qu'il reste à renseigner (clé TMDB, extension Stremio), avec les liens pour les obtenir, et
+mène directement au bon endroit des paramètres.
 
 ### 3. Ajouter une clé TMDB (indispensable)
 
 Créez un compte gratuit sur [themoviedb.org](https://www.themoviedb.org/settings/api), copiez
-la « clé d'API » et collez-la dans **Paramètres → Extensions et API → Clés d'API**. C'est TMDB
-qui fournit le catalogue : sans clé, il reste vide. La clé apporte aussi affiches, résumés et
+la « clé d'API » et collez-la dans **Paramètres → Extensions et API → Clés d'API** (bouton
+« Obtenir une clé »). C'est TMDB qui fournit le catalogue : sans clé, il reste vide ; dès la clé
+enregistrée, le catalogue est importé. La clé apporte aussi affiches, résumés et
 titres d'épisodes.
 
 ### 4. Choisir les extensions Stremio

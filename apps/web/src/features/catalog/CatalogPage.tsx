@@ -10,6 +10,8 @@ import { Spinner } from '../../components/ui/Spinner';
 import { EmptyState, ErrorState } from '../../components/ui/States';
 import { cn } from '../../lib/cn';
 import { formatRelativeDate, plural } from '../../lib/format';
+import { SetupBanner, SetupCard } from '../setup/SetupCard';
+import { useSetupStatus } from '../setup/setup-status';
 
 const SORTS: Array<{ value: CatalogSort; label: string; hint?: string }> = [
   { value: 'popular', label: 'Popularité', hint: 'Comme la page « Populaires » de TMDB' },
@@ -51,6 +53,8 @@ export function CatalogPage({ kind }: { kind: TitleKind }) {
   const system = useSystemInfo();
   const refresh = useRefreshCatalog();
   const section = system.data?.catalog.find((item) => item.kind === kind);
+  const setup = useSetupStatus();
+  const needsSetup = setup !== null && !setup.complete;
   const sentinel = useRef<HTMLDivElement>(null);
   const { fetchNextPage, hasNextPage, isFetchingNextPage } = catalog;
 
@@ -152,6 +156,8 @@ export function CatalogPage({ kind }: { kind: TitleKind }) {
         </div>
       )}
 
+      {needsSetup && items.length > 0 && <SetupBanner status={setup} />}
+
       {catalog.isError ? (
         <ErrorState error={catalog.error} onRetry={() => void catalog.refetch()} />
       ) : catalog.isPending ? (
@@ -160,6 +166,8 @@ export function CatalogPage({ kind }: { kind: TitleKind }) {
             <PosterCardSkeleton key={index} />
           ))}
         </div>
+      ) : items.length === 0 && needsSetup && !deferredQ && !genre ? (
+        <SetupCard status={setup} />
       ) : items.length === 0 ? (
         <EmptyState
           icon={<Icon />}

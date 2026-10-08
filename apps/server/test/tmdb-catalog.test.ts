@@ -83,6 +83,7 @@ function item(title: DemoTitle, language: string) {
 let tmdb: http.Server;
 let dataDir: string;
 let container: Container;
+let tmdbUrl: string;
 
 function listen(server: http.Server): Promise<string> {
   return new Promise((resolve) =>
@@ -163,7 +164,7 @@ beforeAll(async () => {
     }
     send(404, { status_code: 34 });
   });
-  const tmdbUrl = await listen(tmdb);
+  tmdbUrl = await listen(tmdb);
   dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lumiere-tmdb-catalog-'));
   container = createContainer(
     loadConfig({
@@ -235,5 +236,42 @@ describe('catalogue TMDB', () => {
   it('ajoute au catalogue les titres trouvés par la recherche TMDB', async () => {
     const results = await container.catalog.search({ q: 'forgotten' });
     expect(results.items.map((title) => title.title)).toEqual(['L’Éclipse oubliée']);
+  });
+});
+
+describe('premier lancement', () => {
+  it('importe le catalogue dès que la clé TMDB est enregistrée', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lumiere-first-run-'));
+    const fresh = createContainer(
+      loadConfig({
+        DATA_DIR: dir,
+        STREMIO_ADDON_URLS: '',
+        TMDB_API_BASE_URL: `${tmdbUrl}/3`,
+        LOG_LEVEL: 'silent',
+      }),
+      silent,
+    );
+    try {
+      await expect(fresh.catalog.refresh('movie')).rejects.toThrow(/clé TMDB/);
+      const imported = new Promise<void>((resolve) => {
+        const unsubscribe = fresh.events.subscribe((event) => {
+          if (
+            event.type === 'catalog.updated' &&
+            event.status.kind === 'movie' &&
+            event.status.state === 'idle'
+          ) {
+            unsubscribe();
+            resolve();
+          }
+        });
+      });
+      await fresh.settings.update({ tmdbApiKey: 'cle' });
+      await imported;
+      expect(fresh.titles.count('movie')).toBe(4);
+      expect(fresh.catalog.statuses().map((status) => status.lastError)).toEqual([null, null]);
+    } finally {
+      await stopServices(fresh);
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

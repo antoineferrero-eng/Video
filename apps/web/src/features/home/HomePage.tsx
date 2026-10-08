@@ -10,6 +10,8 @@ import { ButtonLink } from '../../components/ui/Button';
 import { EmptyState, ErrorState, Skeleton } from '../../components/ui/States';
 import { episodeCode, formatBytes } from '../../lib/format';
 import { playerUrl } from '../../lib/routes';
+import { SetupCard } from '../setup/SetupCard';
+import { useSetupStatus } from '../setup/setup-status';
 import { Hero } from './Hero';
 
 export function HomePage() {
@@ -17,18 +19,27 @@ export function HomePage() {
   const continueWatching = useContinueWatching();
   const library = useLibrary();
   const removeProgress = useRemoveProgress();
+  const setup = useSetupStatus();
 
   if (home.isPending) return <HomeSkeleton />;
   if (home.isError) return <ErrorState error={home.error} onRetry={() => void home.refetch()} />;
 
   const feed = home.data;
-  const failing = feed.sections.filter((section) => section.state === 'error');
+  // Premier lancement : la carte de bienvenue remplace les erreurs dues à une clé manquante.
+  const needsSetup = setup !== null && !setup.complete;
+  const failing = feed.sections.filter(
+    (section) => section.state === 'error' && setup?.tmdb !== false,
+  );
   const isEmpty = [feed.popularMovies, feed.popularSeries].every((row) => row.length === 0);
   const recentLibrary = (library.data ?? []).filter((item) => item.exists).slice(0, 16);
 
   return (
     <div className="flex flex-col gap-10">
       {feed.featured.length > 0 && <Hero titles={feed.featured} />}
+
+      {needsSetup && (
+        <SetupCard status={setup} className={feed.featured.length > 0 ? '' : 'mt-4'} />
+      )}
 
       {failing.length > 0 && (
         <div className="flex flex-col gap-3 rounded-card bg-red-500/[0.1] p-5 shadow-[inset_0_0_0_1px_rgb(248_113_113/0.25)] sm:flex-row sm:items-center">
@@ -51,7 +62,7 @@ export function HomePage() {
         </div>
       )}
 
-      {isEmpty && failing.length === 0 && (
+      {isEmpty && failing.length === 0 && !needsSetup && (
         <EmptyState
           icon={<Film />}
           title="Le catalogue est en cours de chargement"

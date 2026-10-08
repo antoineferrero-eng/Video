@@ -21,7 +21,8 @@ export function AppLayout({ connected }: { connected: boolean }) {
   const { scrolled, minimized, expand } = useScrollState();
 
   useEffect(() => {
-    window.scrollTo({ top: 0 });
+    // Un lien vers une ancre (« #tmdb ») amène lui-même la rubrique à l'écran.
+    if (!window.location.hash) window.scrollTo({ top: 0 });
   }, [location.pathname]);
 
   return (

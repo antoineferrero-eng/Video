@@ -5,6 +5,7 @@ import {
   Cpu,
   Database,
   Download,
+  ExternalLink,
   KeyRound,
   Languages,
   Play,
@@ -18,8 +19,8 @@ import {
   Trash2,
   XCircle,
 } from 'lucide-react';
-import { useMemo, useState, type ReactNode } from 'react';
-import { useSearchParams } from 'react-router';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useLocation, useSearchParams } from 'react-router';
 import type { AppSettings, SettingsResponse, SettingsUpdate } from '@lumiere/shared';
 import { errorMessage } from '../../api/client';
 import {
@@ -113,6 +114,13 @@ function SettingsForm({ response }: { response: SettingsResponse }) {
   const update = useUpdateSettings();
   const [params, setParams] = useSearchParams();
   const tab = parseTab(params.get('onglet'));
+  const { hash } = useLocation();
+  // Lien direct vers un réglage (« #tmdb », « #extensions ») : la rubrique est amenée à l'écran.
+  useEffect(() => {
+    if (!hash) return;
+    const target = document.getElementById(decodeURIComponent(hash.slice(1)));
+    target?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }, [hash, tab]);
   const [draft, setDraft] = useState<AppSettings>(response.settings);
   const [tmdbKey, setTmdbKey] = useState('');
   const [openSubtitlesKey, setOpenSubtitlesKey] = useState('');
@@ -335,7 +343,14 @@ function SettingsForm({ response }: { response: SettingsResponse }) {
             description="Services en ligne qui demandent une clé personnelle, gratuite. Les clés et mots de passe ne sont jamais réaffichés."
           >
             <Group
+              id="tmdb"
               title="TMDB"
+              attention={!response.tmdbApiKeyConfigured}
+              action={
+                <ServiceLink href="https://www.themoviedb.org/settings/api">
+                  Obtenir une clé
+                </ServiceLink>
+              }
               badge={
                 response.tmdbApiKeyConfigured ? (
                   <Badge tone="success" icon={<CheckCircle2 className="size-3" />}>
@@ -642,7 +657,10 @@ function StreamAddonsGroup({
   };
   return (
     <Group
+      id="extensions"
       title="Films et séries"
+      attention={urls.length === 0}
+      action={<ServiceLink href="https://st.111477.xyz/">Configurer 111477</ServiceLink>}
       badge={
         <Badge tone={urls.length > 0 ? 'success' : 'warning'}>
           {urls.length > 0 ? plural(urls.length, 'extension') : 'Aucune : rien à lire'}
@@ -700,9 +718,19 @@ function StreamAddonsGroup({
       )}
       <p className="text-xs leading-relaxed text-zinc-400">
         Collez le lien d’installation d’une extension (après l’avoir configurée sur sa page, si elle
-        le demande). Les liens ne sont demandés qu’à l’ouverture d’un film, ou à la lecture et au
-        téléchargement d’un épisode : chez 111477, chaque lien consomme un jeton d’une réserve
-        limitée par adresse IP, réglez l’extension pour qu’elle propose peu de liens par titre.
+        le demande). Pour celle de 111477 : ouvrez{' '}
+        <a
+          href="https://st.111477.xyz/"
+          target="_blank"
+          rel="noreferrer"
+          className="font-medium text-brand-300 underline underline-offset-2"
+        >
+          st.111477.xyz
+        </a>
+        , choisissez vos réglages, copiez le lien d’installation et collez-le ci-dessus. Les liens
+        ne sont demandés qu’à l’ouverture d’un film, ou à la lecture et au téléchargement d’un
+        épisode : chez 111477, chaque lien consomme un jeton d’une réserve limitée par adresse IP,
+        réglez l’extension pour qu’elle propose peu de liens par titre.
       </p>
     </Group>
   );
@@ -795,27 +823,57 @@ const OPENSUBTITLES_V3 = 'https://opensubtitles-v3.strem.io/manifest.json';
 
 /** Sous-partie d'une section : un service, avec son état et ses réglages. */
 function Group({
+  id,
   title,
   badge,
+  action,
+  attention = false,
   description,
   children,
 }: {
+  id?: string;
   title: string;
   badge?: ReactNode;
+  /** Lien vers le service (où obtenir la clé, configurer l'extension…). */
+  action?: ReactNode;
+  /** Réglage indispensable encore manquant : mis en évidence. */
+  attention?: boolean;
   description?: ReactNode;
   children: ReactNode;
 }) {
   return (
-    <div className="flex flex-col gap-3 rounded-[1rem] bg-white/[0.05] p-4">
+    <div
+      id={id}
+      className={cn(
+        'flex scroll-mt-28 flex-col gap-3 rounded-[1rem] bg-white/[0.05] p-4',
+        attention && 'ring-1 ring-amber-300/40 ring-inset',
+      )}
+    >
       <div className="flex flex-col gap-1">
         <div className="flex flex-wrap items-center gap-2">
           <h3 className="text-sm font-semibold">{title}</h3>
           {badge}
+          {action && <div className="ml-auto">{action}</div>}
         </div>
         {description && <p className="text-xs leading-relaxed text-zinc-400">{description}</p>}
       </div>
       {children}
     </div>
+  );
+}
+
+/** Lien vers un service externe (nouvel onglet). */
+function ServiceLink({ href, children }: { href: string; children: ReactNode }) {
+  return (
+    <a
+      href={href}
+      target="_blank"
+      rel="noreferrer"
+      className="fill inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium text-brand-200 transition hover:bg-white/[0.12] hover:text-brand-100"
+    >
+      {children}
+      <ExternalLink aria-hidden className="size-3.5" />
+    </a>
   );
 }
 
@@ -935,7 +993,11 @@ function OpenSubtitlesGroup({
   const hasKey = response.openSubtitlesApiKeyConfigured || apiKey.trim() !== '';
   return (
     <Group
+      id="opensubtitles"
       title="OpenSubtitles.com"
+      action={
+        <ServiceLink href="https://www.opensubtitles.com/fr/consumers">Obtenir une clé</ServiceLink>
+      }
       badge={
         response.openSubtitlesApiKeyConfigured ? (
           <Badge tone="success" icon={<CheckCircle2 className="size-3" />}>
@@ -950,7 +1012,7 @@ function OpenSubtitlesGroup({
           Sous-titres faits pour votre fichier exact (empreinte du fichier). Créez une clé gratuite
           dans votre compte, rubrique{' '}
           <a
-            href="https://www.opensubtitles.com/consumers"
+            href="https://www.opensubtitles.com/fr/consumers"
             target="_blank"
             rel="noreferrer"
             className="font-medium text-brand-300 underline underline-offset-2"
