@@ -37,15 +37,39 @@ export interface AudioTrackInfo {
   isDefault: boolean;
 }
 
+/**
+ * - `embedded` : piste intégrée au fichier vidéo ;
+ * - `external` : fichier rangé à côté de la vidéo (.srt, .vtt, .ass) ;
+ * - `online` : trouvé en ligne (OpenSubtitles, extension Stremio de sous-titres).
+ */
+export type SubtitleSourceKind = 'embedded' | 'external' | 'online';
+
 export interface SubtitleTrackInfo {
   id: string;
   label: string;
   language: string | null;
   codec: string;
-  source: 'embedded' | 'external';
+  source: SubtitleSourceKind;
   supported: boolean;
   isDefault: boolean;
   isForced: boolean;
+  /** Sous-titres en ligne : service qui les propose (« OpenSubtitles »…). */
+  provider?: string;
+  /** Sous-titres en ligne : faits pour ce fichier précis (empreinte OpenSubtitles identique). */
+  hashMatch?: boolean;
+  hearingImpaired?: boolean;
+  /** Sous-titres en ligne : version (release) pour laquelle ils ont été faits. */
+  release?: string | null;
+  downloads?: number | null;
+}
+
+/** Résultat d'une recherche de sous-titres en ligne pour une session de lecture. */
+export interface OnlineSubtitlesResult {
+  tracks: SubtitleTrackInfo[];
+  /** Services interrogés. */
+  providers: string[];
+  /** Problèmes rencontrés (service injoignable, clé refusée…). */
+  notices: string[];
 }
 
 export interface PlaybackSession {
@@ -73,6 +97,16 @@ export interface PlaybackSession {
   video: { codec: string | null; width: number | null; height: number | null; hdr: boolean } | null;
   reasons: string[];
   next: { media: MediaRef; label: string } | null;
+  /** Recherche de sous-titres en ligne. */
+  onlineSubtitles: {
+    /** Au moins un service de sous-titres en ligne est configuré. */
+    available: boolean;
+    /**
+     * Langue de sous-titres préférée absente du fichier : la recherche est lancée d'office et
+     * le meilleur résultat dans cette langue est choisi.
+     */
+    autoLanguage: string | null;
+  };
 }
 
 export interface ProgressUpdate {

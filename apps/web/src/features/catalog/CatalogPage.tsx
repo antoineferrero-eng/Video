@@ -11,16 +11,39 @@ import { EmptyState, ErrorState } from '../../components/ui/States';
 import { cn } from '../../lib/cn';
 import { formatRelativeDate, plural } from '../../lib/format';
 
-const SORTS: Array<{ value: CatalogSort; label: string }> = [
+const SORTS: Array<{ value: CatalogSort; label: string; hint?: string }> = [
+  { value: 'popular', label: 'Popularité', hint: 'Comme la page « Populaires » de TMDB' },
   { value: 'recent', label: 'Ajouts récents' },
   { value: 'title', label: 'Titre (A → Z)' },
   { value: 'year', label: 'Année' },
   { value: 'rating', label: 'Note' },
 ];
 
+/** Tri mémorisé par section (préférence de cet appareil) ; popularité par défaut. */
+function storedSort(kind: TitleKind): CatalogSort {
+  try {
+    const value = localStorage.getItem(`lumiere.sort.${kind}`);
+    return SORTS.some((option) => option.value === value) ? (value as CatalogSort) : 'popular';
+  } catch {
+    return 'popular';
+  }
+}
+
+function storeSort(kind: TitleKind, sort: CatalogSort): void {
+  try {
+    localStorage.setItem(`lumiere.sort.${kind}`, sort);
+  } catch {
+    // Stockage indisponible (navigation privée) : le tri n'est pas mémorisé.
+  }
+}
+
 export function CatalogPage({ kind }: { kind: TitleKind }) {
   const [q, setQ] = useState('');
-  const [sort, setSort] = useState<CatalogSort>('recent');
+  const [sort, setSortState] = useState<CatalogSort>(() => storedSort(kind));
+  const setSort = (value: CatalogSort) => {
+    setSortState(value);
+    storeSort(kind, value);
+  };
   const [genre, setGenre] = useState<string | undefined>();
   const deferredQ = useDeferredValue(q.trim());
   const catalog = useCatalog({ kind, q: deferredQ || undefined, sort, genre });

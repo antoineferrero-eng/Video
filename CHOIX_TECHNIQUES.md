@@ -179,12 +179,37 @@ Autres points :
   releases MULTi, et on peut changer de piste pendant la lecture ;
 - **sous-titres** intégrés (MKV) ou externes (`.srt`, `.vtt`, `.ass`) convertis en WebVTT,
   encodage Windows‑1252 détecté, affichage personnalisé et synchronisé dans le lecteur ;
+- **sous-titres en ligne** (voir ci-dessous), décalage réglable pendant la lecture (G / H) ;
 - un fichier déjà téléchargé est toujours lu **depuis la copie locale** ;
 - **reprise là où on s'était arrêté**, rangée « Reprendre la lecture », **épisode suivant**
   automatique, raccourcis clavier, plein écran, repli automatique direct → remux → conversion
   en cas d'échec.
 
 ---
+
+### Sous-titres en ligne
+
+| Service                               | Accès                                    | Ce qu'il apporte                                                                                                                        |
+| ------------------------------------- | ---------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| **Extensions Stremio de sous-titres** | Aucune clé (OpenSubtitles v3 par défaut) | Protocole déjà parlé par Lumière (`/subtitles/{type}/{id}/{extra}.json`) : n'importe quelle extension compatible s'ajoute par son lien. |
+| **API OpenSubtitles.com** (REST v1)   | Clé gratuite ; compte facultatif         | Recherche par empreinte du fichier (`moviehash`) : les sous-titres faits pour la version exacte sont signalés et passent en tête.       |
+
+- la recherche est faite **à la demande** (ouverture du menu des sous-titres) ou d'office quand
+  la langue de sous-titres préférée manque dans le fichier ; le meilleur résultat est alors
+  choisi, sauf si l'utilisateur a déjà fait son choix ;
+- le titre est désigné par son identifiant **IMDb** (demandé une fois à TMDB puis gardé),
+  la série plus saison et épisode pour un épisode ; sans titre identifié, OpenSubtitles est
+  interrogé par le nom du fichier ;
+- l'**empreinte OpenSubtitles** (taille + 64 premiers et 64 derniers Kio) est calculée même
+  sur un fichier lu à distance : deux petites requêtes `Range` successives ;
+- classement : langue préférée, puis fichier exact, complets avant « forcés », puis les plus
+  téléchargés ; 8 résultats au plus par langue ;
+- un sous-titre téléchargé est **gardé sur disque** : OpenSubtitles compte chaque
+  téléchargement dans un quota quotidien (plus élevé avec un compte) ;
+- les deux services sont interrogés en parallèle ; une panne de l'un est signalée dans le menu
+  sans bloquer l'autre ;
+- seuls l'identifiant IMDb, le nom, la taille et l'empreinte du fichier quittent la machine, et
+  seulement lors d'une recherche ; liste d'extensions vide et pas de clé : aucun service contacté.
 
 ## 8. Métadonnées : TMDB
 
@@ -198,6 +223,19 @@ Les affiches, résumés, notes, genres et titres d'épisodes viennent de **The M
 - **sans clé**, l'application reste fonctionnelle avec des affiches générées quand le
   catalogue vient de la liste du site ; avec l'extension Stremio, la clé est indispensable
   puisque TMDB fournit le catalogue (§ 11).
+
+Tri par **popularité** (celui de la page « Populaires » de TMDB), par défaut sur les pages
+Films et Séries et pour l'accueil :
+
+- l'indice `popularity` de TMDB est gardé avec sa date : il vient des listes importées (dont
+  « Populaires » sur 10 pages, soit 200 titres), des recherches et des fiches détaillées ;
+- catalogue issu de la liste du site : à chaque actualisation, les listes TMDB mettent à jour la
+  popularité des titres déjà connus, sans en ajouter ;
+- une popularité de plus de 3 jours (titre sorti des listes) passe après les valeurs à jour :
+  un succès d'il y a des mois ne reste pas en tête ; les titres sans données TMDB viennent en
+  dernier, par date d'ajout ;
+- l'accueil met en avant les plus populaires ; « récemment ajoutés » n'y figure que pour un
+  catalogue issu de la liste du site (un catalogue TMDB n'a pas de date d'ajout).
 
 ---
 
@@ -347,7 +385,7 @@ des lecteurs vidéo ordinaires, pas pour des navigateurs : pas de vérification 
 | Élément               | Choix                                                                                                                                                                                                                                                     | Pourquoi                                                                                                                                                                                                                                |
 | --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Protocole             | `GET <base>/manifest.json`, puis `<base>/stream/movie/tt1677720.json` (film) ou `<base>/stream/series/tt0903747:1:3.json` (épisode) ; lecture de `url`, `name`/`title`/`description` et `behaviorHints` (`filename`, `videoSize`, `proxyHeaders.request`) | Protocole public et stable : n'importe quelle extension compatible convient, pas seulement celle de 111477. Les en-têtes demandés par l'extension sont renvoyés avec le lien.                                                           |
-| Adresse               | **Paramètres → Extension Stremio** : lien d'installation `stremio://…`, adresse de configuration ou manifeste (normalisés), avec un bouton de test ; `STREMIO_ADDON_URL` pour la valeur de départ                                                         | La configuration d'une extension (serveurs, nombre de liens par titre…) est encodée dans son adresse : il suffit de coller celle obtenue sur sa page de configuration.                                                                  |
+| Adresse               | **Paramètres → Extensions et API** : lien d'installation `stremio://…`, adresse de configuration ou manifeste (normalisés), avec un bouton de test ; `STREMIO_ADDON_URL` pour la valeur de départ                                                         | La configuration d'une extension (serveurs, nombre de liens par titre…) est encodée dans son adresse : il suffit de coller celle obtenue sur sa page de configuration.                                                                  |
 | Catalogue             | **TMDB** (tendances, populaires, à l'affiche, mieux notés, et toute recherche) ; identifiant IMDb d'un titre obtenu une fois par `external_ids`, puis gardé                                                                                               | L'extension ne fournit pas de catalogue, seulement des liens titre par titre ; les extensions Stremio identifient les titres par leur identifiant IMDb.                                                                                 |
 | Identité des fichiers | **Chemin virtuel** stable par fichier : `/@stremio/movie/tt1677720/<fichier>`, `/@stremio/series/tt0903747/1x3/<fichier>`                                                                                                                                 | Les liens expirent et changent d'une demande à l'autre. Téléchargements, reprise de lecture, bibliothèque, « vu / non vu » et relais ffmpeg travaillent sur cette identité ; le lien réel n'est résolu qu'au moment de lire les octets. |
 | Économie de liens     | Liens demandés seulement à l'ouverture d'un film, à la lecture ou au téléchargement d'un épisode, ou à l'ouverture de « Choisir une version » ; jamais pour afficher une série (saisons et épisodes viennent de TMDB)                                     | Chez 111477, **chaque lien généré consomme un jeton** d'une réserve de 50 par adresse IP (un regagné toutes les 5 minutes), avec 10 requêtes par 10 s au plus.                                                                          |
@@ -363,7 +401,7 @@ des lecteurs vidéo ordinaires, pas pour des navigateurs : pas de vérification 
 | Connexion standard                | Requêtes `node:http`/`node:https` qui envoient **exactement** les en-têtes d'une navigation Chrome (`sec-ch-ua*`, `sec-fetch-*`, `accept`, `accept-language: fr-FR…`, `priority`, `upgrade-insecure-requests`), cohérents avec le User-Agent choisi | `fetch` (undici) impose des en-têtes qu'aucun navigateur n'envoie lors d'une navigation.                                                                                                                                                                                             |
 | Cookies                           | Petit « cookie jar » par origine                                                                                                                                                                                                                    | Un navigateur renvoie les cookies déposés par le site ; les ignorer est un signe de robot.                                                                                                                                                                                           |
 | Imitation de navigateur           | **[impit](https://github.com/apify/impit)** (Apify), en secours : empreinte TLS/HTTP2 de Chrome                                                                                                                                                     | Passe les filtres qui comparent l'empreinte réseau au navigateur annoncé ; sert aussi de secours si l'extension ou l'hôte d'un lien refuse la première requête (403/503).                                                                                                            |
-| Mode « Automatique » (par défaut) | Standard, puis imitation de Chrome ; le transport qui passe est **mémorisé par origine**                                                                                                                                                            | Le chemin léger sert tant qu'il suffit ; chaque mode est forçable dans **Paramètres → Source**.                                                                                                                                                                                      |
+| Mode « Automatique » (par défaut) | Standard, puis imitation de Chrome ; le transport qui passe est **mémorisé par origine**                                                                                                                                                            | Le chemin léger sert tant qu'il suffit ; chaque mode est forçable dans **Paramètres → Source et catalogue**.                                                                                                                                                                         |
 | ffmpeg / ffprobe                  | **Relais local** `/api/internal/source` (127.0.0.1, jeton aléatoire généré au démarrage)                                                                                                                                                            | ffmpeg lit la source (ou le lien de l'extension) par la même connexion que le reste de l'application, sans jamais recevoir de lien expiré.                                                                                                                                           |
 | Messages d'erreur                 | Analyse des refus : page de vérification (`cf-mitigated: challenge`, « Just a moment… »), règle de pare-feu (erreur 1020), User-Agent banni (1010), autre refus ; limite de l'extension traduite en français                                        | Dire _pourquoi_ la source refuse, plutôt qu'un « 403 » brut.                                                                                                                                                                                                                         |
 | Diagnostic                        | `npm run diagnose [-- --extension=URL] [--film=tt…] [--serie=tt…:S:E] [--site]`                                                                                                                                                                     | Teste depuis la machine de l'utilisateur le manifeste, les liens d'**un seul** film (pour ménager la réserve), la lecture des premiers octets du premier lien, et, sur demande, l'accès direct au site. Indispensable puisque l'environnement de développement n'atteint pas 111477. |
@@ -389,8 +427,6 @@ d'un film, téléchargement, épisodes à la demande, saison en arrière-plan, l
 - Télécharger une série entière d'un coup est limité par la réserve : le lot s'arrête à la
   limite et se relance plus tard. La file des épisodes à demander est en mémoire : un
   redémarrage du serveur l'abandonne (les téléchargements déjà créés, eux, reprennent).
-- Le protocole Stremio permet à une extension de fournir des sous-titres avec ses liens ;
-  Lumière ne les lit pas encore (les sous-titres intégrés aux fichiers restent disponibles).
 - Avec l'extension, une clé TMDB est indispensable : c'est elle qui fournit le catalogue.
 - L'explorateur, qui parcourt le site directement, ne fonctionne que si le site est accessible.
 - Un blocage par adresse IP ou par pays (erreur 1020) ne se contourne pas côté application.

@@ -18,7 +18,7 @@ export function GlassRuntime() {
     return startFrameGuard(() => {
       throttleRefraction();
       toast.info('Réfraction désactivée pour préserver la fluidité', {
-        description: 'Vous pouvez la réactiver dans Paramètres → Apparence.',
+        description: 'Vous pouvez la réactiver dans Paramètres → Général → Apparence.',
       });
     });
   }, [refractionActive, frameGuard]);

@@ -52,6 +52,7 @@ export interface TmdbMovie {
   backdrop_path: string | null;
   vote_average: number | null;
   vote_count: number | null;
+  popularity?: number | null;
 }
 
 export interface TmdbSeasonSummary {
@@ -77,6 +78,7 @@ export interface TmdbTvShow {
   backdrop_path: string | null;
   vote_average: number | null;
   vote_count: number | null;
+  popularity?: number | null;
 }
 
 export interface TmdbEpisode {

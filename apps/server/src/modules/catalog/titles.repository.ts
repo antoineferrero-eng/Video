@@ -36,6 +36,9 @@ export interface TitleRow {
   backdrop_path: string | null;
   rating: number | null;
   vote_count: number | null;
+  /** Indice de popularité TMDB et date de sa dernière mise à jour. */
+  popularity: number | null;
+  popularity_at: string | null;
   genres: string | null;
   runtime: number | null;
   release_date: string | null;
@@ -61,6 +64,7 @@ export interface TmdbTitleUpsert {
   backdropPath: string | null;
   rating: number | null;
   voteCount: number | null;
+  popularity: number | null;
   genres: string[];
   language: string;
   /** Dossier le plus probable, en attendant de le chercher sur la source. */
@@ -93,6 +97,7 @@ export interface TitleMetadata {
   backdropPath: string | null;
   rating: number | null;
   voteCount: number | null;
+  popularity: number | null;
   genres: string[];
   runtime: number | null;
   releaseDate: string | null;
@@ -108,12 +113,26 @@ export interface TitleSearch {
   offset: number;
 }
 
+/**
+ * Une popularité vieille de plus de quelques jours (titre sorti des listes TMDB) passe après
+ * les valeurs à jour : sinon un succès d'il y a des mois resterait en tête.
+ */
+const POPULARITY_FRESH_MS = 3 * 24 * 3600_000;
+
+const RECENT = 'COALESCE(remote_modified_at, first_seen_at) DESC, id DESC';
+const POPULAR = `popularity IS NULL, (popularity_at >= @fresh) DESC, popularity DESC, ${RECENT}`;
+
 const ORDER_BY: Record<CatalogSort, string> = {
-  recent: 'COALESCE(remote_modified_at, first_seen_at) DESC, id DESC',
+  popular: POPULAR,
+  recent: RECENT,
   title: 'sort_key ASC, year DESC',
   year: 'year IS NULL, year DESC, sort_key ASC',
   rating: 'rating IS NULL, rating DESC, vote_count DESC, sort_key ASC',
 };
+
+function freshSince(): string {
+  return new Date(Date.now() - POPULARITY_FRESH_MS).toISOString();
+}
 
 export class TitlesRepository {
   constructor(private readonly db: Db) {}
@@ -232,6 +251,7 @@ export class TitlesRepository {
       backdropPath: item.backdropPath,
       rating: item.rating,
       voteCount: item.voteCount,
+      popularity: item.popularity,
       genres: JSON.stringify(item.genres),
       searchText,
       now,
@@ -244,10 +264,26 @@ export class TitlesRepository {
              tmdb_title = COALESCE(tmdb_title, @title), original_title = COALESCE(original_title, @originalTitle),
              overview = COALESCE(overview, @overview), poster_path = COALESCE(poster_path, @posterPath),
              backdrop_path = COALESCE(backdrop_path, @backdropPath), rating = @rating, vote_count = @voteCount,
-             meta_search_text = COALESCE(meta_search_text, @searchText), last_seen_at = @now
+             meta_search_text = COALESCE(meta_search_text, @searchText), last_seen_at = @now,
+             popularity = COALESCE(@popularity, popularity),
+             popularity_at = CASE WHEN @popularity IS NULL THEN popularity_at ELSE @now END
            WHERE id = @id`,
         )
-        .run({ ...params, id: existing.id });
+        // Seulement les paramètres de la requête : SQLite refuse les paramètres nommés inconnus
+        // (année, genres…), et l'actualisation des titres déjà connus échouait.
+        .run({
+          id: existing.id,
+          title: params.title,
+          originalTitle: params.originalTitle,
+          overview: params.overview,
+          posterPath: params.posterPath,
+          backdropPath: params.backdropPath,
+          rating: params.rating,
+          voteCount: params.voteCount,
+          popularity: params.popularity,
+          searchText: params.searchText,
+          now: params.now,
+        });
       return existing.id;
     }
     const result = this.db
@@ -256,11 +292,11 @@ export class TitlesRepository {
                              meta_search_text, sort_key, remote_modified_at, first_seen_at, last_seen_at,
                              metadata_status, metadata_language, metadata_updated_at, tmdb_id, tmdb_title,
                              original_title, overview, poster_path, backdrop_path, rating, vote_count, genres,
-                             release_date, origin, source_status)
+                             release_date, origin, source_status, popularity, popularity_at)
          VALUES (@kind, @remotePath, @folderName, 0, @title, @year, @searchText, @searchText, @sortKey,
                  @releaseDate, @now, @now, 'pending', @language, @now, @tmdbId, @title, @originalTitle,
                  @overview, @posterPath, @backdropPath, @rating, @voteCount, @genres, @releaseDate,
-                 'tmdb', 'unknown')
+                 'tmdb', 'unknown', @popularity, CASE WHEN @popularity IS NULL THEN NULL ELSE @now END)
          ON CONFLICT (remote_path) DO NOTHING`,
       )
       .run({
@@ -313,10 +349,11 @@ export class TitlesRepository {
           `UPDATE titles SET
              (tmdb_id, tmdb_title, original_title, overview, tagline, poster_path, backdrop_path, rating,
               vote_count, genres, runtime, release_date, meta_search_text, metadata_status, metadata_language,
-              metadata_updated_at) =
+              metadata_updated_at, popularity, popularity_at) =
              (SELECT tmdb_id, tmdb_title, original_title, overview, tagline, poster_path, backdrop_path, rating,
                      vote_count, genres, runtime, release_date, meta_search_text, metadata_status,
-                     metadata_language, metadata_updated_at FROM titles WHERE id = @fromId)
+                     metadata_language, metadata_updated_at, popularity, popularity_at
+              FROM titles WHERE id = @fromId)
            WHERE id = @intoId`,
         )
         .run({ fromId, intoId });
@@ -343,11 +380,17 @@ export class TitlesRepository {
     const counted = this.db.prepare(`SELECT COUNT(*) AS n FROM titles ${whereSql}`).get(params) as {
       n: number;
     };
+    const order = query.sort === 'popular' ? { fresh: freshSince() } : {};
     const rows = this.db
       .prepare(
         `SELECT * FROM titles ${whereSql} ORDER BY ${ORDER_BY[query.sort]} LIMIT @limit OFFSET @offset`,
       )
-      .all({ ...params, limit: query.limit, offset: query.offset }) as unknown as TitleRow[];
+      .all({
+        ...params,
+        ...order,
+        limit: query.limit,
+        offset: query.offset,
+      }) as unknown as TitleRow[];
     const total = counted.n;
     return { rows, total };
   }
@@ -356,14 +399,46 @@ export class TitlesRepository {
     return this.search({ kind, tokens: [], sort: 'recent', limit, offset: 0 }).rows;
   }
 
-  /** Titres récents disposant d'une image de fond (mise en avant de l'accueil). */
+  /** Titres les plus populaires d'après TMDB (seulement ceux dont la popularité est connue). */
+  popular(kind: TitleKind, limit: number): TitleRow[] {
+    return this.db
+      .prepare(
+        `SELECT * FROM titles WHERE kind = @kind AND popularity IS NOT NULL ORDER BY ${POPULAR} LIMIT @limit`,
+      )
+      .all({ kind, limit, fresh: freshSince() }) as unknown as TitleRow[];
+  }
+
+  /**
+   * Mise en avant de l'accueil : titres disposant d'une image de fond et d'un résumé, les plus
+   * populaires d'abord (les plus récents sans données de popularité).
+   */
   featured(limit: number): TitleRow[] {
     return this.db
       .prepare(
         `SELECT * FROM titles WHERE backdrop_path IS NOT NULL AND overview IS NOT NULL
-         ORDER BY COALESCE(remote_modified_at, first_seen_at) DESC, rating DESC LIMIT ?`,
+         ORDER BY ${POPULAR} LIMIT @limit`,
       )
-      .all(limit) as TitleRow[];
+      .all({ limit, fresh: freshSince() }) as unknown as TitleRow[];
+  }
+
+  /** Au moins un titre de la section a-t-il une popularité TMDB ? */
+  hasPopularity(kind: TitleKind): boolean {
+    return (
+      this.db
+        .prepare('SELECT 1 FROM titles WHERE kind = ? AND popularity IS NOT NULL LIMIT 1')
+        .get(kind) !== undefined
+    );
+  }
+
+  /** Popularité actuelle d'un titre déjà connu ; renvoie le nombre de titres mis à jour. */
+  setPopularity(kind: TitleKind, tmdbId: number, popularity: number): number {
+    return Number(
+      this.db
+        .prepare(
+          'UPDATE titles SET popularity = ?, popularity_at = ? WHERE kind = ? AND tmdb_id = ?',
+        )
+        .run(popularity, new Date().toISOString(), kind, tmdbId).changes,
+    );
   }
 
   genres(kind?: TitleKind): Array<{ name: string; count: number }> {
@@ -385,7 +460,9 @@ export class TitlesRepository {
            tmdb_id = @tmdbId, tmdb_title = @tmdbTitle, original_title = @originalTitle, overview = @overview,
            tagline = @tagline, poster_path = @posterPath, backdrop_path = @backdropPath, rating = @rating,
            vote_count = @voteCount, genres = @genres, runtime = @runtime, release_date = @releaseDate,
-           meta_search_text = @metaSearchText
+           meta_search_text = @metaSearchText,
+           popularity = COALESCE(@popularity, popularity),
+           popularity_at = CASE WHEN @popularity IS NULL THEN popularity_at ELSE @updatedAt END
          WHERE id = @id`,
       )
       .run({

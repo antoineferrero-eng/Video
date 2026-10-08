@@ -37,20 +37,39 @@ export interface AppSettings {
   preferredAudioLanguage: string;
   /** Code langue ISO 639-1 préféré pour les sous-titres, vide = désactivés. */
   preferredSubtitleLanguage: string;
+  /**
+   * Extensions Stremio de sous-titres interrogées pendant la lecture (manifestes), par
+   * exemple OpenSubtitles v3. Liste vide : aucune.
+   */
+  subtitleAddonUrls: string[];
+  /** Compte OpenSubtitles.com (facultatif : plus de téléchargements par jour). */
+  openSubtitlesUsername: string;
   catalogRefreshHours: number;
   catalogSource: CatalogSource;
   transcodePreset: TranscodePreset;
   maxTranscodeHeight: number;
 }
 
-/** Paramètres renvoyés au client : la clé TMDB n'est jamais renvoyée en clair. */
+/** Paramètres renvoyés au client : les clés et mots de passe ne sont jamais renvoyés en clair. */
 export interface SettingsResponse {
   settings: AppSettings;
   tmdbApiKeyConfigured: boolean;
   tmdbApiKeyFromEnv: boolean;
+  openSubtitlesApiKeyConfigured: boolean;
+  openSubtitlesApiKeyFromEnv: boolean;
+  openSubtitlesPasswordConfigured: boolean;
 }
 
 export type SettingsUpdate = Partial<AppSettings> & {
   /** Nouvelle clé TMDB (chaîne vide pour la supprimer). */
   tmdbApiKey?: string;
+  /** Nouvelle clé d'API OpenSubtitles.com (chaîne vide pour la supprimer). */
+  openSubtitlesApiKey?: string;
+  /** Nouveau mot de passe du compte OpenSubtitles.com (chaîne vide pour le supprimer). */
+  openSubtitlesPassword?: string;
 };
+
+/** Test des services de sous-titres en ligne (paramètres). */
+export interface SubtitleProvidersTestResult {
+  providers: Array<{ name: string; ok: boolean; message: string }>;
+}

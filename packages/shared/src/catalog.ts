@@ -3,8 +3,11 @@ import type { DownloadStatus } from './downloads';
 /** Type de titre du catalogue. */
 export type TitleKind = 'movie' | 'series';
 
-/** Tri disponible pour le catalogue. */
-export type CatalogSort = 'recent' | 'title' | 'year' | 'rating';
+/**
+ * Tri disponible pour le catalogue. `popular` : popularité TMDB (l'ordre de la page
+ * « Populaires » du site de TMDB).
+ */
+export type CatalogSort = 'popular' | 'recent' | 'title' | 'year' | 'rating';
 
 /** État de la récupération des métadonnées (TMDB) d'un titre. */
 export type MetadataStatus = 'pending' | 'matched' | 'not_found' | 'disabled' | 'error';
@@ -179,6 +182,10 @@ export interface CatalogSectionStatus {
 
 export interface HomeFeed {
   featured: TitleSummary[];
+  /** Les plus populaires d'après TMDB (vides sans données TMDB). */
+  popularMovies: TitleSummary[];
+  popularSeries: TitleSummary[];
+  /** Derniers ajouts sur la source (catalogue issu de la liste du site uniquement). */
   recentMovies: TitleSummary[];
   recentSeries: TitleSummary[];
   sections: CatalogSectionStatus[];

@@ -25,6 +25,7 @@ import type {
   SettingsResponse,
   SettingsUpdate,
   SourceTestResult,
+  SubtitleProvidersTestResult,
   SystemInfo,
   TitleDetails,
   TitleKind,
@@ -368,6 +369,24 @@ export function useTestAddon() {
       api<AddonTestResult>('/settings/test-addon', {
         method: 'POST',
         body: url ? { url } : {},
+      }),
+  });
+}
+
+/** Test des services de sous-titres en ligne avec les valeurs saisies. */
+export function useTestSubtitles() {
+  return useMutation({
+    mutationFn: (candidate: {
+      openSubtitlesApiKey?: string;
+      openSubtitlesUsername?: string;
+      openSubtitlesPassword?: string;
+      subtitleAddonUrls?: string[];
+      /** Services à tester (tous par défaut). */
+      providers?: Array<'opensubtitles' | 'addons'>;
+    }) =>
+      api<SubtitleProvidersTestResult>('/settings/test-subtitles', {
+        method: 'POST',
+        body: candidate,
       }),
   });
 }

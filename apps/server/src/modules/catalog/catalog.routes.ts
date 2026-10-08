@@ -24,7 +24,7 @@ export function registerCatalogRoutes(
         querystring: z.object({
           kind: KindSchema.optional(),
           q: z.string().max(200).optional(),
-          sort: z.enum(['recent', 'title', 'year', 'rating']).optional(),
+          sort: z.enum(['popular', 'recent', 'title', 'year', 'rating']).optional(),
           genre: z.string().max(100).optional(),
           page: z.coerce.number().int().min(1).optional(),
           pageSize: z.coerce.number().int().min(1).max(100).optional(),

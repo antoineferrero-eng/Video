@@ -114,7 +114,7 @@ export function normalizeAddonUrl(input: string): string {
   return url.toString();
 }
 
-function addonBase(manifestUrl: string): string {
+export function addonBase(manifestUrl: string): string {
   return manifestUrl.replace(/manifest\.json$/, '');
 }
 
@@ -149,7 +149,7 @@ export function contentIdFor(
   return null;
 }
 
-function validateManifest(data: unknown): AddonManifest {
+export function validateManifest(data: unknown): AddonManifest {
   const value = data as Partial<AddonManifest> | null;
   if (
     !value ||
@@ -238,7 +238,7 @@ export class StremioAddon {
     const url = this.manifestUrl;
     if (!url)
       throw new UpstreamError(
-        'Aucune extension Stremio configurée (Paramètres → Extension Stremio).',
+        'Aucune extension Stremio configurée (Paramètres → Extensions et API).',
       );
     const cached = this.manifestCache;
     if (!options.force && cached?.url === url && Date.now() - cached.at < MANIFEST_TTL_MS) {

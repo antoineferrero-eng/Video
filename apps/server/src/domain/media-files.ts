@@ -68,7 +68,7 @@ const LANGUAGE_TOKENS: Array<[RegExp, string]> = [
   [/^(es|spa|spanish|espanol|español)$/i, 'es'],
   [/^(de|ger|deu|german|deutsch)$/i, 'de'],
   [/^(it|ita|italian|italiano)$/i, 'it'],
-  [/^(pt|por|portuguese|pt-br|ptbr)$/i, 'pt'],
+  [/^(pt|por|pob|portuguese|pt-br|ptbr)$/i, 'pt'],
   [/^(nl|dut|nld|dutch)$/i, 'nl'],
   [/^(ar|ara|arabic)$/i, 'ar'],
   [/^(ja|jpn|japanese)$/i, 'ja'],

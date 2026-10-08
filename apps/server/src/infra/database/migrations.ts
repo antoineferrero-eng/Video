@@ -166,4 +166,15 @@ export const MIGRATIONS: Migration[] = [
         WHERE origin = 'tmdb' AND source_status = 'missing';
     `,
   },
+  {
+    id: 5,
+    name: 'popularite-tmdb',
+    sql: /* sql */ `
+      -- Indice de popularité TMDB (celui de la page « Populaires » du site) et date de sa
+      -- dernière mise à jour : le tri par popularité place d'abord les valeurs récentes.
+      ALTER TABLE titles ADD COLUMN popularity REAL;
+      ALTER TABLE titles ADD COLUMN popularity_at TEXT;
+      CREATE INDEX idx_titles_popularity ON titles (kind, popularity DESC);
+    `,
+  },
 ];
