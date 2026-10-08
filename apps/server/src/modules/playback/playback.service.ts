@@ -905,7 +905,9 @@ export class PlaybackService {
       return {
         tracks: [],
         providers: [],
-        notices: ['Aucun service de sous-titres en ligne configuré (Paramètres → Sous-titres).'],
+        notices: [
+          'Aucun service de sous-titres en ligne configuré (Paramètres → Extensions et API).',
+        ],
       };
     }
     if (force || !session.onlineSearch) {

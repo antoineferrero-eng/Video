@@ -47,7 +47,11 @@ export function HomePage() {
               </p>
             ))}
           </div>
-          <ButtonLink to="/parametres" size="sm" icon={<Settings className="size-4" />}>
+          <ButtonLink
+            to="/parametres?onglet=source"
+            size="sm"
+            icon={<Settings className="size-4" />}
+          >
             Vérifier la source
           </ButtonLink>
         </div>

@@ -85,14 +85,14 @@ Ouvrez ensuite **<http://localhost:8484>**.
 ### 3. Ajouter une clé TMDB (nécessaire avec l'extension)
 
 Créez un compte gratuit sur [themoviedb.org](https://www.themoviedb.org/settings/api), copiez
-la « clé d'API » et collez-la dans **Paramètres → Métadonnées (TMDB)**. Avec l'extension
+la « clé d'API » et collez-la dans **Paramètres → Extensions et API → Clés d'API**. Avec l'extension
 Stremio (réglage par défaut), c'est TMDB qui fournit le catalogue : sans clé, il reste vide.
 La clé apporte aussi affiches, résumés et titres d'épisodes.
 
 ### 4. Vérifier l'extension Stremio
 
 Par défaut, Lumière demande les liens des fichiers à l'extension Stremio de 111477
-(`https://st.111477.xyz/manifest.json`). **Paramètres → Extension Stremio → Tester
+(`https://st.111477.xyz/manifest.json`). **Paramètres → Extensions et API → Tester
 l'extension** vérifie qu'elle répond. Si vous l'avez configurée sur
 [st.111477.xyz](https://st.111477.xyz/) (nombre de liens par titre, serveurs…), collez-y le
 lien d'installation obtenu (`stremio://…` ou `https://…/manifest.json`).
@@ -104,7 +104,7 @@ Sans réglage, Lumière cherche les sous-titres manquants avec l'extension Strem
 ou d'office si la langue de sous-titres préférée manque dans le fichier. Pour des résultats
 calés sur votre fichier exact, créez une clé gratuite sur
 [opensubtitles.com](https://www.opensubtitles.com/consumers) (rubrique « API consumers ») et
-collez-la dans **Paramètres → Sous-titres en ligne**, avec votre compte pour plus de
+collez-la dans **Paramètres → Extensions et API**, avec votre compte pour plus de
 téléchargements par jour. D'autres extensions de sous-titres compatibles s'ajoutent par leur lien.
 Lors d'une recherche, l'identifiant IMDb du titre, le nom et l'empreinte du fichier sont envoyés à
 ces services ; videz la liste des extensions et la clé pour n'en contacter aucun.
@@ -136,14 +136,14 @@ même fichier, comme un hébergeur strict (pour éprouver les positionnements du
 
 ## Configuration
 
-La plupart des réglages se font dans l'interface (**Paramètres**) : apparence du verre
-(propre à chaque appareil), adresse et dossiers de la source, dossier de téléchargement, téléchargements simultanés, limite de débit, qualité
-préférée, langue audio et sous-titres par défaut, qualité de conversion, clé et langue TMDB,
-extension Stremio (adresse et test), sous-titres en ligne (extensions de sous-titres, clé et
-compte OpenSubtitles.com, test), fréquence d'actualisation et source du catalogue (sans
-extension : liste complète de la source, ou TMDB avec recherche des dossiers à la demande), mode
-de connexion à la source (automatique, standard ou imitation de navigateur), test de connexion à
-la source.
+La plupart des réglages se font dans l'interface (**Paramètres**), rangés en quatre onglets :
+
+| Onglet                  | Contenu                                                                                                                                                                |
+| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Général**             | Apparence du verre (propre à chaque appareil, avec aperçu), langues (audio, sous-titres, fiches), conversion vidéo, téléchargements (dossier, nombre, débit, qualité). |
+| **Extensions et API**   | Extensions Stremio (liens des fichiers, sous-titres en ligne) et clés d'API (TMDB, OpenSubtitles.com), chacune avec son bouton de test.                                |
+| **Source et catalogue** | Adresse, dossiers et mode de connexion de la source, test de connexion ; origine et actualisation du catalogue.                                                        |
+| **Système**             | Version, ffmpeg, espace disque, dossier des données.                                                                                                                   |
 
 Les variables d'environnement définissent les valeurs de départ. Elles peuvent aussi être
 placées dans un fichier `.env` à la racine du dépôt (copiez [`.env.example`](.env.example)) :
@@ -244,15 +244,15 @@ Liquid Glass dans **[docs/DESIGN.md](docs/DESIGN.md)**.
 
 | Symptôme                                                                | Piste                                                                                                                                                                                                                                                                               |
 | ----------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Le catalogue reste vide / « Aucune entrée reconnue »                    | **Paramètres → Tester la source**. Vérifiez l'adresse et les dossiers (`/movies/`, `/tvs/`). Lancez `npm run probe -w @lumiere/server -- https://a.111477.xyz/movies/` pour voir ce que l'analyseur extrait de la page.                                                             |
-| « La source a répondu 403 » / « vérification anti-robot »               | Le site est protégé par Cloudflare : gardez l'extension Stremio renseignée (**Paramètres → Extension Stremio**), Lumière ne lit alors plus le site directement. Lancez `npm run diagnose` pour vérifier l'extension depuis votre machine et joignez le rapport à votre signalement. |
-| Catalogue vide avec l'extension                                         | Le catalogue vient de TMDB : ajoutez une clé TMDB (**Paramètres → Métadonnées**), puis **Catalogue → Actualiser maintenant**.                                                                                                                                                       |
+| Le catalogue reste vide / « Aucune entrée reconnue »                    | **Paramètres → Source et catalogue → Tester la source**. Vérifiez l'adresse et les dossiers (`/movies/`, `/tvs/`). Lancez `npm run probe -w @lumiere/server -- https://a.111477.xyz/movies/` pour voir ce que l'analyseur extrait de la page.                                       |
+| « La source a répondu 403 » / « vérification anti-robot »               | Le site est protégé par Cloudflare : gardez l'extension Stremio renseignée (**Paramètres → Extensions et API**), Lumière ne lit alors plus le site directement. Lancez `npm run diagnose` pour vérifier l'extension depuis votre machine et joignez le rapport à votre signalement. |
+| Catalogue vide avec l'extension                                         | Le catalogue vient de TMDB : ajoutez une clé TMDB (**Paramètres → Extensions et API**), puis **Source et catalogue → Actualiser maintenant**.                                                                                                                                       |
 | « L'extension a atteint sa limite de liens »                            | La réserve de liens de votre adresse IP est vide (chez 111477 : un lien regagné toutes les 5 minutes). Patientez, et réglez l'extension sur [st.111477.xyz](https://st.111477.xyz/) pour qu'elle propose moins de liens par titre. Les liens déjà obtenus restent utilisables.      |
-| « Extension Stremio injoignable » / « manifest.json invalide »          | Vérifiez l'adresse dans **Paramètres → Extension Stremio** (bouton « Tester l'extension ») : collez le lien d'installation complet, configuration comprise.                                                                                                                         |
+| « Extension Stremio injoignable » / « manifest.json invalide »          | Vérifiez l'adresse dans **Paramètres → Extensions et API** (bouton « Tester l'extension ») : collez le lien d'installation complet, configuration comprise.                                                                                                                         |
 | « Aucun fichier proposé » / « Introuvable sur la source » sur une fiche | L'extension ne propose aucun fichier pour ce titre (nouvel essai à la prochaine ouverture) ; sans extension, le dossier du titre n'a pas été trouvé sous les noms essayés (affichés sur la fiche), nouvel essai au bout de 24 h.                                                    |
 | Une vidéo ne se lance pas                                               | Vérifiez que ffmpeg est détecté (**Paramètres → Système**). Le lecteur bascule automatiquement en conversion en cas d'échec.                                                                                                                                                        |
 | Pas d'affiches                                                          | Ajoutez/testez la clé TMDB dans les paramètres.                                                                                                                                                                                                                                     |
-| Défilement saccadé                                                      | **Paramètres → Apparence** : désactivez la réfraction ou choisissez « Teinté » ou « Opaque » (la réfraction se coupe d'elle-même si l'affichage saccade).                                                                                                                           |
+| Défilement saccadé                                                      | **Paramètres → Général → Apparence** : désactivez la réfraction ou choisissez « Teinté » ou « Opaque » (la réfraction se coupe d'elle-même si l'affichage saccade).                                                                                                                 |
 | Pas d'effet de réfraction                                               | Normal hors Chrome, Edge, Brave ou Opera : Safari et Firefox affichent un verre dépoli.                                                                                                                                                                                             |
 | « Le port 8484 est déjà utilisé »                                       | `PORT=8585 npm start`                                                                                                                                                                                                                                                               |
 

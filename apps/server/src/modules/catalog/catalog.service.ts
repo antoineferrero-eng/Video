@@ -228,8 +228,8 @@ export class CatalogService {
       if (!this.metadata.isEnabled()) {
         throw new Error(
           mode === 'addon'
-            ? 'Avec l’extension Stremio, le catalogue vient de TMDB : ajoutez une clé TMDB (Paramètres → Métadonnées), gratuite.'
-            : 'Le catalogue TMDB nécessite une clé TMDB (Paramètres → Métadonnées), gratuite.',
+            ? 'Avec l’extension Stremio, le catalogue vient de TMDB : ajoutez une clé TMDB (Paramètres → Extensions et API), gratuite.'
+            : 'Le catalogue TMDB nécessite une clé TMDB (Paramètres → Extensions et API), gratuite.',
         );
       }
       const seen = await this.tmdbCatalog.importLists(kind);
@@ -594,7 +594,7 @@ export class CatalogService {
     if (row.kind !== 'series') throw new BadRequestError('Ce titre n’est pas une série.');
     if (!this.addon.enabled)
       throw new BadRequestError(
-        'Aucune extension Stremio n’est configurée (Paramètres → Extension Stremio).',
+        'Aucune extension Stremio n’est configurée (Paramètres → Extensions et API).',
       );
     return row;
   }

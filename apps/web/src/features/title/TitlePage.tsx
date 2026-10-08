@@ -208,7 +208,7 @@ export function TitlePage() {
           <p>
             Ajoutez une clé TMDB (gratuite) dans les{' '}
             <Link
-              to="/parametres"
+              to="/parametres?onglet=services"
               className="font-medium text-brand-300 underline-offset-2 hover:underline"
             >
               paramètres

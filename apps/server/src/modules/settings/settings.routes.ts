@@ -145,6 +145,7 @@ export function registerSettingsRoutes(server: FastifyInstance, container: Conta
             openSubtitlesUsername: z.string().max(200),
             openSubtitlesPassword: z.string().max(500),
             subtitleAddonUrls: z.array(z.string().max(2000)).max(10),
+            providers: z.array(z.enum(['opensubtitles', 'addons'])).max(2),
           })
           .partial()
           .optional(),
@@ -153,8 +154,9 @@ export function registerSettingsRoutes(server: FastifyInstance, container: Conta
     async (request): Promise<SubtitleProvidersTestResult> => {
       const body = request.body ?? {};
       const providers: SubtitleProvidersTestResult['providers'] = [];
+      const tested = new Set(body.providers ?? ['opensubtitles', 'addons']);
       const apiKey = body.openSubtitlesApiKey?.trim() || settings.getOpenSubtitlesApiKey();
-      if (apiKey) {
+      if (apiKey && tested.has('opensubtitles')) {
         const username = body.openSubtitlesUsername ?? settings.get().openSubtitlesUsername;
         const saved = settings.getOpenSubtitlesCredentials();
         const password =
@@ -174,7 +176,10 @@ export function registerSettingsRoutes(server: FastifyInstance, container: Conta
           providers.push({ name: 'OpenSubtitles.com', ok: false, message: errorMessage(error) });
         }
       }
-      for (const input of body.subtitleAddonUrls ?? settings.get().subtitleAddonUrls) {
+      const addonUrls = tested.has('addons')
+        ? (body.subtitleAddonUrls ?? settings.get().subtitleAddonUrls)
+        : [];
+      for (const input of addonUrls) {
         if (!input.trim()) continue;
         const url = manifestUrlOf(input);
         try {

@@ -238,7 +238,7 @@ export class StremioAddon {
     const url = this.manifestUrl;
     if (!url)
       throw new UpstreamError(
-        'Aucune extension Stremio configurée (Paramètres → Extension Stremio).',
+        'Aucune extension Stremio configurée (Paramètres → Extensions et API).',
       );
     const cached = this.manifestCache;
     if (!options.force && cached?.url === url && Date.now() - cached.at < MANIFEST_TTL_MS) {

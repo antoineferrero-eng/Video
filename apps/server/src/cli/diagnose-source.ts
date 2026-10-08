@@ -302,7 +302,7 @@ async function diagnoseAddon(args: string[], config: AppConfig): Promise<AddonRe
     return report;
   }
   if (!manifestUrl) {
-    console.log('— A. extension Stremio : désactivée (Paramètres → Extension Stremio)');
+    console.log('— A. extension Stremio : désactivée (Paramètres → Extensions et API)');
     return report;
   }
   console.log(`A. Extension Stremio : ${manifestUrl}`);
@@ -483,18 +483,18 @@ async function main(): Promise<void> {
       addon.limited
         ? '  L’extension a atteint sa limite de liens : réessayez dans quelques minutes (chez\n  111477, la réserve regagne un lien toutes les 5 minutes).'
         : addon.configurationRequired
-          ? '  L’extension doit être configurée : ouvrez sa page de configuration, puis collez le\n  lien d’installation obtenu dans Paramètres → Extension Stremio.'
+          ? '  L’extension doit être configurée : ouvrez sa page de configuration, puis collez le\n  lien d’installation obtenu dans Paramètres → Extensions et API.'
           : '  L’extension répond mais ne propose aucun fichier pour ce film : essayez un autre\n  titre (--film=tt…) ou vérifiez sa configuration.',
     );
   } else if (addon.manifest) {
     console.log('  L’extension répond mais la demande de liens a échoué (voir A2).');
   } else if (site?.some((attempt) => attempt.ok)) {
     console.log(
-      '  L’extension est injoignable mais le site répond directement : videz l’adresse de\n  l’extension (Paramètres → Extension Stremio) pour lire la liste du site.',
+      '  L’extension est injoignable mais le site répond directement : videz l’adresse de\n  l’extension (Paramètres → Extensions et API) pour lire la liste du site.',
     );
   } else {
     console.log(
-      '  Ni l’extension ni le site ne répondent : vérifiez l’adresse de l’extension\n  (Paramètres → Extension Stremio) et votre connexion, puis envoyez ce rapport complet.',
+      '  Ni l’extension ni le site ne répondent : vérifiez l’adresse de l’extension\n  (Paramètres → Extensions et API) et votre connexion, puis envoyez ce rapport complet.',
     );
   }
 }

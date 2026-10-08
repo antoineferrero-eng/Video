@@ -381,6 +381,8 @@ export function useTestSubtitles() {
       openSubtitlesUsername?: string;
       openSubtitlesPassword?: string;
       subtitleAddonUrls?: string[];
+      /** Services à tester (tous par défaut). */
+      providers?: Array<'opensubtitles' | 'addons'>;
     }) =>
       api<SubtitleProvidersTestResult>('/settings/test-subtitles', {
         method: 'POST',

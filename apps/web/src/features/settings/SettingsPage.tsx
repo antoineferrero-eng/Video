@@ -1,13 +1,14 @@
 import {
-  Captions,
   CheckCircle2,
-  Clapperboard,
   Cpu,
   Database,
   Download,
   Globe,
   KeyRound,
+  Languages,
+  Play,
   PlayCircle,
+  Puzzle,
   RefreshCw,
   Save,
   Server,
@@ -15,6 +16,7 @@ import {
   XCircle,
 } from 'lucide-react';
 import { useMemo, useState, type ReactNode } from 'react';
+import { useSearchParams } from 'react-router';
 import type {
   AppSettings,
   CatalogSource,
@@ -43,7 +45,7 @@ import { Tabs } from '../../components/ui/Tabs';
 import { setAppearance, useAppearance, type GlassMaterial } from '../../design/glass/appearance';
 import { Glass } from '../../design/glass/Glass';
 import { cn } from '../../lib/cn';
-import { formatBytes, formatRelativeDate } from '../../lib/format';
+import { formatBytes, formatRelativeDate, plural } from '../../lib/format';
 
 const LANGUAGES = [
   { value: 'fr', label: 'Français' },
@@ -83,8 +85,64 @@ export function SettingsPage() {
   return <SettingsForm key={JSON.stringify(settings.data)} response={settings.data} />;
 }
 
+type SettingsTab = 'general' | 'services' | 'source' | 'system';
+
+const TABS: Array<{ value: SettingsTab; label: string }> = [
+  { value: 'general', label: 'Général' },
+  { value: 'services', label: 'Extensions et API' },
+  { value: 'source', label: 'Source et catalogue' },
+  { value: 'system', label: 'Système' },
+];
+
+/** Réglages enregistrés de chaque onglet (pastille : modifications pas encore enregistrées). */
+const TAB_FIELDS: Record<SettingsTab, Array<keyof SettingsUpdate>> = {
+  general: [
+    'preferredAudioLanguage',
+    'preferredSubtitleLanguage',
+    'metadataLanguage',
+    'transcodePreset',
+    'maxTranscodeHeight',
+    'downloadDir',
+    'maxConcurrentDownloads',
+    'maxDownloadSpeedKbps',
+    'preferredQuality',
+  ],
+  services: [
+    'stremioAddonUrl',
+    'subtitleAddonUrls',
+    'tmdbApiKey',
+    'openSubtitlesApiKey',
+    'openSubtitlesUsername',
+    'openSubtitlesPassword',
+  ],
+  source: [
+    'sourceBaseUrl',
+    'moviesPath',
+    'seriesPath',
+    'sourceConnection',
+    'userAgent',
+    'catalogSource',
+    'catalogRefreshHours',
+  ],
+  system: [],
+};
+
+function parseTab(value: string | null): SettingsTab {
+  return TABS.some((tab) => tab.value === value) ? (value as SettingsTab) : 'general';
+}
+
+const METADATA_LANGUAGES = [
+  { value: 'fr-FR', label: 'Français' },
+  { value: 'en-US', label: 'Anglais' },
+  { value: 'es-ES', label: 'Espagnol' },
+  { value: 'de-DE', label: 'Allemand' },
+  { value: 'it-IT', label: 'Italien' },
+];
+
 function SettingsForm({ response }: { response: SettingsResponse }) {
   const update = useUpdateSettings();
+  const [params, setParams] = useSearchParams();
+  const tab = parseTab(params.get('onglet'));
   const [draft, setDraft] = useState<AppSettings>(response.settings);
   const [tmdbKey, setTmdbKey] = useState('');
   const [openSubtitlesKey, setOpenSubtitlesKey] = useState('');
@@ -103,307 +161,379 @@ function SettingsForm({ response }: { response: SettingsResponse }) {
     return patch;
   }, [draft, response.settings, tmdbKey, openSubtitlesKey, openSubtitlesPassword]);
   const dirty = Object.keys(changes).length > 0;
+  const pending = (value: SettingsTab) => TAB_FIELDS[value].filter((key) => key in changes).length;
 
   const set = <K extends keyof AppSettings>(key: K, value: AppSettings[K]) =>
     setDraft({ ...draft, [key]: value });
   const save = () => update.mutate(changes);
+  const cancel = () => {
+    setDraft(response.settings);
+    setTmdbKey('');
+    setOpenSubtitlesKey('');
+    setOpenSubtitlesPassword('');
+  };
+  const addonEnabled = draft.stremioAddonUrl.trim() !== '';
 
   return (
     <div className="mx-auto flex max-w-4xl flex-col gap-6 pb-16">
-      <header>
-        <h1 className="large-title">Paramètres</h1>
-        <p className="mt-1 text-sm text-zinc-400">
-          Apparence, source des fichiers, téléchargements, lecture et métadonnées.
-        </p>
+      <header className="flex flex-col gap-4">
+        <div>
+          <h1 className="large-title">Paramètres</h1>
+          <p className="mt-1 text-sm text-zinc-400">
+            Préférences de lecture et d’apparence, services connectés et source des fichiers.
+          </p>
+        </div>
+        <Tabs<SettingsTab>
+          label="Rubriques des paramètres"
+          items={TABS.map(({ value, label }) => ({
+            value,
+            label,
+            count: pending(value) > 0 ? pending(value) : undefined,
+          }))}
+          value={tab}
+          onChange={(value) => setParams({ onglet: value }, { replace: true })}
+        />
       </header>
 
-      <AppearanceSection />
+      {tab === 'general' && (
+        <div role="tabpanel" aria-label="Général" className="flex flex-col gap-6">
+          <AppearanceSection />
 
-      <Section
-        tone="violet"
-        icon={<Clapperboard />}
-        title="Extension Stremio"
-        description="Fournit les liens des films et des épisodes quand le site lui-même est protégé (vérification Cloudflare)."
-      >
-        <Field
-          label="Adresse de l’extension"
-          description="Lien d’installation (stremio://… ou https://…/manifest.json), par exemple celui de st.111477.xyz après configuration. Laissez vide pour lire directement la liste de la source."
-        >
-          <Input
-            value={draft.stremioAddonUrl}
-            onChange={(event) => set('stremioAddonUrl', event.target.value)}
-            placeholder="https://st.111477.xyz/manifest.json"
-            spellCheck={false}
-            className="font-mono text-xs"
-          />
-        </Field>
-        <AddonTester candidate={draft.stremioAddonUrl} />
-        {draft.stremioAddonUrl.trim() && (
-          <p className="text-xs leading-relaxed text-zinc-400">
-            Avec l’extension, le catalogue vient de TMDB (clé requise) et les liens ne sont demandés
-            qu’à l’ouverture d’un film, ou à la lecture et au téléchargement d’un épisode. Chez
-            111477, chaque lien consomme un jeton d’une réserve limitée par adresse IP : réglez
-            l’extension pour qu’elle propose peu de liens par titre.
-          </p>
-        )}
-      </Section>
-
-      <Section
-        tone="blue"
-        icon={<Globe />}
-        title="Source"
-        description={
-          draft.stremioAddonUrl.trim()
-            ? 'Index HTTP du site : inutilisé tant que l’extension Stremio est renseignée.'
-            : 'Index HTTP (listing de dossiers) depuis lequel les films et séries sont récupérés.'
-        }
-      >
-        <Field label="Adresse de la source" description="Exemple : https://a.111477.xyz">
-          <Input
-            value={draft.sourceBaseUrl}
-            onChange={(event) => set('sourceBaseUrl', event.target.value)}
-            spellCheck={false}
-          />
-        </Field>
-        <div className="grid gap-4 sm:grid-cols-2">
-          <Field label="Dossier des films" description="Chemin relatif sur la source.">
-            <Input
-              value={draft.moviesPath}
-              onChange={(event) => set('moviesPath', event.target.value)}
-              spellCheck={false}
-            />
-          </Field>
-          <Field label="Dossier des séries">
-            <Input
-              value={draft.seriesPath}
-              onChange={(event) => set('seriesPath', event.target.value)}
-              spellCheck={false}
-            />
-          </Field>
-        </div>
-        <div className="grid gap-4 sm:grid-cols-[15rem_1fr]">
-          <Field
-            label="Connexion à la source"
-            description={
-              CONNECTIONS.find((item) => item.value === draft.sourceConnection)?.description
-            }
+          <Section
+            tone="blue"
+            icon={<Languages />}
+            title="Langues"
+            description="Choisies automatiquement à la lecture et pour les fiches des titres."
           >
-            <Select
-              value={draft.sourceConnection}
-              onChange={(event) => set('sourceConnection', event.target.value as SourceConnection)}
-            >
-              {CONNECTIONS.map((item) => (
-                <option key={item.value} value={item.value}>
-                  {item.label}
-                </option>
-              ))}
-            </Select>
-          </Field>
-          <Field
-            label="User-Agent HTTP"
-            description="Identité de la connexion standard (l’imitation de navigateur utilise celle de Chrome)."
-          >
-            <Input
-              value={draft.userAgent}
-              onChange={(event) => set('userAgent', event.target.value)}
-              spellCheck={false}
-              className="font-mono text-xs"
-            />
-          </Field>
-        </div>
-        <SourceTester />
-      </Section>
-
-      <Section tone="green" icon={<Download />} title="Téléchargements">
-        <Field
-          label="Dossier de la bibliothèque"
-          description="Les films sont rangés dans « Films/ », les séries dans « Séries/<série>/Saison NN/ »."
-        >
-          <Input
-            value={draft.downloadDir}
-            onChange={(event) => set('downloadDir', event.target.value)}
-            spellCheck={false}
-            className="font-mono text-xs"
-          />
-        </Field>
-        <div className="grid gap-4 sm:grid-cols-3">
-          <Field label="Téléchargements simultanés">
-            <Select
-              value={draft.maxConcurrentDownloads}
-              onChange={(event) => set('maxConcurrentDownloads', Number(event.target.value))}
-            >
-              {[1, 2, 3, 4, 5, 6, 8, 10].map((value) => (
-                <option key={value} value={value}>
-                  {value}
-                </option>
-              ))}
-            </Select>
-          </Field>
-          <Field label="Limite de débit (Kio/s)" description="0 = illimité">
-            <Input
-              type="number"
-              min={0}
-              step={512}
-              value={draft.maxDownloadSpeedKbps}
-              onChange={(event) =>
-                set('maxDownloadSpeedKbps', Math.max(0, Number(event.target.value) || 0))
-              }
-            />
-          </Field>
-          <Field label="Qualité préférée" description="Utilisée pour les saisons complètes.">
-            <Select
-              value={draft.preferredQuality}
-              onChange={(event) =>
-                set('preferredQuality', event.target.value as AppSettings['preferredQuality'])
-              }
-            >
-              <option value="2160p">4K (2160p)</option>
-              <option value="1080p">Full HD (1080p)</option>
-              <option value="720p">HD (720p)</option>
-              <option value="smallest">La plus légère</option>
-            </Select>
-          </Field>
-        </div>
-      </Section>
-
-      <Section tone="red" icon={<PlayCircle />} title="Lecture">
-        <div className="grid gap-4 sm:grid-cols-2">
-          <Field
-            label="Langue audio préférée"
-            description="Sélectionnée automatiquement dans les fichiers multi-langues (MULTi)."
-          >
-            <Select
-              value={draft.preferredAudioLanguage}
-              onChange={(event) => set('preferredAudioLanguage', event.target.value)}
-            >
-              <option value="">Piste par défaut du fichier</option>
-              {LANGUAGES.map((language) => (
-                <option key={language.value} value={language.value}>
-                  {language.label}
-                </option>
-              ))}
-            </Select>
-          </Field>
-          <Field label="Sous-titres par défaut">
-            <Select
-              value={draft.preferredSubtitleLanguage}
-              onChange={(event) => set('preferredSubtitleLanguage', event.target.value)}
-            >
-              <option value="">Désactivés (sauf sous-titres forcés)</option>
-              {LANGUAGES.map((language) => (
-                <option key={language.value} value={language.value}>
-                  {language.label}
-                </option>
-              ))}
-            </Select>
-          </Field>
-          <Field
-            label="Conversion vidéo"
-            description="Utilisée quand le navigateur ne sait pas lire le fichier (HEVC, 10 bits…)."
-          >
-            <Select
-              value={draft.transcodePreset}
-              onChange={(event) =>
-                set('transcodePreset', event.target.value as AppSettings['transcodePreset'])
-              }
-            >
-              <option value="quality">Qualité maximale (plus de CPU)</option>
-              <option value="balanced">Équilibrée</option>
-              <option value="fast">Rapide (machines modestes)</option>
-            </Select>
-          </Field>
-          <Field label="Résolution maximale convertie">
-            <Select
-              value={draft.maxTranscodeHeight}
-              onChange={(event) => set('maxTranscodeHeight', Number(event.target.value))}
-            >
-              {[2160, 1440, 1080, 720, 480].map((value) => (
-                <option key={value} value={value}>
-                  {value}p
-                </option>
-              ))}
-            </Select>
-          </Field>
-        </div>
-      </Section>
-
-      <SubtitlesSection
-        response={response}
-        addonUrls={draft.subtitleAddonUrls}
-        onAddonUrlsChange={(urls) => set('subtitleAddonUrls', urls)}
-        username={draft.openSubtitlesUsername}
-        onUsernameChange={(value) => set('openSubtitlesUsername', value)}
-        apiKey={openSubtitlesKey}
-        onApiKeyChange={setOpenSubtitlesKey}
-        password={openSubtitlesPassword}
-        onPasswordChange={setOpenSubtitlesPassword}
-      />
-
-      <Section
-        tone="teal"
-        icon={<KeyRound />}
-        title="Métadonnées (TMDB)"
-        description="Affiches, résumés, notes et titres d'épisodes proviennent de The Movie Database (clé gratuite)."
-      >
-        <div className="flex flex-wrap items-center gap-2 text-sm">
-          {response.tmdbApiKeyConfigured ? (
-            <Badge tone="success" icon={<CheckCircle2 className="size-3" />}>
-              Clé configurée{response.tmdbApiKeyFromEnv ? ' (variable d’environnement)' : ''}
-            </Badge>
-          ) : (
-            <Badge tone="warning">Aucune clé : les affiches sont générées automatiquement</Badge>
-          )}
-        </div>
-        <div className="grid gap-4 sm:grid-cols-[1fr_12rem]">
-          <Field
-            label={response.tmdbApiKeyConfigured ? 'Remplacer la clé API' : 'Clé API TMDB'}
-            description={
-              <>
-                Créez un compte sur{' '}
-                <a
-                  href="https://www.themoviedb.org/settings/api"
-                  target="_blank"
-                  rel="noreferrer"
-                  className="font-medium text-brand-300 underline underline-offset-2"
+            <div className="grid gap-4 sm:grid-cols-3">
+              <Field
+                label="Langue audio préférée"
+                description="Sélectionnée dans les fichiers multi-langues (MULTi)."
+              >
+                <Select
+                  value={draft.preferredAudioLanguage}
+                  onChange={(event) => set('preferredAudioLanguage', event.target.value)}
                 >
-                  themoviedb.org/settings/api
-                </a>{' '}
-                puis copiez la « clé d'API » (v3) ou le « jeton d'accès en lecture ».
-              </>
+                  <option value="">Piste par défaut du fichier</option>
+                  {LANGUAGES.map((language) => (
+                    <option key={language.value} value={language.value}>
+                      {language.label}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+              <Field
+                label="Sous-titres par défaut"
+                description="Absents du fichier : cherchés en ligne."
+              >
+                <Select
+                  value={draft.preferredSubtitleLanguage}
+                  onChange={(event) => set('preferredSubtitleLanguage', event.target.value)}
+                >
+                  <option value="">Désactivés (sauf sous-titres forcés)</option>
+                  {LANGUAGES.map((language) => (
+                    <option key={language.value} value={language.value}>
+                      {language.label}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+              <Field label="Langue des fiches" description="Titres, résumés et épisodes (TMDB).">
+                <Select
+                  value={draft.metadataLanguage}
+                  onChange={(event) => set('metadataLanguage', event.target.value)}
+                >
+                  {METADATA_LANGUAGES.map((language) => (
+                    <option key={language.value} value={language.value}>
+                      {language.label}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+            </div>
+          </Section>
+
+          <Section
+            tone="red"
+            icon={<PlayCircle />}
+            title="Lecture"
+            description="Conversion des vidéos que le navigateur ne sait pas lire (HEVC, 10 bits…)."
+          >
+            <div className="grid gap-4 sm:grid-cols-2">
+              <Field label="Qualité de conversion">
+                <Select
+                  value={draft.transcodePreset}
+                  onChange={(event) =>
+                    set('transcodePreset', event.target.value as AppSettings['transcodePreset'])
+                  }
+                >
+                  <option value="quality">Qualité maximale (plus de CPU)</option>
+                  <option value="balanced">Équilibrée</option>
+                  <option value="fast">Rapide (machines modestes)</option>
+                </Select>
+              </Field>
+              <Field label="Résolution maximale convertie">
+                <Select
+                  value={draft.maxTranscodeHeight}
+                  onChange={(event) => set('maxTranscodeHeight', Number(event.target.value))}
+                >
+                  {[2160, 1440, 1080, 720, 480].map((value) => (
+                    <option key={value} value={value}>
+                      {value}p
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+            </div>
+          </Section>
+
+          <Section tone="green" icon={<Download />} title="Téléchargements">
+            <Field
+              label="Dossier de la bibliothèque"
+              description="Les films sont rangés dans « Films/ », les séries dans « Séries/<série>/Saison NN/ »."
+            >
+              <Input
+                value={draft.downloadDir}
+                onChange={(event) => set('downloadDir', event.target.value)}
+                spellCheck={false}
+                className="font-mono text-xs"
+              />
+            </Field>
+            <div className="grid gap-4 sm:grid-cols-3">
+              <Field label="Téléchargements simultanés">
+                <Select
+                  value={draft.maxConcurrentDownloads}
+                  onChange={(event) => set('maxConcurrentDownloads', Number(event.target.value))}
+                >
+                  {[1, 2, 3, 4, 5, 6, 8, 10].map((value) => (
+                    <option key={value} value={value}>
+                      {value}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+              <Field label="Limite de débit (Kio/s)" description="0 = illimité">
+                <Input
+                  type="number"
+                  min={0}
+                  step={512}
+                  value={draft.maxDownloadSpeedKbps}
+                  onChange={(event) =>
+                    set('maxDownloadSpeedKbps', Math.max(0, Number(event.target.value) || 0))
+                  }
+                />
+              </Field>
+              <Field label="Qualité préférée" description="Utilisée pour les saisons complètes.">
+                <Select
+                  value={draft.preferredQuality}
+                  onChange={(event) =>
+                    set('preferredQuality', event.target.value as AppSettings['preferredQuality'])
+                  }
+                >
+                  <option value="2160p">4K (2160p)</option>
+                  <option value="1080p">Full HD (1080p)</option>
+                  <option value="720p">HD (720p)</option>
+                  <option value="smallest">La plus légère</option>
+                </Select>
+              </Field>
+            </div>
+          </Section>
+        </div>
+      )}
+
+      {tab === 'services' && (
+        <div role="tabpanel" aria-label="Extensions et API" className="flex flex-col gap-6">
+          <Section
+            tone="violet"
+            icon={<Puzzle />}
+            title="Extensions Stremio"
+            description="Services au protocole des extensions Stremio : liens des fichiers et sous-titres en ligne."
+          >
+            <Group
+              title="Films et séries"
+              badge={
+                addonEnabled ? (
+                  <Badge tone="success">Activée</Badge>
+                ) : (
+                  <Badge tone="info">Désactivée : liste du site</Badge>
+                )
+              }
+              description="Fournit les liens des films et des épisodes quand le site lui-même est protégé (vérification Cloudflare)."
+            >
+              <Field
+                label="Adresse de l’extension"
+                description="Lien d’installation (stremio://… ou https://…/manifest.json), par exemple celui de st.111477.xyz après configuration. Laissez vide pour lire directement la liste de la source."
+              >
+                <Input
+                  value={draft.stremioAddonUrl}
+                  onChange={(event) => set('stremioAddonUrl', event.target.value)}
+                  placeholder="https://st.111477.xyz/manifest.json"
+                  spellCheck={false}
+                  className="font-mono text-xs"
+                />
+              </Field>
+              <AddonTester candidate={draft.stremioAddonUrl} />
+              {addonEnabled && (
+                <p className="text-xs leading-relaxed text-zinc-400">
+                  Le catalogue vient alors de TMDB (clé requise, ci-dessous) et les liens ne sont
+                  demandés qu’à l’ouverture d’un film, ou à la lecture et au téléchargement d’un
+                  épisode. Chez 111477, chaque lien consomme un jeton d’une réserve limitée par
+                  adresse IP : réglez l’extension pour qu’elle propose peu de liens par titre.
+                </p>
+              )}
+            </Group>
+            <SubtitleAddonsGroup
+              urls={draft.subtitleAddonUrls}
+              onChange={(urls) => set('subtitleAddonUrls', urls)}
+            />
+          </Section>
+
+          <Section
+            tone="teal"
+            icon={<KeyRound />}
+            title="Clés d’API"
+            description="Services en ligne qui demandent une clé personnelle, gratuite. Les clés et mots de passe ne sont jamais réaffichés."
+          >
+            <Group
+              title="TMDB"
+              badge={
+                response.tmdbApiKeyConfigured ? (
+                  <Badge tone="success" icon={<CheckCircle2 className="size-3" />}>
+                    Clé configurée{response.tmdbApiKeyFromEnv ? ' (variable d’environnement)' : ''}
+                  </Badge>
+                ) : (
+                  <Badge tone="warning">
+                    {addonEnabled ? 'Indispensable avec l’extension' : 'Aucune clé'}
+                  </Badge>
+                )
+              }
+              description="Catalogue (tendances, populaires, recherche), affiches, résumés, notes et titres des épisodes."
+            >
+              <Field
+                label={response.tmdbApiKeyConfigured ? 'Remplacer la clé' : 'Clé d’API'}
+                description={
+                  <>
+                    Créez un compte sur{' '}
+                    <a
+                      href="https://www.themoviedb.org/settings/api"
+                      target="_blank"
+                      rel="noreferrer"
+                      className="font-medium text-brand-300 underline underline-offset-2"
+                    >
+                      themoviedb.org/settings/api
+                    </a>{' '}
+                    puis copiez la « clé d’API » (v3) ou le « jeton d’accès en lecture ».
+                  </>
+                }
+              >
+                <Input
+                  type="password"
+                  value={tmdbKey}
+                  onChange={(event) => setTmdbKey(event.target.value)}
+                  placeholder="••••••••••••"
+                  autoComplete="off"
+                />
+              </Field>
+              <TmdbTester candidate={tmdbKey} />
+            </Group>
+            <OpenSubtitlesGroup
+              response={response}
+              username={draft.openSubtitlesUsername}
+              onUsernameChange={(value) => set('openSubtitlesUsername', value)}
+              apiKey={openSubtitlesKey}
+              onApiKeyChange={setOpenSubtitlesKey}
+              password={openSubtitlesPassword}
+              onPasswordChange={setOpenSubtitlesPassword}
+            />
+          </Section>
+        </div>
+      )}
+
+      {tab === 'source' && (
+        <div role="tabpanel" aria-label="Source et catalogue" className="flex flex-col gap-6">
+          <Section
+            tone="blue"
+            icon={<Globe />}
+            title="Source"
+            description={
+              addonEnabled
+                ? 'Index HTTP du site : les fichiers viennent de l’extension Stremio, il ne sert qu’à l’explorateur.'
+                : 'Index HTTP (listing de dossiers) depuis lequel les films et séries sont récupérés.'
             }
           >
-            <Input
-              type="password"
-              value={tmdbKey}
-              onChange={(event) => setTmdbKey(event.target.value)}
-              placeholder="••••••••••••"
-              autoComplete="off"
-            />
-          </Field>
-          <Field label="Langue des métadonnées">
-            <Select
-              value={draft.metadataLanguage}
-              onChange={(event) => set('metadataLanguage', event.target.value)}
-            >
-              <option value="fr-FR">Français</option>
-              <option value="en-US">Anglais</option>
-              <option value="es-ES">Espagnol</option>
-              <option value="de-DE">Allemand</option>
-              <option value="it-IT">Italien</option>
-            </Select>
-          </Field>
-        </div>
-        <TmdbTester candidate={tmdbKey} />
-      </Section>
+            <Field label="Adresse de la source" description="Exemple : https://a.111477.xyz">
+              <Input
+                value={draft.sourceBaseUrl}
+                onChange={(event) => set('sourceBaseUrl', event.target.value)}
+                spellCheck={false}
+              />
+            </Field>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <Field label="Dossier des films" description="Chemin relatif sur la source.">
+                <Input
+                  value={draft.moviesPath}
+                  onChange={(event) => set('moviesPath', event.target.value)}
+                  spellCheck={false}
+                />
+              </Field>
+              <Field label="Dossier des séries">
+                <Input
+                  value={draft.seriesPath}
+                  onChange={(event) => set('seriesPath', event.target.value)}
+                  spellCheck={false}
+                />
+              </Field>
+            </div>
+            <div className="grid gap-4 sm:grid-cols-[15rem_1fr]">
+              <Field
+                label="Connexion à la source"
+                description={
+                  CONNECTIONS.find((item) => item.value === draft.sourceConnection)?.description
+                }
+              >
+                <Select
+                  value={draft.sourceConnection}
+                  onChange={(event) =>
+                    set('sourceConnection', event.target.value as SourceConnection)
+                  }
+                >
+                  {CONNECTIONS.map((item) => (
+                    <option key={item.value} value={item.value}>
+                      {item.label}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+              <Field
+                label="User-Agent HTTP"
+                description="Identité de la connexion standard (l’imitation de navigateur utilise celle de Chrome)."
+              >
+                <Input
+                  value={draft.userAgent}
+                  onChange={(event) => set('userAgent', event.target.value)}
+                  spellCheck={false}
+                  className="font-mono text-xs"
+                />
+              </Field>
+            </div>
+            <SourceTester />
+          </Section>
 
-      <CatalogSection
-        refreshHours={draft.catalogRefreshHours}
-        onRefreshHours={(value) => set('catalogRefreshHours', value)}
-        catalogSource={draft.catalogSource}
-        onCatalogSource={(value) => set('catalogSource', value)}
-        addonEnabled={response.settings.stremioAddonUrl !== ''}
-      />
-      <SystemSection />
+          <CatalogSection
+            refreshHours={draft.catalogRefreshHours}
+            onRefreshHours={(value) => set('catalogRefreshHours', value)}
+            catalogSource={draft.catalogSource}
+            onCatalogSource={(value) => set('catalogSource', value)}
+            addonEnabled={response.settings.stremioAddonUrl !== ''}
+          />
+        </div>
+      )}
+
+      {tab === 'system' && (
+        <div role="tabpanel" aria-label="Système" className="flex flex-col gap-6">
+          <SystemSection />
+        </div>
+      )}
 
       {/* Barre d'enregistrement flottante en verre épais (couche fonctionnelle). */}
       <Glass
@@ -418,15 +548,7 @@ function SettingsForm({ response }: { response: SettingsResponse }) {
       >
         <span className="text-sm font-medium text-zinc-100">Modifications non enregistrées</span>
         <div className="flex gap-1.5">
-          <Button
-            variant="ghost"
-            size="sm"
-            tabIndex={dirty ? undefined : -1}
-            onClick={() => {
-              setDraft(response.settings);
-              setTmdbKey('');
-            }}
-          >
+          <Button variant="ghost" size="sm" tabIndex={dirty ? undefined : -1} onClick={cancel}>
             Annuler
           </Button>
           <Button
@@ -469,13 +591,15 @@ function AppearanceSection() {
   const appearance = useAppearance();
   const { preferences, system, refractionSupported } = appearance;
   const current = MATERIALS.find((item) => item.value === preferences.material) ?? MATERIALS[0];
+  const solid = appearance.material === 'solid';
   return (
     <Section
       tone="violet"
       icon={<Sparkles />}
       title="Apparence"
-      description="Réglages propres à cet appareil, appliqués immédiatement."
+      description="Barres, menus et commandes du lecteur en verre. Réglages propres à cet appareil, appliqués immédiatement."
     >
+      <AppearancePreview />
       <div className="flex flex-col gap-2">
         <span className="px-1 text-sm font-medium text-zinc-200">Matériau des barres et menus</span>
         <Tabs<GlassMaterial>
@@ -497,12 +621,19 @@ function AppearanceSection() {
           description={
             !refractionSupported
               ? 'Nécessite un navigateur basé sur Chromium (Chrome, Edge, Brave, Opera) ; ailleurs, le verre reste dépoli.'
-              : appearance.refractionThrottled
-                ? 'Désactivée automatiquement : l’affichage était saccadé sur cet appareil. Réactivez-la pour forcer l’effet.'
-                : 'Le verre courbe la lumière sur ses contours. À désactiver sur une machine modeste.'
+              : solid
+                ? 'Sans effet avec le matériau « Opaque » : le verre ne laisse rien transparaître.'
+                : appearance.refractionThrottled
+                  ? 'Désactivée automatiquement : l’affichage était saccadé sur cet appareil. Réactivez-la pour forcer l’effet.'
+                  : 'Le verre courbe la lumière sur ses contours. À désactiver sur une machine modeste.'
           }
-          checked={refractionSupported && preferences.refraction && !appearance.refractionThrottled}
-          disabled={!refractionSupported || appearance.material === 'solid'}
+          checked={
+            refractionSupported &&
+            preferences.refraction &&
+            !appearance.refractionThrottled &&
+            !solid
+          }
+          disabled={!refractionSupported || solid}
           onChange={(refraction) => setAppearance({ refraction })}
         />
         <Switch
@@ -510,14 +641,60 @@ function AppearanceSection() {
           description={
             system.reducedMotion
               ? '« Réduire les animations » est activé sur cet appareil : reflets fixes.'
-              : "Les reflets suivent le pointeur ou l'inclinaison de l'appareil."
+              : solid
+                ? 'Sans effet avec le matériau « Opaque ».'
+                : "Les reflets suivent le pointeur ou l'inclinaison de l'appareil."
           }
           checked={appearance.lightActive}
-          disabled={system.reducedMotion || appearance.material === 'solid'}
+          disabled={system.reducedMotion || solid}
           onChange={(dynamicLight) => setAppearance({ dynamicLight })}
         />
       </div>
     </Section>
+  );
+}
+
+/**
+ * Aperçu du verre sur un fond coloré et détaillé : le matériau, la réfraction des bords et les
+ * reflets s'y voient tout de suite (le contenu des pages, sombre, les laisse peu paraître).
+ */
+function AppearancePreview() {
+  return (
+    <div
+      aria-hidden="true"
+      className="relative h-44 overflow-hidden rounded-[1rem] shadow-[inset_0_0_0_1px_rgb(255_255_255/0.08)]"
+    >
+      <div
+        className="absolute inset-0"
+        style={{
+          background:
+            'radial-gradient(circle at 16% 28%, #f472b6 0, transparent 34%), radial-gradient(circle at 80% 22%, #38bdf8 0, transparent 36%), radial-gradient(circle at 58% 92%, #facc15 0, transparent 40%), linear-gradient(135deg, #4c1d95, #0f172a)',
+        }}
+      />
+      {/* Motif net : la transparence et la courbure des bords se lisent dessus. */}
+      <div
+        className="absolute inset-0 opacity-40"
+        style={{
+          background:
+            'repeating-linear-gradient(100deg, rgb(255 255 255 / 0.55) 0 2px, transparent 2px 18px)',
+        }}
+      />
+      <p className="absolute inset-x-0 top-6 text-center text-4xl font-black tracking-tight text-white">
+        Lumière
+      </p>
+      <Glass
+        lens={{ bezel: 18, strength: 20 }}
+        className="absolute inset-x-5 bottom-5 flex items-center gap-3 rounded-full py-2 pr-4 pl-2 sm:inset-x-10"
+      >
+        <span className="glass glass-clear flex size-10 shrink-0 items-center justify-center rounded-full">
+          <Play className="ml-0.5 size-4 fill-white text-white" />
+        </span>
+        <span className="min-w-0 truncate text-sm font-semibold">Aperçu du verre</span>
+        <span className="ml-auto hidden text-xs text-zinc-300 sm:inline">
+          Les reflets suivent le pointeur
+        </span>
+      </Glass>
+    </div>
   );
 }
 
@@ -650,11 +827,129 @@ function AddonTester({ candidate }: { candidate: string }) {
 
 const OPENSUBTITLES_V3 = 'https://opensubtitles-v3.strem.io/manifest.json';
 
-/** Services de sous-titres en ligne : extensions Stremio et API OpenSubtitles.com. */
-function SubtitlesSection({
+/** Sous-partie d'une section : un service, avec son état et ses réglages. */
+function Group({
+  title,
+  badge,
+  description,
+  children,
+}: {
+  title: string;
+  badge?: ReactNode;
+  description?: ReactNode;
+  children: ReactNode;
+}) {
+  return (
+    <div className="flex flex-col gap-3 rounded-[1rem] bg-white/[0.05] p-4">
+      <div className="flex flex-col gap-1">
+        <div className="flex flex-wrap items-center gap-2">
+          <h3 className="text-sm font-semibold">{title}</h3>
+          {badge}
+        </div>
+        {description && <p className="text-xs leading-relaxed text-zinc-400">{description}</p>}
+      </div>
+      {children}
+    </div>
+  );
+}
+
+/** Résultats d'un test de services de sous-titres. */
+function ProviderResults({ test }: { test: ReturnType<typeof useTestSubtitles> }) {
+  return (
+    <>
+      {test.data?.providers.length === 0 && (
+        <p className="text-sm text-zinc-400">Aucun service configuré.</p>
+      )}
+      {test.data?.providers.map((provider) => (
+        <span
+          key={provider.name}
+          className={cn(
+            'flex min-w-0 items-center gap-1.5 text-sm',
+            provider.ok ? 'text-emerald-300' : 'text-red-300',
+          )}
+        >
+          {provider.ok ? (
+            <CheckCircle2 className="size-4 shrink-0" />
+          ) : (
+            <XCircle className="size-4 shrink-0" />
+          )}
+          <span className="font-medium">{provider.name}</span> · {provider.message}
+        </span>
+      ))}
+      {test.isError && <p className="text-sm text-red-300">{errorMessage(test.error)}</p>}
+    </>
+  );
+}
+
+/** Extensions Stremio de sous-titres (une adresse de manifeste par ligne). */
+function SubtitleAddonsGroup({
+  urls,
+  onChange,
+}: {
+  urls: string[];
+  onChange: (urls: string[]) => void;
+}) {
+  // Texte libre (une adresse par ligne) : la liste enregistrée en est déduite.
+  const [text, setText] = useState(urls.join('\n'));
+  const test = useTestSubtitles();
+  const update = (value: string) => {
+    setText(value);
+    onChange(
+      value
+        .split('\n')
+        .map((line) => line.trim())
+        .filter(Boolean),
+    );
+  };
+  return (
+    <Group
+      title="Sous-titres"
+      badge={
+        <Badge tone={urls.length > 0 ? 'success' : 'info'}>
+          {urls.length > 0 ? plural(urls.length, 'extension') : 'Aucune'}
+        </Badge>
+      }
+      description="Cherchées pendant la lecture quand vous ouvrez le menu des sous-titres, ou d’office si la langue de sous-titres préférée manque dans le fichier. OpenSubtitles v3 est gratuite et sans clé ; d’autres extensions compatibles (SubDL, Subsource…) s’ajoutent par leur lien d’installation."
+    >
+      <Field label="Adresses des extensions" description="Une adresse de manifeste par ligne.">
+        <textarea
+          value={text}
+          onChange={(event) => update(event.target.value)}
+          rows={Math.min(5, Math.max(2, text.split('\n').length))}
+          placeholder={OPENSUBTITLES_V3}
+          spellCheck={false}
+          className="input resize-y font-mono text-xs"
+        />
+      </Field>
+      <div className="flex flex-wrap items-center gap-2">
+        <Button
+          size="sm"
+          variant="glass"
+          icon={<Server className="size-4" />}
+          loading={test.isPending}
+          disabled={urls.length === 0}
+          onClick={() => test.mutate({ subtitleAddonUrls: urls, providers: ['addons'] })}
+        >
+          Tester les extensions
+        </Button>
+        {!urls.includes(OPENSUBTITLES_V3) && (
+          <Button
+            size="sm"
+            variant="glass"
+            onClick={() => update([...urls, OPENSUBTITLES_V3].join('\n'))}
+          >
+            Ajouter OpenSubtitles v3
+          </Button>
+        )}
+      </div>
+      <ProviderResults test={test} />
+    </Group>
+  );
+}
+
+/** Compte et clé d'API OpenSubtitles.com (sous-titres faits pour le fichier exact). */
+function OpenSubtitlesGroup({
   response,
-  addonUrls,
-  onAddonUrlsChange,
   username,
   onUsernameChange,
   apiKey,
@@ -663,8 +958,6 @@ function SubtitlesSection({
   onPasswordChange,
 }: {
   response: SettingsResponse;
-  addonUrls: string[];
-  onAddonUrlsChange: (urls: string[]) => void;
   username: string;
   onUsernameChange: (value: string) => void;
   apiKey: string;
@@ -672,65 +965,24 @@ function SubtitlesSection({
   password: string;
   onPasswordChange: (value: string) => void;
 }) {
-  // Texte libre (une adresse par ligne) : la liste enregistrée en est déduite.
-  const [addonText, setAddonText] = useState(addonUrls.join('\n'));
   const test = useTestSubtitles();
-  const updateAddons = (text: string) => {
-    setAddonText(text);
-    onAddonUrlsChange(
-      text
-        .split('\n')
-        .map((line) => line.trim())
-        .filter(Boolean),
-    );
-  };
+  const hasKey = response.openSubtitlesApiKeyConfigured || apiKey.trim() !== '';
   return (
-    <Section
-      tone="orange"
-      icon={<Captions />}
-      title="Sous-titres en ligne"
-      description="Cherchés pendant la lecture quand vous ouvrez le menu des sous-titres, ou d’office si la langue de sous-titres préférée manque dans le fichier."
-    >
-      <Field
-        label="Extensions Stremio de sous-titres"
-        description="Une adresse de manifeste par ligne. OpenSubtitles v3 est gratuite et sans clé ; d’autres extensions compatibles (SubDL, Subsource…) s’ajoutent par leur lien d’installation. Laissez vide pour n’en utiliser aucune."
-      >
-        <textarea
-          value={addonText}
-          onChange={(event) => updateAddons(event.target.value)}
-          rows={Math.min(5, Math.max(2, addonText.split('\n').length))}
-          placeholder={OPENSUBTITLES_V3}
-          spellCheck={false}
-          className="input resize-y font-mono text-xs"
-        />
-      </Field>
-      {!addonUrls.includes(OPENSUBTITLES_V3) && (
-        <div>
-          <Button
-            size="sm"
-            variant="glass"
-            onClick={() => updateAddons([...addonUrls, OPENSUBTITLES_V3].join('\n'))}
-          >
-            Ajouter OpenSubtitles v3
-          </Button>
-        </div>
-      )}
-
-      <div className="flex flex-col gap-3 rounded-[1rem] bg-white/[0.05] p-4">
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="text-sm font-semibold">OpenSubtitles.com</span>
-          {response.openSubtitlesApiKeyConfigured ? (
-            <Badge tone="success" icon={<CheckCircle2 className="size-3" />}>
-              Clé configurée
-              {response.openSubtitlesApiKeyFromEnv ? ' (variable d’environnement)' : ''}
-            </Badge>
-          ) : (
-            <Badge tone="info">Facultatif</Badge>
-          )}
-        </div>
-        <p className="text-xs leading-relaxed text-zinc-400">
-          L’API officielle trouve les sous-titres faits pour votre fichier exact (empreinte du
-          fichier). Créez une clé gratuite dans votre compte, rubrique{' '}
+    <Group
+      title="OpenSubtitles.com"
+      badge={
+        response.openSubtitlesApiKeyConfigured ? (
+          <Badge tone="success" icon={<CheckCircle2 className="size-3" />}>
+            Clé configurée{response.openSubtitlesApiKeyFromEnv ? ' (variable d’environnement)' : ''}
+          </Badge>
+        ) : (
+          <Badge tone="info">Facultatif</Badge>
+        )
+      }
+      description={
+        <>
+          Sous-titres faits pour votre fichier exact (empreinte du fichier). Créez une clé gratuite
+          dans votre compte, rubrique{' '}
           <a
             href="https://www.opensubtitles.com/consumers"
             target="_blank"
@@ -740,84 +992,61 @@ function SubtitlesSection({
             API consumers
           </a>
           . Sans compte, le nombre de téléchargements par jour est réduit.
-        </p>
-        <div className="grid gap-4 sm:grid-cols-3">
-          <Field label={response.openSubtitlesApiKeyConfigured ? 'Remplacer la clé' : 'Clé d’API'}>
-            <Input
-              type="password"
-              value={apiKey}
-              onChange={(event) => onApiKeyChange(event.target.value)}
-              placeholder="••••••••••••"
-              autoComplete="off"
-            />
-          </Field>
-          <Field label="Identifiant (facultatif)">
-            <Input
-              value={username}
-              onChange={(event) => onUsernameChange(event.target.value)}
-              autoComplete="off"
-              spellCheck={false}
-            />
-          </Field>
-          <Field
-            label={
-              response.openSubtitlesPasswordConfigured
-                ? 'Remplacer le mot de passe'
-                : 'Mot de passe'
-            }
-          >
-            <Input
-              type="password"
-              value={password}
-              onChange={(event) => onPasswordChange(event.target.value)}
-              placeholder={response.openSubtitlesPasswordConfigured ? '••••••••' : ''}
-              autoComplete="new-password"
-            />
-          </Field>
-        </div>
+        </>
+      }
+    >
+      <div className="grid gap-4 sm:grid-cols-3">
+        <Field label={response.openSubtitlesApiKeyConfigured ? 'Remplacer la clé' : 'Clé d’API'}>
+          <Input
+            type="password"
+            value={apiKey}
+            onChange={(event) => onApiKeyChange(event.target.value)}
+            placeholder="••••••••••••"
+            autoComplete="off"
+          />
+        </Field>
+        <Field label="Identifiant (facultatif)">
+          <Input
+            value={username}
+            onChange={(event) => onUsernameChange(event.target.value)}
+            autoComplete="off"
+            spellCheck={false}
+          />
+        </Field>
+        <Field
+          label={
+            response.openSubtitlesPasswordConfigured ? 'Remplacer le mot de passe' : 'Mot de passe'
+          }
+        >
+          <Input
+            type="password"
+            value={password}
+            onChange={(event) => onPasswordChange(event.target.value)}
+            placeholder={response.openSubtitlesPasswordConfigured ? '••••••••' : ''}
+            autoComplete="new-password"
+          />
+        </Field>
       </div>
-
-      <div className="flex flex-col gap-2">
-        <div>
-          <Button
-            size="sm"
-            variant="glass"
-            icon={<Server className="size-4" />}
-            loading={test.isPending}
-            onClick={() =>
-              test.mutate({
-                openSubtitlesApiKey: apiKey.trim() || undefined,
-                openSubtitlesUsername: username,
-                openSubtitlesPassword: password || undefined,
-                subtitleAddonUrls: addonUrls,
-              })
-            }
-          >
-            Tester les services
-          </Button>
-        </div>
-        {test.data?.providers.length === 0 && (
-          <p className="text-sm text-zinc-400">Aucun service configuré.</p>
-        )}
-        {test.data?.providers.map((provider) => (
-          <span
-            key={provider.name}
-            className={cn(
-              'flex min-w-0 items-center gap-1.5 text-sm',
-              provider.ok ? 'text-emerald-300' : 'text-red-300',
-            )}
-          >
-            {provider.ok ? (
-              <CheckCircle2 className="size-4 shrink-0" />
-            ) : (
-              <XCircle className="size-4 shrink-0" />
-            )}
-            <span className="font-medium">{provider.name}</span> · {provider.message}
-          </span>
-        ))}
-        {test.isError && <p className="text-sm text-red-300">{errorMessage(test.error)}</p>}
+      <div>
+        <Button
+          size="sm"
+          variant="glass"
+          loading={test.isPending}
+          disabled={!hasKey}
+          onClick={() =>
+            test.mutate({
+              openSubtitlesApiKey: apiKey.trim() || undefined,
+              openSubtitlesUsername: username,
+              openSubtitlesPassword: password || undefined,
+              providers: ['opensubtitles'],
+            })
+          }
+        >
+          Tester la clé et le compte
+        </Button>
       </div>
-    </Section>
+      <ProviderResults test={test} />
+    </Group>
   );
 }
 
