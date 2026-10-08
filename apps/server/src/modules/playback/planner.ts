@@ -14,6 +14,11 @@ export interface PlaybackPlan {
   audioTrack: number | null;
   output: { video: OutputVideoCodec; audio: OutputAudioCodec } | null;
   hdr: boolean;
+  /**
+   * Départ de la vidéo par rapport au début du fichier, en secondes (0 sans vidéo) : une
+   * piste peut commencer après les autres (retard d'une piste audio d'une autre source).
+   */
+  videoStart: number;
   reasons: string[];
 }
 
@@ -48,6 +53,18 @@ const AUDIO_CODECS: Record<string, string> = {
 
 /** Codecs audio qu'on sait recopier tels quels dans un MP4 fragmenté. */
 const MP4_AUDIO_COPY = new Set(['aac', 'mp3', 'opus', 'flac']);
+/**
+ * Écart de départ audio / vidéo au-delà duquel l'audio n'est plus recopié : le MP4 fragmenté
+ * le transformerait en trou au début de la piste, que le navigateur refermerait (son en
+ * avance d'autant). Converti, il est complété par du silence.
+ */
+const MAX_COPY_START_GAP = 0.05;
+
+/** Départ d'une piste par rapport au début du fichier (0 si inconnu). */
+function relativeStart(stream: ProbeStream | null, fileStart: number | null): number {
+  if (!stream || stream.startTime === null) return 0;
+  return Math.max(0, stream.startTime - (fileStart ?? stream.startTime));
+}
 
 export function normalizeVideoCodec(codec: string | null): string | null {
   return codec ? (VIDEO_CODECS[codec] ?? null) : null;
@@ -147,6 +164,8 @@ export function planPlayback(
   if (!firstAudio) reasons.push('Piste audio secondaire sélectionnée');
   if (options.forceTranscode) reasons.push('Conversion forcée');
 
+  const videoStart = relativeStart(videoStream, probe.startTime);
+  const audioStartGap = Math.abs(relativeStart(audioStream, probe.startTime) - videoStart);
   const base = {
     container,
     videoStream,
@@ -154,6 +173,7 @@ export function planPlayback(
     audioStreams,
     audioTrack,
     hdr: isHdr(videoStream),
+    videoStart,
   };
 
   if (!options.forceTranscode && videoOk && audioOk && containerOk && firstAudio) {
@@ -166,9 +186,16 @@ export function planPlayback(
   }
 
   const audioCodec = audioStream ? normalizeAudioCodec(audioStream.codec) : null;
+  if (videoStream && audioStream && audioStartGap > MAX_COPY_START_GAP)
+    reasons.push(
+      `Audio décalé de ${audioStartGap.toFixed(2)} s dans le fichier : converti pour rester synchronisé`,
+    );
   const outputAudio: OutputAudioCodec = !audioStream
     ? 'copy'
-    : audioOk && audioCodec && MP4_AUDIO_COPY.has(audioCodec)
+    : audioOk &&
+        audioCodec &&
+        MP4_AUDIO_COPY.has(audioCodec) &&
+        (!videoStream || audioStartGap <= MAX_COPY_START_GAP)
       ? 'copy'
       : caps.audioCodecs.includes('aac')
         ? 'aac'

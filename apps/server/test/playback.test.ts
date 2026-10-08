@@ -33,12 +33,15 @@ function stream(
     isAttachedPicture: false,
     colorTransfer: null,
     bitDepth: null,
+    startTime: null,
+    sampleRate: null,
+    frameRate: null,
     ...partial,
   };
 }
 
 function probe(formatName: string, streams: ProbeStream[]): ProbeResult {
-  return { formatName, duration: 100, bitRate: null, size: null, streams };
+  return { formatName, startTime: null, duration: 100, bitRate: null, size: null, streams };
 }
 
 const options = (overrides: Partial<PlanOptions> = {}): PlanOptions => ({
@@ -173,9 +176,7 @@ describe('buildStreamArgs', () => {
     expect(joined).toContain('tonemap=tonemap=hable');
     expect(joined).toContain("scale=-2:'min(1080,ih)'");
     expect(joined).toContain('-af aresample=async=1 -c:a aac -ac 2');
-    expect(joined).toContain(
-      '-movflags frag_keyframe+empty_moov+default_base_moof+negative_cts_offsets pipe:1',
-    );
+    expect(joined).toContain('-movflags frag_keyframe+delay_moov+default_base_moof pipe:1');
     expect(args).toContain('-user_agent');
     expect(args).toContain('-reconnect_on_http_error');
     // Vidéo réencodée : positionnement à l'image près, pas de seconde sortie.
@@ -222,14 +223,15 @@ describe('StreamOriginReader', () => {
     '',
   ].join('\n');
 
-  it('déduit le départ réel du premier paquet vidéo, même reçu par morceaux', () => {
+  it('déduit le départ du flux du premier paquet vidéo, même reçu par morceaux', () => {
     const origins: number[] = [];
     const reader = new StreamOriginReader(37, (origin) => origins.push(origin));
     for (let index = 0; index < framecrc.length; index += 7) {
       reader.push(framecrc.slice(index, index + 7));
     }
     expect(origins).toHaveLength(1);
-    expect(origins[0]).toBeCloseTo(30.005, 3);
+    // Instant de décodage de l'image clé : le flux compte son temps à partir de lui.
+    expect(origins[0]).toBeCloseTo(29.922, 3);
     expect(reader.lastError).toBeNull();
   });
 

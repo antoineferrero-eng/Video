@@ -8,7 +8,12 @@ const CodecList = z.array(z.string().max(20)).max(30);
 const SessionParams = z.object({ id: z.uuid() });
 const StreamId = z.string().regex(/^[\w-]{1,64}$/);
 
-export function registerPlaybackRoutes(server: FastifyInstance, { playback }: Container): void {
+const TrackParams = SessionParams.extend({ trackId: z.string().max(40) });
+
+export function registerPlaybackRoutes(
+  server: FastifyInstance,
+  { playback, subtitleSync }: Container,
+): void {
   const app = server.withTypeProvider<ZodTypeProvider>();
 
   app.post(
@@ -64,9 +69,47 @@ export function registerPlaybackRoutes(server: FastifyInstance, { playback }: Co
       playback.searchOnlineSubtitles(request.params.id, request.query.force ?? false),
   );
 
+  // Recalage d'une piste : réglage gardé, réglage manuel, recalage automatique.
+  app.get(
+    '/playback/sessions/:id/subtitles/:trackId/sync',
+    { schema: { params: TrackParams } },
+    (request) => subtitleSync.state(request.params.id, request.params.trackId),
+  );
+
+  app.put(
+    '/playback/sessions/:id/subtitles/:trackId/sync',
+    {
+      schema: {
+        params: TrackParams,
+        body: z.object({
+          offset: z.number().min(-36_000).max(36_000),
+          rate: z.number().min(0.8).max(1.25),
+        }),
+      },
+    },
+    (request) => ({
+      sync: subtitleSync.save(request.params.id, request.params.trackId, request.body),
+    }),
+  );
+
+  app.delete(
+    '/playback/sessions/:id/subtitles/:trackId/sync',
+    { schema: { params: TrackParams } },
+    async (request, reply) => {
+      subtitleSync.reset(request.params.id, request.params.trackId);
+      return reply.code(204).send();
+    },
+  );
+
+  app.post(
+    '/playback/sessions/:id/subtitles/:trackId/sync/auto',
+    { schema: { params: TrackParams } },
+    async (request) => subtitleSync.auto(request.params.id, request.params.trackId),
+  );
+
   app.get(
     '/playback/sessions/:id/subtitles/:trackId',
-    { schema: { params: SessionParams.extend({ trackId: z.string().max(40) }) } },
+    { schema: { params: TrackParams } },
     async (request, reply) => {
       const vtt = await playback.subtitles(request.params.id, request.params.trackId);
       return reply

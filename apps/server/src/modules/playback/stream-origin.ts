@@ -7,8 +7,10 @@ const MAX_LOG_CHARS = 4000;
 /**
  * Lit la sortie d'erreur d'un ffmpeg lancé par `buildStreamArgs`. Elle mêle le journal
  * (erreurs) et, quand la vidéo est recopiée, la sortie `framecrc` du premier paquet vidéo :
- * son horodatage, relatif à la position demandée, donne l'instant réel où démarre le flux
- * (l'image clé atteinte par le positionnement).
+ * son horodatage, relatif à la position demandée, donne l'instant de la source où démarre
+ * le temps du flux. C'est l'instant de décodage de l'image clé atteinte : le flux part de
+ * lui (`make_zero`), et l'image clé s'affiche un peu après quand la vidéo a des images B.
+ * Il peut donc précéder le début du fichier de quelques centièmes de seconde.
  */
 export class StreamOriginReader {
   private pending = '';
@@ -46,11 +48,11 @@ export class StreamOriginReader {
     if (packet) {
       if (this.found || this.timeBase === null) return;
       const [, dts = '', pts = ''] = packet;
-      const timestamp = pts !== NO_TIMESTAMP ? pts : dts;
+      const timestamp = dts !== NO_TIMESTAMP ? dts : pts;
       if (timestamp === NO_TIMESTAMP) return;
       const value = Number(timestamp);
       this.found = true;
-      this.onOrigin(Math.max(0, this.start + value * this.timeBase));
+      this.onOrigin(this.start + value * this.timeBase);
       return;
     }
     if (line.trim()) this.log = `${this.log}${line}\n`.slice(-MAX_LOG_CHARS);

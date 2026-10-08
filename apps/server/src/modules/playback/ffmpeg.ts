@@ -19,10 +19,18 @@ export interface ProbeStream {
   isAttachedPicture: boolean;
   colorTransfer: string | null;
   bitDepth: number | null;
+  /** Instant de la première image ou du premier échantillon, en secondes. */
+  startTime: number | null;
+  /** Fréquence d'échantillonnage (audio), en Hz. */
+  sampleRate: number | null;
+  /** Images par seconde (vidéo). */
+  frameRate: number | null;
 }
 
 export interface ProbeResult {
   formatName: string;
+  /** Départ du fichier (la plus précoce des pistes) : ffmpeg compte le temps à partir de lui. */
+  startTime: number | null;
   duration: number | null;
   bitRate: number | null;
   size: number | null;
@@ -40,12 +48,22 @@ interface RawStream {
   channels?: number;
   color_transfer?: string;
   bits_per_raw_sample?: string;
+  start_time?: string;
+  sample_rate?: string;
+  avg_frame_rate?: string;
+  r_frame_rate?: string;
   disposition?: Record<string, number>;
   tags?: Record<string, string>;
 }
 
 interface RawProbe {
-  format?: { format_name?: string; duration?: string; bit_rate?: string; size?: string };
+  format?: {
+    format_name?: string;
+    start_time?: string;
+    duration?: string;
+    bit_rate?: string;
+    size?: string;
+  };
   streams?: RawStream[];
 }
 
@@ -170,6 +188,13 @@ function toNumber(value: string | number | undefined): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+/** Fraction ffprobe (« 24000/1001 ») en nombre ; « 0/0 » (inconnu) donne null. */
+function toRate(value: string | undefined): number | null {
+  const [numerator, denominator = '1'] = (value ?? '').split('/');
+  const rate = Number(numerator) / Number(denominator);
+  return Number.isFinite(rate) && rate > 0 ? rate : null;
+}
+
 export function parseProbe(raw: RawProbe): ProbeResult {
   const streams = (raw.streams ?? []).map((stream): ProbeStream => {
     const type = (['video', 'audio', 'subtitle', 'attachment', 'data'] as const).find(
@@ -200,10 +225,15 @@ export function parseProbe(raw: RawProbe): ProbeResult {
       isAttachedPicture: stream.disposition?.attached_pic === 1,
       colorTransfer: stream.color_transfer ?? null,
       bitDepth,
+      startTime: toNumber(stream.start_time),
+      sampleRate: toNumber(stream.sample_rate),
+      // Cadence moyenne d'abord : `r_frame_rate` vaut parfois le double (champs entrelacés).
+      frameRate: toRate(stream.avg_frame_rate) ?? toRate(stream.r_frame_rate),
     };
   });
   return {
     formatName: raw.format?.format_name ?? '',
+    startTime: toNumber(raw.format?.start_time),
     duration: toNumber(raw.format?.duration),
     bitRate: toNumber(raw.format?.bit_rate),
     size: toNumber(raw.format?.size),

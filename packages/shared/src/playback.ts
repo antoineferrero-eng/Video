@@ -63,6 +63,31 @@ export interface SubtitleTrackInfo {
   downloads?: number | null;
 }
 
+/**
+ * Recalage d'une piste de sous-titres : instant d'affichage = rate × instant prévu + offset
+ * (en secondes). Gardé par fichier et par piste.
+ */
+export interface SubtitleSync {
+  offset: number;
+  /** Vitesse : 1, ou le rapport de deux cadences (25 / 23,976…). */
+  rate: number;
+  source: 'manual' | 'auto';
+  /** Recalage automatique : sur quoi il s'est calé (« la voix », « la piste intégrée anglaise »…). */
+  note: string | null;
+}
+
+export interface SubtitleSyncState {
+  sync: SubtitleSync | null;
+  /** Recalage automatique déjà essayé sans résultat sûr (ne pas le relancer d'office). */
+  autoFailed: boolean;
+}
+
+export interface SubtitleSyncResult {
+  /** Recalage trouvé et enregistré ; null si rien de sûr. */
+  sync: SubtitleSync | null;
+  message: string;
+}
+
 /** Résultat d'une recherche de sous-titres en ligne pour une session de lecture. */
 export interface OnlineSubtitlesResult {
   tracks: SubtitleTrackInfo[];

@@ -118,6 +118,16 @@ complète avec l'interface :
 - **reprise réelle** grâce aux requêtes HTTP `Range` (fichier `.part` complété, pas
   recommencé) — vérifié par un test qui coupe et reprend un transfert et compare l'empreinte
   SHA-256 ;
+- **plusieurs morceaux simultanés**, comme IDM ou aria2. Constat : un épisode qui venait à
+  3 Mo/s passait à 20-30 Mo/s une fois relancé après une lecture avec quelques sauts (donc
+  plusieurs connexions). Certains hôtes brident chaque connexion, ou servent lentement un
+  fichier tant qu'il n'est pas dans leur cache. Le moteur (`SegmentedTransfer`) part d'une
+  connexion et en ajoute une toutes les 4 s environ tant que la vitesse totale progresse
+  d'au moins 15 % (6 au plus, morceaux de 8 Mio au minimum) ; chaque nouvelle connexion
+  prend la moitié restante du plus gros morceau en cours. Un refus (429, 503…) ou des plages
+  ignorées ramènent au nombre qui fonctionnait, sans redemander de liens (jetons). Ce qui
+  est reçu est noté dans `<fichier>.part.json` : une reprise ne redemande que les trous ;
+  un `.part` d'avant (d'un seul tenant) reprend à sa fin ;
 - **concurrence réglable**, **limitation de débit** globale, **nouvelles tentatives** avec
   temporisation exponentielle, détection des transferts bloqués, vérification de l'espace
   disque ;
@@ -148,15 +158,30 @@ disque, nettoyage) pour un usage domestique.
 Se positionner sans désynchroniser, surtout sur un fichier lu à distance :
 
 - **vidéo recopiée** (remultiplexage) : elle repart forcément de l'image clé qui précède la
-  position demandée. L'audio repart du même instant (`-noaccurate_seek`) : le MP4 fragmenté
-  fait démarrer chaque piste à zéro, un audio coupé plus tard que l'image serait joué en
-  avance (et les sous-titres, calés sur l'horloge, avec lui) ;
-- l'instant exact de cette image clé est donné par **ffmpeg lui-même**, dans le même
-  passage (seconde sortie `framecrc` du premier paquet vidéo, sur stderr) : pas de seconde
-  analyse du fichier distant à chaque positionnement, et une valeur toujours juste ;
-- trous de l'audio source comblés par du silence (`aresample=async=1`), décalages de
-  composition négatifs (B-frames : première image affichée à 0 comme l'audio), fragments
-  de 2 s pour démarrer vite ;
+  position demandée. L'audio repart du même instant (`-noaccurate_seek`) ;
+- l'instant de cette image clé est donné par **ffmpeg lui-même**, dans le même passage
+  (seconde sortie `framecrc` du premier paquet vidéo, sur stderr) : pas de seconde analyse
+  du fichier distant à chaque positionnement. Le temps du flux part de l'instant de
+  **décodage** de cette image (un peu avant son affichage quand la vidéo a des images B) :
+  c'est lui qui sert d'origine à l'horloge du lecteur, et donc aux sous-titres ;
+- **une piste qui commence après l'autre** : fréquent dans les releases MULTi, où la VF
+  vient d'une autre source et est recalée par un retard dans le MKV. L'en-tête du MP4
+  fragmenté est écrit avec le premier fragment (`delay_moov`, pas `empty_moov`) : il peut
+  ainsi décrire ce décalage (liste d'éditions). Avec `empty_moov`, le premier échantillon
+  de chaque piste était ramené à 0 et suivi d'un trou ; le navigateur referme les trous de
+  l'audio, le son était donc **en avance de tout le retard** (mesuré dans Chromium : 1 s
+  pour une VF retardée d'1 s) jusqu'au premier positionnement. Les décalages de composition
+  négatifs (`negative_cts_offsets`) ont été retirés pour la même raison : avec des images B,
+  ils avançaient le son d'une image (42 ms à 24 i/s) ;
+- au début du fichier, l'audio converti démarre exactement avec la première image
+  (`aresample=…:first_pts=…`) : complété par du silence s'il commence après, coupé s'il
+  commence avant. Un audio qu'on aurait pu recopier mais qui ne démarre pas avec l'image
+  est converti ;
+- `playback-sync.integration.test.ts` vérifie avec le vrai ffmpeg (VF retardée, vidéo
+  retardée, positionnement, pistes alignées) que l'audio produit n'a pas de trou et que le
+  son tombe sur la bonne image à moins de 30 ms ;
+- trous de l'audio source comblés par du silence (`aresample=async=1`), fragments de 2 s
+  pour démarrer vite ;
 - un seul ffmpeg par session, l'ancien est arrêté **et attendu** avant le suivant ; un
   démarrage raté est retenté (la source refuse parfois un instant) et n'envoie jamais de
   flux vide ; ffmpeg se reconnecte aussi aux réponses 5xx du relais ;
@@ -173,7 +198,8 @@ Autres points :
   releases MULTi, et on peut changer de piste pendant la lecture ;
 - **sous-titres** intégrés (MKV) ou externes (`.srt`, `.vtt`, `.ass`) convertis en WebVTT,
   encodage Windows‑1252 détecté, affichage personnalisé et synchronisé dans le lecteur ;
-- **sous-titres en ligne** (voir ci-dessous), décalage réglable pendant la lecture (G / H) ;
+- **sous-titres en ligne** (voir ci-dessous), **recalage** automatique ou à la main (voir
+  « Recalage des sous-titres ») ;
 - un fichier déjà téléchargé est toujours lu **depuis la copie locale** ;
 - **reprise là où on s'était arrêté**, rangée « Reprendre la lecture », **épisode suivant**
   automatique, raccourcis clavier, plein écran, repli automatique direct → remux → conversion
@@ -196,7 +222,9 @@ Autres points :
   interrogé par le nom du fichier ;
 - l'**empreinte OpenSubtitles** (taille + 64 premiers et 64 derniers Kio) est calculée même
   sur un fichier lu à distance : deux petites requêtes `Range` successives ;
-- classement : langue préférée, puis fichier exact, complets avant « forcés », puis les plus
+- classement : langue préférée, puis fichier exact, puis **release la plus proche** du
+  fichier (même équipe, même source, même résolution ; une édition différente, version
+  longue ou director's cut, est pénalisée), complets avant « forcés », puis les plus
   téléchargés ; 8 résultats au plus par langue ;
 - un sous-titre téléchargé est **gardé sur disque** : OpenSubtitles compte chaque
   téléchargement dans un quota quotidien (plus élevé avec un compte) ;
@@ -204,6 +232,37 @@ Autres points :
   sans bloquer l'autre ;
 - seuls l'identifiant IMDb, le nom, la taille et l'empreinte du fichier quittent la machine, et
   seulement lors d'une recherche ; liste d'extensions vide et pas de clé : aucun service contacté.
+
+### Recalage des sous-titres
+
+Des sous-titres trouvés en ligne sont souvent faits pour une **autre version** du film :
+décalage constant (logo, générique de durée différente), ou dérive progressive quand la
+cadence diffère (25 i/s accéléré à la télévision européenne contre 23,976 : 4 %, environ
+5 minutes à la fin d'un film de 2 h). Modèle : instant d'affichage = vitesse × instant prévu
+
+- décalage, **gardé par fichier et par piste** (base de données).
+
+* **Automatique** (`subtitle-alignment.ts`, sur le principe de ffsubsync et alass) : la
+  référence et les sous-titres deviennent deux signaux « on parle / on ne parle pas » ; on
+  cherche le décalage (±2 min) et la vitesse (rapports de cadences courants) qui les font
+  coïncider, au pas de 100 ms puis affiné au centième ;
+  - référence : une piste déjà calée obtenue sans rien télécharger (piste intégrée d'un
+    fichier local ou déjà extraite, sous-titres faits pour ce fichier précis), sinon **la
+    voix** dans 4 extraits de 20 à 60 s là où les répliques sont denses (voie centrale des
+    pistes multicanal, bande de la voix ; ~200 Mo lus au plus sur un fichier distant) ;
+  - indice de parole relatif au bruit de fond local et continu (pas de seuil) : tient sous
+    la musique et les effets ;
+  - appliqué seulement si le résultat est sûr : nette avance sur les autres décalages, et
+    plusieurs passages qui indiquent le même ; sinon rien n'est changé (échec retenu une
+    semaine) ; la cadence déclarée par OpenSubtitles favorise la vitesse attendue ;
+  - lancé d'office pour des sous-titres en ligne qui ne sont pas faits pour ce fichier précis,
+    ou un fichier externe ; à la demande depuis le menu pour les autres ; notification
+    « Sous-titres resynchronisés … · Annuler » ;
+* **À la main** : G / H décalent de 0,25 s ; **Maj+G** cale la réplique suivante sur
+  l'instant présent (sous-titres en retard sur la voix), **Maj+H** la précédente (en avance).
+  Deux répliques calées à plus de 2 minutes d'écart corrigent aussi la vitesse, arrondie au
+  rapport de cadences le plus proche. Menu : « Annuler le recalage » ;
+* les notifications du lecteur s'affichent en haut de l'image, pas sur la barre de commandes.
 
 ## 8. Métadonnées : TMDB
 

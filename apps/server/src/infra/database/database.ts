@@ -162,6 +162,10 @@ export class KeyValueCache {
       .run(key, JSON.stringify(value), Date.now() + ttlMs);
   }
 
+  delete(key: string): void {
+    this.db.prepare('DELETE FROM kv_cache WHERE key = ?').run(key);
+  }
+
   purgeExpired(): void {
     this.db.prepare('DELETE FROM kv_cache WHERE expires_at < ?').run(Date.now());
   }

@@ -100,6 +100,12 @@ async function streamOrigin(session: PlaybackSession, streamId: string) {
   return { status: response.status, body: (await response.json()) as Record<string, unknown> };
 }
 
+/** Départ annoncé : l'instant de décodage de l'image clé, au plus 4 images (24 i/s) avant elle. */
+function expectKeyframeStart(start: unknown, keyframe: number) {
+  expect(start).toBeLessThanOrEqual(keyframe + 0.001);
+  expect(start).toBeGreaterThan(keyframe - 4 / 24 - 0.001);
+}
+
 describe.skipIf(!hasFfmpeg)('flux relancé (ffmpeg)', () => {
   beforeAll(async () => {
     workDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lumiere-stream-'));
@@ -145,7 +151,8 @@ describe.skipIf(!hasFfmpeg)('flux relancé (ffmpeg)', () => {
     expect(streamed.head.subarray(4, 8).toString()).toBe('ftyp');
     const result = await streamOrigin(session, 'a1');
     expect(result.status).toBe(200);
-    expect(result.body.start).toBeCloseTo(30, 1);
+    // Image clé à 30 s ; le flux compte son temps depuis son décodage (images B : un peu avant).
+    expectKeyframeStart(result.body.start, 30);
   }, 30_000);
 
   it('un nouveau positionnement remplace le flux en cours', async () => {
@@ -155,7 +162,7 @@ describe.skipIf(!hasFfmpeg)('flux relancé (ffmpeg)', () => {
     await first.catch(() => undefined);
     expect(second.status).toBe(200);
     expect(second.head.subarray(4, 8).toString()).toBe('ftyp');
-    expect((await streamOrigin(session, 'b2')).body.start).toBeCloseTo(40, 1);
+    expectKeyframeStart((await streamOrigin(session, 'b2')).body.start, 40);
   }, 30_000);
 
   it('refuse la reprise au milieu d’un flux produit à la volée', async () => {
