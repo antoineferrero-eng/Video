@@ -231,6 +231,19 @@ describe('client de l’extension', () => {
     expect(fresh.limited).toBe(false);
   });
 
+  it('garde les liens déjà obtenus quand un renouvellement tombe sur la limite', async () => {
+    streams = { tt3: [{ name: 'x', url: 'https://w.example/Film.mkv?jeton=1' }] };
+    const addon = new StremioAddon(settings, new KeyValueCache(db), silent);
+    const path = '/@stremio/movie/tt3/Film.mkv';
+    await addon.resolve(path);
+    streams = { tt3: [{ name: '111477', title: '⚠️ Slow down — rate limit reached' }] };
+    const refreshed = await addon.resolve(path, { refresh: true });
+    expect(refreshed.url).toBe('https://w.example/Film.mkv?jeton=1');
+    const result = await addon.files({ kind: 'movie', id: 'tt3' });
+    expect(result.limited).toBe(true);
+    expect(result.files.map((file) => file.path)).toEqual([path]);
+  });
+
   it('redemande le lien d’un fichier absent de la réponse gardée', async () => {
     streams = { tt2: [{ name: 'x', url: 'https://w.example/Old.mkv' }] };
     const addon = new StremioAddon(settings, new KeyValueCache(db), silent);

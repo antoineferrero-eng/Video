@@ -3,6 +3,7 @@ import type { ClientCapabilities } from '@lumiere/shared';
 import type { ProbeResult, ProbeStream } from '../src/modules/playback/ffmpeg';
 import { buildStreamArgs } from '../src/modules/playback/ffmpeg-args';
 import { planPlayback, type PlanOptions } from '../src/modules/playback/planner';
+import { StreamOriginReader } from '../src/modules/playback/stream-origin';
 import { decodeText, srtToVtt } from '../src/modules/playback/subtitles';
 
 const CHROME: ClientCapabilities = {
@@ -171,9 +172,75 @@ describe('buildStreamArgs', () => {
     expect(joined).toContain('-c:v libx264');
     expect(joined).toContain('tonemap=tonemap=hable');
     expect(joined).toContain("scale=-2:'min(1080,ih)'");
-    expect(joined).toContain('-c:a aac -ac 2');
-    expect(joined).toContain('-movflags frag_keyframe+empty_moov+default_base_moof pipe:1');
+    expect(joined).toContain('-af aresample=async=1 -c:a aac -ac 2');
+    expect(joined).toContain(
+      '-movflags frag_keyframe+empty_moov+default_base_moof+negative_cts_offsets pipe:1',
+    );
     expect(args).toContain('-user_agent');
+    expect(args).toContain('-reconnect_on_http_error');
+    // Vidéo réencodée : positionnement à l'image près, pas de seconde sortie.
+    expect(args).not.toContain('-noaccurate_seek');
+    expect(args).not.toContain('framecrc');
+  });
+
+  it('en recopie vidéo, fait repartir l’audio de l’image clé et en signale l’instant', () => {
+    const plan = planPlayback(
+      probe('matroska,webm', [
+        stream({ index: 0, type: 'video', codec: 'h264', profile: 'High' }),
+        stream({ index: 1, type: 'audio', codec: 'ac3', channels: 6 }),
+      ]),
+      CHROME,
+      options(),
+    );
+    expect(plan.mode).toBe('remux');
+    const args = buildStreamArgs({
+      input: '/films/film.mkv',
+      isRemote: false,
+      userAgent: 'UA',
+      start: 37,
+      plan,
+      preset: 'balanced',
+      maxHeight: 1080,
+      canTonemap: false,
+    });
+    const joined = args.join(' ');
+    expect(joined).toContain('-ss 37.000 -noaccurate_seek -i /films/film.mkv');
+    expect(joined).toContain('-c:v copy');
+    expect(joined).toContain('pipe:1 -map 0:0 -c copy -frames:v 1 -f framecrc pipe:2');
+    expect(args).not.toContain('-user_agent');
+  });
+});
+
+describe('StreamOriginReader', () => {
+  const framecrc = [
+    '#extradata 0:       45, 0x2a120e36',
+    '#software: Lavf60.16.100',
+    '#tb 0: 1/1000',
+    '#media_type 0: video',
+    '#codec_id 0: h264',
+    '0,      -7078,      -6995,       41,    11245, 0x9dc2f744',
+    '',
+  ].join('\n');
+
+  it('déduit le départ réel du premier paquet vidéo, même reçu par morceaux', () => {
+    const origins: number[] = [];
+    const reader = new StreamOriginReader(37, (origin) => origins.push(origin));
+    for (let index = 0; index < framecrc.length; index += 7) {
+      reader.push(framecrc.slice(index, index + 7));
+    }
+    expect(origins).toHaveLength(1);
+    expect(origins[0]).toBeCloseTo(30.005, 3);
+    expect(reader.lastError).toBeNull();
+  });
+
+  it('tient compte de la base de temps et garde le journal d’erreurs', () => {
+    const origins: number[] = [];
+    const reader = new StreamOriginReader(100, (origin) => origins.push(origin));
+    reader.push('[http @ 0x1] HTTP error 502 Bad Gateway\n#tb 0: 1/90000\n');
+    reader.push('0,    -450000,    -450000,     3754,    40000, 0x00000001\n');
+    reader.push('0,    -446246,    -442492,     3754,    10000, 0x00000002\n');
+    expect(origins).toEqual([95]);
+    expect(reader.lastError).toBe('[http @ 0x1] HTTP error 502 Bad Gateway');
   });
 });
 

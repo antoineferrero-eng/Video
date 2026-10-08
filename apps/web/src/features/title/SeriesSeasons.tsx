@@ -1,7 +1,13 @@
 import { ChevronDown, Download, Loader2, Play, Tv } from 'lucide-react';
 import { useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router';
-import type { EpisodeEntry, MediaRef, SeasonEntry, TitleDetails } from '@lumiere/shared';
+import type {
+  EpisodeEntry,
+  MediaRef,
+  RemoteFile,
+  SeasonEntry,
+  TitleDetails,
+} from '@lumiere/shared';
 import { errorMessage } from '../../api/client';
 import { useEnqueueTitle, useEpisodeFiles } from '../../api/queries';
 import { ReleaseBadges } from '../../components/media/ReleaseBadges';
@@ -125,6 +131,18 @@ function SeasonHeader({
   );
 }
 
+/**
+ * Progression du visionnage collée au bas de la vignette. Le positionnement est porté par un
+ * conteneur : sur la barre elle-même, `absolute` serait supplanté par son `relative`.
+ */
+function StillProgress({ file }: { file: RemoteFile }) {
+  return (
+    <div className="absolute inset-x-0 bottom-0">
+      <WatchProgress file={file} className="rounded-none" />
+    </div>
+  );
+}
+
 /** Vignette d'un épisode (image TMDB, sinon dégradé et numéro). */
 function EpisodeStill({
   episode,
@@ -207,9 +225,7 @@ function OnDemandEpisodeRow({
         seriesTitle={seriesTitle}
         onPlay={() => navigate(playerUrl(media))}
       >
-        {known && (
-          <WatchProgress file={known} className="absolute inset-x-0 bottom-0 rounded-none" />
-        )}
+        {known && <StillProgress file={known} />}
       </EpisodeStill>
 
       <div className="min-w-0 flex-1 px-1 sm:px-0">
@@ -358,7 +374,7 @@ function EpisodeRow({
         seriesTitle={seriesTitle}
         onPlay={() => navigate(playerUrl(mediaRefFor(file)))}
       >
-        <WatchProgress file={file} className="absolute inset-x-0 bottom-0 rounded-none" />
+        <StillProgress file={file} />
       </EpisodeStill>
 
       <div className="min-w-0 flex-1 px-1 sm:px-0">

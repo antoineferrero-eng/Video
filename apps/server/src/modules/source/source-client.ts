@@ -55,6 +55,12 @@ const LISTING_TTL_MS = 10 * 60_000;
 const LISTING_TIMEOUT_MS = 90_000;
 const HEADERS_TIMEOUT_MS = 30_000;
 const MAX_TEXT_BYTES = 8 * 1024 * 1024;
+/**
+ * Délai minimal entre deux renouvellements du lien d'un même fichier. Chaque demande consomme
+ * des jetons de la réserve de l'extension : un refus passager de l'hôte (connexions
+ * simultanées pendant un positionnement…) ne doit pas la vider.
+ */
+const LINK_REFRESH_COOLDOWN_MS = 60_000;
 
 /**
  * Client HTTP de la source (index de fichiers). Toutes les URL sont construites à partir
@@ -71,6 +77,8 @@ export class SourceClient {
   private readonly preferred = new Map<string, TransportName>();
   private impersonationMissingWarned = false;
   private readonly addon: StremioAddon | null;
+  /** Dernier renouvellement du lien de chaque fichier de l'extension. */
+  private readonly linkRefreshes = new Map<string, number>();
 
   constructor(
     private readonly settings: SettingsService,
@@ -346,6 +354,7 @@ export class SourceClient {
       const link = await addon.resolve(remotePath);
       const response = await this.fetchLink(link, { method, range, signal });
       if (![401, 403, 404, 410].includes(response.status)) return response;
+      if (!this.mayRefreshLink(remotePath)) return response;
       // Lien expiré ou refusé : on en demande un nouveau à l'extension.
       await response.body?.cancel().catch(() => undefined);
       const fresh = await addon.resolve(remotePath, { refresh: true });
@@ -357,6 +366,16 @@ export class SourceClient {
     } finally {
       clearTimeout(timer);
     }
+  }
+
+  private mayRefreshLink(remotePath: string): boolean {
+    const now = Date.now();
+    if (now - (this.linkRefreshes.get(remotePath) ?? 0) < LINK_REFRESH_COOLDOWN_MS) return false;
+    for (const [path, at] of this.linkRefreshes) {
+      if (now - at >= LINK_REFRESH_COOLDOWN_MS) this.linkRefreshes.delete(path);
+    }
+    this.linkRefreshes.set(remotePath, now);
+    return true;
   }
 
   private async fetchLink(

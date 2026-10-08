@@ -6,6 +6,7 @@ import { MediaRefSchema } from '../shared-schemas';
 
 const CodecList = z.array(z.string().max(20)).max(30);
 const SessionParams = z.object({ id: z.uuid() });
+const StreamId = z.string().regex(/^[\w-]{1,64}$/);
 
 export function registerPlaybackRoutes(server: FastifyInstance, { playback }: Container): void {
   const app = server.withTypeProvider<ZodTypeProvider>();
@@ -34,22 +35,20 @@ export function registerPlaybackRoutes(server: FastifyInstance, { playback }: Co
     url: '/playback/sessions/:id/stream',
     schema: {
       params: SessionParams,
-      querystring: z.object({ start: z.coerce.number().min(0).max(1e7).default(0) }),
+      querystring: z.object({
+        start: z.coerce.number().min(0).max(1e7).default(0),
+        stream: StreamId.optional(),
+      }),
     },
     handler: async (request, reply) =>
-      playback.stream(request.params.id, request.query.start, request, reply),
+      playback.stream(request.params.id, request.query.start, request.query.stream, request, reply),
   });
 
   app.get(
-    '/playback/sessions/:id/seek',
-    {
-      schema: {
-        params: SessionParams,
-        querystring: z.object({ position: z.coerce.number().min(0).max(1e7) }),
-      },
-    },
+    '/playback/sessions/:id/streams/:streamId/origin',
+    { schema: { params: SessionParams.extend({ streamId: StreamId }) } },
     async (request) => ({
-      start: await playback.resolveSeek(request.params.id, request.query.position),
+      start: await playback.streamOrigin(request.params.id, request.params.streamId),
     }),
   );
 

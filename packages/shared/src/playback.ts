@@ -51,7 +51,10 @@ export interface SubtitleTrackInfo {
 export interface PlaybackSession {
   sessionId: string;
   mode: PlaybackMode;
-  /** URL du flux ; pour les modes `remux`/`transcode`, ajouter `?start=<secondes>` pour se positionner. */
+  /**
+   * URL du flux ; pour les modes `remux`/`transcode`, ajouter `?start=<secondes>&stream=<id>`
+   * pour se positionner, puis lire l'instant réel de départ sur `…/streams/<id>/origin`.
+   */
   streamUrl: string;
   mimeType: string;
   seek: 'native' | 'restart';

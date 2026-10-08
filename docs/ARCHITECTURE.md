@@ -170,7 +170,9 @@ au redémarrage, les téléchargements interrompus repartent de l'octet où ils 
    - remux/conversion : ffmpeg produit un MP4 fragmenté à partir de `?start=<secondes>` ;
      un fichier distant est lu par le **relais local** `/api/internal/source` (jeton aléatoire),
      pour que ffmpeg passe par la même connexion que le reste de l'application ;
-     `GET …/seek?position=` donne l'image clé réelle pour rester synchronisé.
+     chaque chargement porte un identifiant (`&stream=<id>`) et
+     `GET …/streams/:id/origin` donne l'instant réel de départ (image clé atteinte en
+     recopie vidéo, lue par ffmpeg dans le même passage) pour rester synchronisé.
 4. Sous-titres : `GET …/subtitles/:piste` renvoie du WebVTT (extraction ffmpeg ou conversion
    SRT/ASS), affiché par le lecteur.
 5. La position est enregistrée régulièrement (`POST …/progress`) : reprise, « Reprendre la

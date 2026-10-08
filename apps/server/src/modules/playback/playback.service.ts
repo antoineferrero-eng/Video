@@ -1,8 +1,9 @@
-import { spawn } from 'node:child_process';
+import { spawn, type ChildProcessByStdio } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
+import type { Readable } from 'node:stream';
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import type {
   AudioTrackInfo,
@@ -13,7 +14,7 @@ import type {
   ProgressUpdate,
 } from '@lumiere/shared';
 import type { AppConfig } from '../../config/env';
-import { TtlCache } from '../../core/async';
+import { TtlCache, sleep } from '../../core/async';
 import {
   AppError,
   BadRequestError,
@@ -52,7 +53,13 @@ import { buildStreamArgs, buildSubtitleConvertArgs, buildSubtitleExtractArgs } f
 import { planPlayback, type PlaybackPlan } from './planner';
 import type { ProgressRepository } from './progress.repository';
 import { proxyRemoteFile, sendLocalFile } from './streaming';
-import type { PlaybackSessionState, PlaybackSessions, SubtitleSource } from './sessions';
+import type {
+  PlaybackSessionState,
+  PlaybackSessions,
+  StreamOrigin,
+  SubtitleSource,
+} from './sessions';
+import { StreamOriginReader } from './stream-origin';
 import { TEXT_SUBTITLE_CODECS, decodeText, normalizeVtt, srtToVtt } from './subtitles';
 
 interface ResolvedMedia {
@@ -69,6 +76,21 @@ interface ResolvedMedia {
 }
 
 const MAX_SUBTITLE_BYTES = 20 * 1024 * 1024;
+/** Démarrages de ffmpeg tentés pour un même flux (source qui refuse un instant…). */
+const STREAM_ATTEMPTS = 3;
+const STREAM_RETRY_DELAY_MS = 1000;
+const STREAM_ORIGIN_TIMEOUT_MS = 60_000;
+
+/** Demande de flux abandonnée par le lecteur ou remplacée par un positionnement plus récent. */
+function replaced(): AppError {
+  return new AppError(409, 'STREAM_REPLACED', 'Flux remplacé par une demande plus récente.');
+}
+
+/** Premier octet demandé par un en-tête `Range` (0 sans en-tête ou s'il est illisible). */
+function rangeStart(header: string | undefined): number {
+  const match = /^bytes=(\d+)-/.exec(header ?? '');
+  return match ? Number(match[1]) : 0;
+}
 
 function channelsLabel(channels: number | null): string | null {
   if (!channels) return null;
@@ -536,6 +558,7 @@ export class PlaybackService {
   async stream(
     sessionId: string,
     start: number,
+    streamId: string | undefined,
     request: FastifyRequest,
     reply: FastifyReply,
   ): Promise<FastifyReply> {
@@ -555,75 +578,146 @@ export class PlaybackService {
       );
     }
 
-    this.sessions.stopProcess(session);
+    reply.header('cache-control', 'no-store').header('accept-ranges', 'none');
+    // Flux produit à la volée : il ne reprend pas au milieu. Le navigateur qui en redemande la
+    // suite reçoit un refus net, et le lecteur relance le flux à la bonne position.
+    if (rangeStart(request.headers.range) > 0) return reply.code(416).send();
+    if (request.method === 'HEAD') return reply.header('content-type', 'video/mp4').send();
+
+    const generation = ++session.streamGeneration;
+    const origin = streamId ? this.sessions.origin(session, streamId) : null;
+    const startAt = Math.max(0, start);
+    let closed = false;
+    const abandoned = () => {
+      const error = replaced();
+      // Le lecteur qui attend encore ce départ ne doit pas garder sa requête ouverte.
+      if (origin && !origin.settled) origin.reject(error);
+      return error;
+    };
+    reply.raw.on('close', () => {
+      closed = true;
+      if (session.streamGeneration === generation) void this.sessions.stopProcess(session);
+    });
+
+    let failure = 'erreur inconnue';
+    for (let attempt = 1; attempt <= STREAM_ATTEMPTS; attempt += 1) {
+      // Un seul ffmpeg par session : l'ancien est arrêté (et sa connexion à la source fermée).
+      await this.sessions.stopProcess(session);
+      if (attempt > 1) await sleep(STREAM_RETRY_DELAY_MS * (attempt - 1));
+      if (closed || session.streamGeneration !== generation) throw abandoned();
+      const started = await this.startTranscoder(session, startAt, origin);
+      if (closed || session.streamGeneration !== generation) {
+        if (started.ok && started.child.exitCode === null) started.child.kill('SIGKILL');
+        throw abandoned();
+      }
+      if (started.ok) {
+        return reply
+          .header('content-type', 'video/mp4')
+          .header('x-stream-start', String(startAt))
+          .send(started.child.stdout);
+      }
+      failure = started.error;
+      this.logger.warn(
+        { session: session.id, attempt, start: startAt, detail: failure },
+        'Démarrage de la conversion impossible',
+      );
+    }
+    const error = new AppError(
+      502,
+      'TRANSCODE_FAILED',
+      `La conversion vidéo a échoué : ${failure}`,
+    );
+    if (origin && !origin.settled) origin.reject(error);
+    throw error;
+  }
+
+  /**
+   * Lance ffmpeg et attend ses premiers octets : un processus qui s'arrête avant d'avoir
+   * produit quoi que ce soit (source injoignable…) est un échec, jamais un flux vide.
+   */
+  private async startTranscoder(
+    session: PlaybackSessionState,
+    start: number,
+    origin: StreamOrigin | null,
+  ): Promise<
+    | { ok: true; child: ChildProcessByStdio<null, Readable, Readable> }
+    | { ok: false; error: string }
+  > {
     const settings = this.settings.get();
-    // En recopie, une marge infime évite de retomber sur l'image clé précédente par arrondi.
-    const effectiveStart =
-      session.plan.mode === 'remux' && start > 0 ? start + 0.01 : Math.max(0, start);
     const args = buildStreamArgs({
       input: session.input,
       isRemote: session.isRemote,
       userAgent: this.source.userAgent,
-      start: effectiveStart,
+      start,
       plan: session.plan,
       preset: settings.transcodePreset,
       maxHeight: settings.maxTranscodeHeight,
       canTonemap: this.ffmpeg.info.hasZscale,
     });
+    const copiedVideo = session.plan.output?.video === 'copy' && session.plan.videoStream !== null;
     const child = spawn(this.ffmpeg.ffmpegPath, args, {
       stdio: ['ignore', 'pipe', 'pipe'],
       windowsHide: true,
     });
     session.process = child;
-    let stderr = '';
-    child.stderr.setEncoding('utf8').on('data', (chunk: string) => {
-      stderr = (stderr + chunk).slice(-4000);
+    const reader = new StreamOriginReader(start, (value) => {
+      if (origin && !origin.settled) origin.resolve(value);
     });
+    child.stderr.setEncoding('utf8').on('data', (chunk: string) => reader.push(chunk));
 
     const ready = await new Promise<boolean>((resolve) => {
-      child.stdout.once('readable', () => resolve(true));
+      const onReadable = () => {
+        const chunk: unknown = child.stdout.read();
+        if (chunk === null) {
+          // Fin de flux sans données : ffmpeg s'est arrêté.
+          resolve(false);
+          return;
+        }
+        child.stdout.unshift(chunk as Buffer);
+        resolve(true);
+      };
+      child.stdout.once('readable', onReadable);
       child.once('error', () => resolve(false));
       child.once('close', () => resolve(false));
     });
     if (!ready) {
-      const detail = stderr.trim().split('\n').at(-1) ?? 'erreur inconnue';
-      this.logger.warn({ session: session.id, detail }, 'Conversion impossible');
-      throw new AppError(500, 'TRANSCODE_FAILED', `La conversion vidéo a échoué : ${detail}`);
+      if (child.exitCode === null) child.kill('SIGKILL');
+      return { ok: false, error: reader.lastError ?? 'ffmpeg s’est arrêté sans rien produire' };
     }
-
-    reply.raw.on('close', () => {
-      if (child.exitCode === null && !child.killed) child.kill('SIGKILL');
-      if (session.process === child) session.process = null;
-    });
+    // Vidéo réencodée : ffmpeg se positionne à l'image près, le flux part de la position demandée.
+    if (origin && !origin.settled && !copiedVideo) origin.resolve(start);
     child.on('close', (code) => {
-      if (code && code !== 255 && !child.killed) {
+      if (code && code !== 255 && session.process === child) {
         this.logger.warn(
-          { session: session.id, code, detail: stderr.trim().split('\n').at(-1) },
+          { session: session.id, code, detail: reader.lastError },
           'ffmpeg terminé en erreur',
         );
       }
+      // Départ jamais signalé (sortie framecrc absente) : la position demandée reste la meilleure estimation.
+      if (origin && !origin.settled) origin.resolve(start);
     });
-    return reply
-      .header('content-type', 'video/mp4')
-      .header('cache-control', 'no-store')
-      .header('x-stream-start', String(start))
-      .send(child.stdout);
+    return { ok: true, child };
   }
 
-  /**
-   * Position de départ effective d'un flux `remux` (image clé précédente) ;
-   * en transcodage, ffmpeg se positionne à l'image près.
-   */
-  async resolveSeek(sessionId: string, position: number): Promise<number> {
+  /** Instant réel où démarre le flux `streamId` (image clé atteinte en recopie vidéo). */
+  async streamOrigin(sessionId: string, streamId: string): Promise<number> {
     const session = this.sessions.get(sessionId);
-    const target = Math.max(0, position);
-    if (session.plan.mode !== 'remux' || target === 0 || !session.plan.videoStream) return target;
-    const keyframe = await this.ffmpeg
-      .keyframeBefore(session.input, session.plan.videoStream.index, target, {
-        userAgent: this.source.userAgent,
-      })
-      .catch(() => null);
-    return keyframe !== null && keyframe <= target ? Math.max(0, keyframe) : target;
+    const origin = this.sessions.origin(session, streamId);
+    let timer: NodeJS.Timeout | undefined;
+    const timeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(
+        () =>
+          reject(
+            new AppError(504, 'STREAM_ORIGIN_TIMEOUT', 'Le flux vidéo n’a pas encore démarré.'),
+          ),
+        STREAM_ORIGIN_TIMEOUT_MS,
+      );
+    });
+    try {
+      return await Promise.race([origin.promise, timeout]);
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   stopSession(sessionId: string): void {

@@ -32,6 +32,19 @@ import { TrackMenu } from './TrackMenu';
 /** 0 = automatique, 1 = lecture directe désactivée (remultiplexage), 2 = conversion forcée. */
 type FallbackLevel = 0 | 1 | 2;
 
+/** Les positionnements rapprochés (±10 s répétés) sont regroupés en une seule relance du flux. */
+const SEEK_DEBOUNCE_MS = 350;
+/** Reprises automatiques d'un flux interrompu, au plus MAX_RECOVERIES par fenêtre glissante. */
+const MAX_RECOVERIES = 3;
+const RECOVERY_WINDOW_MS = 60_000;
+
+let streamCounter = 0;
+/** Identifiant d'un chargement du flux (le serveur y rattache l'instant réel de départ). */
+function newStreamId(): string {
+  streamCounter += 1;
+  return `${Date.now().toString(36)}-${streamCounter}`;
+}
+
 const MODE_LABELS: Record<PlaybackSession['mode'], string> = {
   direct: 'Lecture directe',
   remux: 'Remultiplexé',
@@ -93,6 +106,19 @@ function Player({ media, initialStart }: { media: MediaRef; initialStart: number
   const [resumeNotice, setResumeNotice] = useState<number | null>(null);
 
   const pendingSeek = useRef<number | null>(null);
+  /** Flux affiché : les événements d'un flux remplacé sont ignorés. */
+  const streamId = useRef<string | null>(null);
+  /** Position visée par un positionnement pas encore lancé (regroupement des appuis). */
+  const seekTarget = useRef<number | null>(null);
+  const seekFrom = useRef(0);
+  const seekTimer = useRef<number | undefined>(undefined);
+  /** Le flux de la session a déjà été lu : une erreur est alors une coupure, pas un format illisible. */
+  const hasPlayed = useRef(false);
+  const recoveries = useRef<number[]>([]);
+  /** Raison de l'échec du dernier flux, donnée par le serveur. */
+  const streamFailure = useRef<string | null>(null);
+  /** Demande en cours de l'instant de départ (annulée quand le flux est remplacé). */
+  const originRequest = useRef<AbortController | null>(null);
   const timeRef = useRef(0);
   const sessionRef = useRef<PlaybackSession | null>(null);
   const hideTimer = useRef<number | undefined>(undefined);
@@ -123,36 +149,79 @@ function Player({ media, initialStart }: { media: MediaRef; initialStart: number
     [media],
   );
 
-  /** Charge le flux d'une session à une position donnée (seek natif ou relance du flux). */
-  const loadStream = useCallback(async (target: PlaybackSession, position: number) => {
+  /**
+   * Charge le flux d'une session à une position donnée (seek natif ou relance du flux).
+   * `forwardFrom` : position quittée par un saut en avant ; si l'image clé atteinte la
+   * précède (images clés très espacées), le flux est relancé plus loin.
+   */
+  const loadStream = useCallback(function load(
+    target: PlaybackSession,
+    position: number,
+    forwardFrom: number | null = null,
+  ) {
+    const id = newStreamId();
+    streamId.current = id;
+    originRequest.current?.abort();
+    originRequest.current = null;
+    seekTarget.current = null;
+    window.clearTimeout(seekTimer.current);
+    streamFailure.current = null;
     setBuffering(true);
     if (target.seek === 'native') {
       pendingSeek.current = position > 0 ? position : null;
       setOffset(0);
-      setSrc(target.streamUrl);
+      setSrc(`${target.streamUrl}?stream=${id}`);
       return;
     }
-    let startAt = 0;
-    if (position > 0) {
-      const resolved = await api<{ start: number }>(`/playback/sessions/${target.sessionId}/seek`, {
-        query: { position },
-      });
-      startAt = resolved.start;
-    }
+    const startAt = Math.max(0, position);
     pendingSeek.current = null;
+    // Départ provisoire : le serveur indique ensuite l'instant réel (image clé atteinte).
     setOffset(startAt);
     timeRef.current = startAt;
     setTime(startAt);
-    setSrc(`${target.streamUrl}?start=${startAt.toFixed(3)}&n=${Date.now()}`);
+    setSrc(`${target.streamUrl}?start=${startAt.toFixed(3)}&stream=${id}`);
+    const request = new AbortController();
+    originRequest.current = request;
+    api<{ start: number }>(`/playback/sessions/${target.sessionId}/streams/${id}/origin`, {
+      signal: request.signal,
+    })
+      .then(({ start }) => {
+        if (streamId.current !== id) return;
+        const further = startAt + (startAt - start) + 1;
+        if (
+          forwardFrom !== null &&
+          start <= forwardFrom + 1 &&
+          (target.duration === null || further < target.duration - 1)
+        ) {
+          load(target, further);
+          return;
+        }
+        setOffset(start);
+        const element = video.current;
+        const elapsed = element?.currentSrc.includes(id) ? element.currentTime : 0;
+        timeRef.current = start + elapsed;
+        setTime(start + elapsed);
+      })
+      .catch((failure: unknown) => {
+        if (streamId.current === id) streamFailure.current = errorMessage(failure);
+      });
   }, []);
 
   const activate = useCallback(
     async (fallback: FallbackLevel, audioTrack: number | null, position: number) => {
+      const previous = sessionRef.current;
       const next = await createSession(fallback, audioTrack);
       sessionRef.current = next;
+      hasPlayed.current = false;
       setSession(next);
       setLevel(fallback);
-      await loadStream(next, position);
+      loadStream(next, position);
+      // L'ancienne session (et sa conversion éventuelle) n'a plus d'usage.
+      if (previous && previous.sessionId !== next.sessionId) {
+        void api(`/playback/sessions/${previous.sessionId}`, { method: 'DELETE' }).catch(
+          () => undefined,
+        );
+      }
       return next;
     },
     [createSession, loadStream],
@@ -168,7 +237,7 @@ function Player({ media, initialStart }: { media: MediaRef; initialStart: number
         setSession(first);
         setSubtitleId(first.defaultSubtitleTrack);
         const position = initialStart ?? first.resumePosition;
-        await loadStream(first, position);
+        loadStream(first, position);
         if (initialStart === null && first.resumePosition > 0)
           setResumeNotice(first.resumePosition);
       } catch (failure) {
@@ -219,7 +288,7 @@ function Player({ media, initialStart }: { media: MediaRef; initialStart: number
   // -------------------------------------------------------------------------
 
   const seek = useCallback(
-    async (target: number) => {
+    (target: number) => {
       const current = sessionRef.current;
       const element = video.current;
       if (!current || !element) return;
@@ -231,15 +300,28 @@ function Player({ media, initialStart }: { media: MediaRef; initialStart: number
         element.currentTime = clamped;
         return;
       }
+      // Relance du flux (ffmpeg) : seule la dernière position d'une série d'appuis est chargée.
+      if (seekTarget.current === null) seekFrom.current = timeRef.current;
+      seekTarget.current = clamped;
       timeRef.current = clamped;
       setTime(clamped);
-      try {
-        await loadStream(current, clamped);
-      } catch (failure) {
-        toast.error('Positionnement impossible', { description: errorMessage(failure) });
-      }
+      window.clearTimeout(seekTimer.current);
+      seekTimer.current = window.setTimeout(() => {
+        const position = seekTarget.current;
+        if (sessionRef.current !== current || position === null) return;
+        const from = seekFrom.current;
+        loadStream(current, position, position > from ? from : null);
+      }, SEEK_DEBOUNCE_MS);
     },
     [loadStream],
+  );
+
+  useEffect(
+    () => () => {
+      window.clearTimeout(seekTimer.current);
+      originRequest.current?.abort();
+    },
+    [],
   );
 
   const togglePlay = useCallback(() => {
@@ -361,11 +443,11 @@ function Player({ media, initialStart }: { media: MediaRef; initialStart: number
           break;
         case 'ArrowRight':
           event.preventDefault();
-          void seek(timeRef.current + step);
+          seek(timeRef.current + step);
           break;
         case 'ArrowLeft':
           event.preventDefault();
-          void seek(timeRef.current - step);
+          seek(timeRef.current - step);
           break;
         case 'ArrowUp':
           event.preventDefault();
@@ -421,9 +503,14 @@ function Player({ media, initialStart }: { media: MediaRef; initialStart: number
   // Événements de l'élément <video>
   // -------------------------------------------------------------------------
 
+  /** L'élément <video> lit-il le dernier flux demandé (et non un flux remplacé) ? */
+  const isCurrent = (element: HTMLVideoElement) =>
+    streamId.current === null || element.currentSrc.includes(`stream=${streamId.current}`);
+
   const onTimeUpdate = () => {
     const element = video.current;
-    if (!element) return;
+    // Positionnement en attente, ou ancien flux : la position affichée reste celle visée.
+    if (!element || seekTarget.current !== null || !isCurrent(element)) return;
     const absolute = offset + element.currentTime;
     timeRef.current = absolute;
     setTime(absolute);
@@ -452,7 +539,7 @@ function Player({ media, initialStart }: { media: MediaRef; initialStart: number
     if (!current) return;
     const nextLevel: FallbackLevel | null = current.mode === 'direct' ? 1 : level < 2 ? 2 : null;
     if (nextLevel === null) {
-      setError(`Lecture impossible (${reason}).`);
+      setError(streamFailure.current ?? `Lecture impossible (${reason}).`);
       return;
     }
     toast.info(
@@ -467,9 +554,29 @@ function Player({ media, initialStart }: { media: MediaRef; initialStart: number
     }
   };
 
+  /** Relance le flux là où il s'est interrompu ; false quand les reprises récentes sont épuisées. */
+  const recover = () => {
+    const current = sessionRef.current;
+    if (!current) return false;
+    const now = Date.now();
+    recoveries.current = recoveries.current.filter((at) => now - at < RECOVERY_WINDOW_MS);
+    if (recoveries.current.length >= MAX_RECOVERIES) return false;
+    recoveries.current.push(now);
+    setBuffering(true);
+    toast.info('Lecture interrompue : reprise…', { id: 'player-recovery' });
+    window.setTimeout(() => {
+      if (sessionRef.current === current) loadStream(current, timeRef.current);
+    }, 1000 * recoveries.current.length);
+    return true;
+  };
+
   const onVideoError = () => {
-    const mediaError = video.current?.error;
-    if (!src || !mediaError) return;
+    const element = video.current;
+    const mediaError = element?.error;
+    if (!src || !element || !mediaError || !isCurrent(element)) return;
+    // Flux déjà lu : coupure (réseau, source, positionnement), on reprend au même endroit
+    // plutôt que de basculer vers une conversion plus lourde.
+    if (hasPlayed.current && recover()) return;
     void fallback(mediaError.message || `erreur ${mediaError.code}`);
   };
 
@@ -536,7 +643,10 @@ function Player({ media, initialStart }: { media: MediaRef; initialStart: number
             setControls(true);
           }}
           onWaiting={() => setBuffering(true)}
-          onPlaying={() => setBuffering(false)}
+          onPlaying={() => {
+            hasPlayed.current = true;
+            setBuffering(false);
+          }}
           onCanPlay={() => setBuffering(false)}
           onEnded={onEnded}
           onError={onVideoError}
@@ -627,12 +737,7 @@ function Player({ media, initialStart }: { media: MediaRef; initialStart: number
           lens={{ bezel: 20, strength: 16 }}
           className="absolute inset-x-3 bottom-[calc(env(safe-area-inset-bottom)+0.75rem)] rounded-panel px-4 pt-2.5 pb-2 sm:inset-x-6 sm:bottom-6 sm:px-5"
         >
-          <ProgressSlider
-            current={time}
-            duration={duration}
-            buffered={bufferedEnd}
-            onSeek={(value) => void seek(value)}
-          />
+          <ProgressSlider current={time} duration={duration} buffered={bufferedEnd} onSeek={seek} />
           <div className="mt-0.5 flex items-center gap-0.5 sm:gap-1">
             <PlayerIcon onClick={togglePlay} label={playing ? 'Pause' : 'Lecture'}>
               {playing ? (
@@ -641,10 +746,10 @@ function Player({ media, initialStart }: { media: MediaRef; initialStart: number
                 <Play className="size-6 fill-white" />
               )}
             </PlayerIcon>
-            <PlayerIcon onClick={() => void seek(time - 10)} label="Reculer de 10 secondes">
+            <PlayerIcon onClick={() => seek(timeRef.current - 10)} label="Reculer de 10 secondes">
               <RotateCcw className="size-5" />
             </PlayerIcon>
-            <PlayerIcon onClick={() => void seek(time + 10)} label="Avancer de 10 secondes">
+            <PlayerIcon onClick={() => seek(timeRef.current + 10)} label="Avancer de 10 secondes">
               <RotateCw className="size-5" />
             </PlayerIcon>
             {/* Sur mobile, le volume se règle avec les boutons de l'appareil. */}
@@ -729,7 +834,7 @@ function Player({ media, initialStart }: { media: MediaRef; initialStart: number
             icon={<RotateCcw className="size-3.5" />}
             onClick={() => {
               setResumeNotice(null);
-              void seek(0);
+              seek(0);
             }}
           >
             Depuis le début

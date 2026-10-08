@@ -2,8 +2,10 @@
  * Serveur d'index HTTP de démonstration : reproduit un « autoindex » nginx
  * (listing <pre> avec dates et tailles) et sert les fichiers avec prise en charge
  * des requêtes Range. Le débit peut être bridé pour observer la progression des
- * téléchargements (DEMO_THROTTLE_KBPS, 0 = illimité). Il héberge aussi un faux TMDB
- * (/tmdb/3) et une fausse extension Stremio (/stremio/manifest.json).
+ * téléchargements (DEMO_THROTTLE_KBPS, 0 = illimité) et le nombre de connexions
+ * simultanées à un même fichier limité, comme chez certains hébergeurs (DEMO_MAX_CONNECTIONS,
+ * 0 = sans limite ; au-delà, réponse 503). Il héberge aussi un faux TMDB (/tmdb/3) et une
+ * fausse extension Stremio (/stremio/manifest.json).
  *
  *   npm run serve -w @lumiere/demo-source
  */
@@ -21,6 +23,8 @@ export interface DemoServerOptions {
   port: number;
   host: string;
   throttleKbps: number;
+  /** Connexions simultanées acceptées par fichier (0 ou absent : sans limite). */
+  maxConnections?: number;
 }
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -83,6 +87,8 @@ function throttle(kbps: number): Transform {
 export function createDemoServer(options: DemoServerOptions): http.Server {
   const root = path.resolve(options.root);
   const addon = new FakeStremio(fakeStremioOptions(root));
+  /** Connexions en cours par fichier servi. */
+  const active = new Map<string, number>();
   return http.createServer((request, response) => {
     void (async () => {
       const url = new URL(request.url ?? '/', 'http://localhost');
@@ -117,6 +123,19 @@ export function createDemoServer(options: DemoServerOptions): http.Server {
         response.writeHead(200, { 'content-type': 'text/html' }).end(renderIndex(urlPath, target));
         return;
       }
+
+      const maxConnections = options.maxConnections ?? 0;
+      const connections = active.get(target) ?? 0;
+      if (maxConnections > 0 && connections >= maxConnections) {
+        response.writeHead(503, { 'retry-after': '1' }).end('Trop de connexions simultanées');
+        return;
+      }
+      active.set(target, connections + 1);
+      response.on('close', () => {
+        const remaining = (active.get(target) ?? 1) - 1;
+        if (remaining > 0) active.set(target, remaining);
+        else active.delete(target);
+      });
 
       const size = stats.size;
       const headers: Record<string, string | number> = {
@@ -163,6 +182,7 @@ if (isMain) {
     port: Number(process.env.DEMO_PORT ?? 8585),
     host: process.env.DEMO_HOST ?? '127.0.0.1',
     throttleKbps: Number(process.env.DEMO_THROTTLE_KBPS ?? 4096),
+    maxConnections: Number(process.env.DEMO_MAX_CONNECTIONS ?? 0),
   };
   if (!fs.existsSync(options.root)) {
     console.error(
