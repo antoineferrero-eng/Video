@@ -118,6 +118,16 @@ complète avec l'interface :
 - **reprise réelle** grâce aux requêtes HTTP `Range` (fichier `.part` complété, pas
   recommencé) — vérifié par un test qui coupe et reprend un transfert et compare l'empreinte
   SHA-256 ;
+- **plusieurs morceaux simultanés**, comme IDM ou aria2. Constat : un épisode qui venait à
+  3 Mo/s passait à 20-30 Mo/s une fois relancé après une lecture avec quelques sauts (donc
+  plusieurs connexions). Certains hôtes brident chaque connexion, ou servent lentement un
+  fichier tant qu'il n'est pas dans leur cache. Le moteur (`SegmentedTransfer`) part d'une
+  connexion et en ajoute une toutes les 4 s environ tant que la vitesse totale progresse
+  d'au moins 15 % (6 au plus, morceaux de 8 Mio au minimum) ; chaque nouvelle connexion
+  prend la moitié restante du plus gros morceau en cours. Un refus (429, 503…) ou des plages
+  ignorées ramènent au nombre qui fonctionnait, sans redemander de liens (jetons). Ce qui
+  est reçu est noté dans `<fichier>.part.json` : une reprise ne redemande que les trous ;
+  un `.part` d'avant (d'un seul tenant) reprend à sa fin ;
 - **concurrence réglable**, **limitation de débit** globale, **nouvelles tentatives** avec
   temporisation exponentielle, détection des transferts bloqués, vérification de l'espace
   disque ;

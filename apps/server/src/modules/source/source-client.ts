@@ -30,6 +30,11 @@ export interface OpenFileOptions {
   range?: string;
   signal?: AbortSignal;
   method?: 'GET' | 'HEAD';
+  /**
+   * Liens refusés redemandés aux extensions (par défaut). Non pour une connexion de plus d'un
+   * téléchargement : un hôte qui la refuse ne doit pas faire consommer de jetons.
+   */
+  refreshLinks?: boolean;
 }
 
 const HEADERS_TIMEOUT_MS = 30_000;
@@ -104,7 +109,12 @@ export class SourceClient {
     try {
       const links = await this.addons.links(remotePath);
       const response = await this.tryLinks(links, request, options.signal);
-      if (!REFUSED.includes(response.status) || !this.mayRefreshLink(remotePath)) return response;
+      if (
+        !REFUSED.includes(response.status) ||
+        options.refreshLinks === false ||
+        !this.mayRefreshLink(remotePath)
+      )
+        return response;
       // Liens expirés ou refusés : on en demande de nouveaux aux extensions.
       await response.body?.cancel().catch(() => undefined);
       const fresh = await this.addons.links(remotePath, { refresh: true });

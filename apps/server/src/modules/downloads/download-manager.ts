@@ -1,9 +1,5 @@
-import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
-import { Readable, Transform } from 'node:stream';
-import { pipeline } from 'node:stream/promises';
-import type { ReadableStream as NodeReadableStream } from 'node:stream/web';
 import type {
   DownloadItem,
   DownloadKind,
@@ -16,7 +12,6 @@ import { RateLimiter, sleep } from '../../core/async';
 import { ConflictError, NotFoundError, errorMessage } from '../../core/errors';
 import type { EventBus } from '../../core/event-bus';
 import { ensureDir, fileSize, getDiskSpace, pathExists, uniquePath } from '../../core/fs';
-import { parseContentRangeStart, parseContentRangeTotal } from '../../core/http-range';
 import type { Logger } from '../../core/logger';
 import { formatBytes, formatEpisodeCode, prettifyTitle } from '../../core/text';
 import { parseEpisode, parseSeasonFolder } from '../../domain/episode-parser';
@@ -38,26 +33,15 @@ import {
   type EpisodeOutcome,
   type EpisodeTarget,
 } from './episode-queue';
+import { DownloadError, SegmentedTransfer, progressFile } from './segmented-transfer';
 import { buildTargetPath } from './target-path';
 
 const MAX_ATTEMPTS = 6;
-const STALL_TIMEOUT_MS = 60_000;
 const EMIT_INTERVAL_MS = 500;
 const PERSIST_INTERVAL_MS = 3_000;
 const SPEED_WINDOW_MS = 5_000;
 const SAMPLE_INTERVAL_MS = 250;
 const DISK_MARGIN_BYTES = 64 * 1024 * 1024;
-
-/** Erreur de transfert, avec indication de reprise possible. */
-class DownloadError extends Error {
-  constructor(
-    message: string,
-    readonly retryable: boolean,
-  ) {
-    super(message);
-    this.name = 'DownloadError';
-  }
-}
 
 interface ActiveDownload {
   id: number;
@@ -487,7 +471,7 @@ export class DownloadManager {
       state.controller.abort();
       await state.task;
     } else {
-      await fsp.rm(`${row.target_path}.part`, { force: true });
+      await removePart(row.target_path);
       this.repository.update(id, {
         status: 'canceled',
         downloaded_bytes: 0,
@@ -511,7 +495,7 @@ export class DownloadManager {
         await this.library.remove(row.library_item_id, true).catch(() => undefined);
       }
     } else {
-      await fsp.rm(`${row.target_path}.part`, { force: true });
+      await removePart(row.target_path);
     }
     this.repository.delete(id);
     this.events.publish({ type: 'download.removed', id });
@@ -642,7 +626,7 @@ export class DownloadManager {
     const reason = state.stopReason ?? 'pause';
     state.speed = 0;
     if (reason === 'cancel') {
-      await fsp.rm(`${row.target_path}.part`, { force: true });
+      await removePart(row.target_path);
       this.repository.update(state.id, {
         status: 'canceled',
         downloaded_bytes: 0,
@@ -662,122 +646,61 @@ export class DownloadManager {
     }
   }
 
+  /**
+   * Télécharge vers le `.part` : en plusieurs morceaux simultanés quand l'hôte l'accepte et
+   * que cela accélère (voir SegmentedTransfer), en reprenant ce qui est déjà reçu.
+   */
   private async transfer(state: ActiveDownload): Promise<void> {
     const row = this.repository.findById(state.id);
     if (!row) throw new DownloadError('Téléchargement supprimé.', false);
     const partPath = `${row.target_path}.part`;
     await ensureDir(path.dirname(partPath));
 
-    let offset = (await fileSize(partPath)) ?? 0;
-    if (row.total_bytes !== null && offset > row.total_bytes) {
-      await fsp.truncate(partPath, 0);
-      offset = 0;
-    }
-    state.downloaded = offset;
-    if (row.total_bytes !== null && row.total_bytes > 0 && offset === row.total_bytes) return;
-
-    const attempt = new AbortController();
-    const signal = AbortSignal.any([state.controller.signal, attempt.signal]);
-    const response = await this.source.openFile(row.remote_path, {
-      start: offset > 0 ? offset : undefined,
-      signal,
-    });
-
-    if (response.status === 416 && offset > 0) {
-      await response.body?.cancel().catch(() => undefined);
-      const head = await this.source.openFile(row.remote_path, { method: 'HEAD', signal });
-      const remoteSize = Number(head.headers.get('content-length')) || null;
-      if (remoteSize !== null && offset >= remoteSize) {
-        if (offset > remoteSize) await fsp.truncate(partPath, remoteSize);
-        state.downloaded = remoteSize;
-        state.total = remoteSize;
-        return;
-      }
-      await fsp.truncate(partPath, 0);
-      throw new DownloadError('Reprise impossible : redémarrage depuis le début.', true);
-    }
-    if (!response.ok || !response.body) {
-      await response.body?.cancel().catch(() => undefined);
-      if (response.status === 404)
-        throw new DownloadError('Fichier introuvable sur la source (404).', false);
-      throw new DownloadError(
-        `La source a répondu ${response.status}.`,
-        response.status >= 500 || [403, 408, 425, 429].includes(response.status) || response.ok,
-      );
-    }
-
-    let append = false;
-    if (offset > 0) {
-      if (
-        response.status === 206 &&
-        parseContentRangeStart(response.headers.get('content-range')) === offset
-      ) {
-        append = true;
-      } else {
-        // Le serveur a ignoré la plage demandée : on repart de zéro.
-        offset = 0;
-        state.downloaded = 0;
-      }
-    }
-    const contentLength = Number(response.headers.get('content-length')) || null;
-    const total =
-      response.status === 206
-        ? (parseContentRangeTotal(response.headers.get('content-range')) ??
-          (contentLength !== null ? offset + contentLength : null))
-        : contentLength;
-    state.total = total;
-    this.repository.update(state.id, { total_bytes: total, downloaded_bytes: offset });
-
-    if (total !== null) {
-      const disk = await getDiskSpace(path.dirname(partPath));
-      if (disk && disk.free < total - offset + DISK_MARGIN_BYTES) {
-        await response.body.cancel().catch(() => undefined);
-        throw new DownloadError(
-          `Espace disque insuffisant (${formatBytes(total - offset)} nécessaires).`,
-          false,
-        );
-      }
-    }
-
-    state.lastDataAt = Date.now();
-    const watchdog = setInterval(() => {
-      if (Date.now() - state.lastDataAt > STALL_TIMEOUT_MS) {
-        attempt.abort(
-          new DownloadError('Transfert bloqué (aucune donnée reçue depuis 60 s).', true),
-        );
-      }
-    }, 5_000);
-    const meter = new Transform({
-      transform: (chunk: Buffer, _encoding, callback) => {
-        this.limiter.consume(chunk.length, signal).then(
-          () => {
-            state.downloaded += chunk.length;
-            state.lastDataAt = Date.now();
-            this.onProgress(state);
-            callback(null, chunk);
-          },
-          (error: unknown) => callback(error as Error),
-        );
+    const transfer = new SegmentedTransfer({
+      partPath,
+      expectedTotal: row.total_bytes,
+      signal: state.controller.signal,
+      logger: this.logger,
+      open: (start, end, signal, extra) =>
+        this.source.openFile(row.remote_path, {
+          start,
+          end: end === null ? undefined : end - 1,
+          signal,
+          refreshLinks: !extra,
+        }),
+      remoteSize: async (signal) => {
+        const head = await this.source.openFile(row.remote_path, { method: 'HEAD', signal });
+        await head.body?.cancel().catch(() => undefined);
+        return Number(head.headers.get('content-length')) || null;
+      },
+      throttle: (bytes, signal) => this.limiter.consume(bytes, signal),
+      onTotal: async (total, remaining) => {
+        state.total = total;
+        this.repository.update(state.id, {
+          total_bytes: total,
+          downloaded_bytes: state.downloaded,
+        });
+        const disk = await getDiskSpace(path.dirname(partPath));
+        if (disk && disk.free < remaining + DISK_MARGIN_BYTES) {
+          throw new DownloadError(
+            `Espace disque insuffisant (${formatBytes(remaining)} nécessaires).`,
+            false,
+          );
+        }
+      },
+      onProgress: (downloaded, total) => {
+        state.downloaded = downloaded;
+        state.total = total;
+        state.lastDataAt = Date.now();
+        this.onProgress(state);
       },
     });
-
     try {
-      await pipeline(
-        Readable.fromWeb(response.body as unknown as NodeReadableStream<Uint8Array>),
-        meter,
-        fs.createWriteStream(partPath, { flags: append ? 'a' : 'w' }),
-        { signal },
-      );
-    } catch (error) {
-      if (attempt.signal.aborted && !state.controller.signal.aborted) throw attempt.signal.reason;
-      throw error;
+      const result = await transfer.run();
+      state.downloaded = result.downloaded;
+      state.total = result.total ?? result.downloaded;
     } finally {
-      clearInterval(watchdog);
       this.repository.saveProgress(state.id, state.downloaded, state.total);
-    }
-
-    if (state.total !== null && state.downloaded < state.total) {
-      throw new DownloadError('Transfert incomplet, reprise…', true);
     }
   }
 
@@ -868,4 +791,11 @@ export class DownloadManager {
 
 function episodeCode(target: EpisodeTarget): string {
   return formatEpisodeCode(target.season, target.episode) ?? `${target.episode}`;
+}
+
+/** Supprime un téléchargement inachevé : le `.part` et le suivi de ses morceaux. */
+async function removePart(targetPath: string): Promise<void> {
+  const partPath = `${targetPath}.part`;
+  await fsp.rm(partPath, { force: true });
+  await fsp.rm(progressFile(partPath), { force: true });
 }
