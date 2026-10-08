@@ -99,9 +99,11 @@ beforeAll(async () => {
   tmdb = http.createServer((request, response) => {
     const url = new URL(request.url ?? '/', 'http://x');
     const route = url.pathname.replace(/^\/3/, '');
-    const list = /^\/(?:trending\/(movie|tv)\/week|(movie|tv)\/[a-z_]+)$/.exec(route);
+    const list = /^\/(?:trending\/(movie|tv)\/week|discover\/(movie|tv)|(movie|tv)\/[a-z_]+)$/.exec(
+      route,
+    );
     if (list && !/^\/(movie|tv)\/\d+$/.test(route)) {
-      const kind = list[1] ?? list[2];
+      const kind = list[1] ?? list[2] ?? list[3];
       const results = TITLES.filter((title) => title.kind === kind).map(item);
       return json(response, 200, { page: 1, total_pages: 1, results });
     }

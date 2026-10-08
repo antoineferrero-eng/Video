@@ -9,8 +9,8 @@ import type { TitlesRepository, TmdbTitleUpsert } from './titles.repository';
 
 /**
  * Catalogue construit à partir de TMDB : titres populaires, tendances, à l'affiche, mieux
- * notés, et toute recherche. Les fichiers de chaque titre sont demandés aux extensions
- * Stremio (voir AddonCatalog).
+ * notés, complétés par « Découvrir » jusqu'à la taille choisie, et toute recherche. Les
+ * fichiers de chaque titre sont demandés aux extensions Stremio (voir AddonCatalog).
  */
 
 // « Populaires » en premier et sur 10 pages (200 titres) : c'est l'ordre du site de TMDB.
@@ -28,6 +28,31 @@ const LISTS: Record<TitleKind, Array<{ path: string; pages: number }>> = {
     { path: '/tv/top_rated', pages: 2 },
   ],
 };
+
+/**
+ * Au-delà des listes : « Découvrir » de TMDB par popularité, jusqu'à la taille de catalogue
+ * choisie (`catalogSize`). Seulement les titres assez votés (les inconnus n'ont ni fiche
+ * complète ni fichiers chez les extensions), sans journaux télévisés ni talk-shows (10763,
+ * 10767). TMDB ne sert pas plus de 500 pages de 20 titres.
+ */
+const DISCOVER: Record<TitleKind, { path: string; filters: Record<string, string | number> }> = {
+  movie: {
+    path: '/discover/movie',
+    filters: { sort_by: 'popularity.desc', 'vote_count.gte': 50, include_adult: 'false' },
+  },
+  series: {
+    path: '/discover/tv',
+    filters: {
+      sort_by: 'popularity.desc',
+      'vote_count.gte': 20,
+      include_adult: 'false',
+      without_genres: '10763,10767',
+    },
+  },
+};
+const DISCOVER_MAX_PAGES = 500;
+/** Pages de « Découvrir » demandées en parallèle (le client TMDB limite déjà à 6 requêtes). */
+const DISCOVER_BATCH = 5;
 
 const GENRES_TTL_MS = 7 * 24 * 3600_000;
 /**
@@ -51,15 +76,22 @@ export class TmdbCatalog {
     private readonly logger: Logger,
   ) {}
 
-  /** Importe les listes TMDB d'une section ; renvoie le nombre de titres vus. */
+  /**
+   * Importe les listes TMDB d'une section, puis « Découvrir » jusqu'à la taille de catalogue
+   * choisie ; renvoie le nombre de titres vus.
+   */
   async importLists(kind: TitleKind): Promise<number> {
     const language = this.settings.get().metadataLanguage;
     const genres = await this.genreNames(kind, language);
     const seen = new Set<number>();
-    await this.eachListItem(kind, language, (item) => {
+    const visit = (item: TmdbListItem) => {
       if (seen.has(item.id)) return;
       if (this.importItem(kind, item, genres, language) !== null) seen.add(item.id);
-    });
+    };
+    await this.eachListItem(kind, language, visit);
+    // Taille relue à chaque lot : agrandie pendant l'import, elle s'applique tout de suite.
+    const done = () => seen.size >= this.settings.get().catalogSize;
+    await this.eachDiscoverItem(kind, language, done, visit);
     return seen.size;
   }
 
@@ -73,6 +105,28 @@ export class TmdbCatalog {
         const response = await this.tmdb.list(list.path, language, page);
         for (const item of response.results) visit(item);
         if (page >= response.total_pages) break;
+      }
+    }
+  }
+
+  private async eachDiscoverItem(
+    kind: TitleKind,
+    language: string,
+    done: () => boolean,
+    visit: (item: TmdbListItem) => void,
+  ): Promise<void> {
+    const { path, filters } = DISCOVER[kind];
+    let lastPage = DISCOVER_MAX_PAGES;
+    for (let first = 1; first <= lastPage && !done(); first += DISCOVER_BATCH) {
+      const pages: number[] = [];
+      for (let page = first; page < first + DISCOVER_BATCH && page <= lastPage; page += 1)
+        pages.push(page);
+      const responses = await Promise.all(
+        pages.map((page) => this.tmdb.list(path, language, page, filters)),
+      );
+      for (const response of responses) {
+        lastPage = Math.min(lastPage, response.total_pages);
+        for (const item of response.results) visit(item);
       }
     }
   }

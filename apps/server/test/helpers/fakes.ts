@@ -35,8 +35,8 @@ export function tmdbItem(title: FakeTitle): Record<string, unknown> {
 }
 
 /**
- * Routes « catalogue » de TMDB : listes (populaires, tendances…), genres et identifiants
- * externes. Renvoie false si la route n'en fait pas partie.
+ * Routes « catalogue » de TMDB : listes (populaires, tendances…, « Découvrir »), genres et
+ * identifiants externes. Renvoie false si la route n'en fait pas partie.
  */
 export function tmdbCatalogRoute(
   titles: FakeTitle[],
@@ -44,11 +44,11 @@ export function tmdbCatalogRoute(
   response: http.ServerResponse,
 ): boolean {
   const list =
-    /^\/(?:trending\/(movie|tv)\/week|(movie|tv)\/(?:popular|now_playing|top_rated|on_the_air))$/.exec(
+    /^\/(?:trending\/(movie|tv)\/week|discover\/(movie|tv)|(movie|tv)\/(?:popular|now_playing|top_rated|on_the_air))$/.exec(
       route,
     );
   if (list) {
-    const kind = list[1] ?? list[2];
+    const kind = list[1] ?? list[2] ?? list[3];
     const results = titles.filter((title) => title.kind === kind).map(tmdbItem);
     json(response, 200, { page: 1, total_pages: 1, results });
     return true;

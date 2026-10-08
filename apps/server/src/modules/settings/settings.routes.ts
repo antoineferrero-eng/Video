@@ -44,6 +44,8 @@ const SettingsUpdateSchema = z
     subtitleAddonUrls: z.array(z.string().max(2000)).max(10),
     openSubtitlesUsername: z.string().max(200),
     catalogRefreshHours: z.number().int().min(0).max(720),
+    // TMDB ne sert pas plus de 500 pages de 20 titres.
+    catalogSize: z.number().int().min(100).max(10_000),
     transcodePreset: z.enum(['quality', 'balanced', 'fast']),
     maxTranscodeHeight: z.union([
       z.literal(2160),

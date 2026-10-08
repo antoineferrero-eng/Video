@@ -63,13 +63,15 @@ export class CatalogService {
     private readonly addon: AddonCatalog,
   ) {
     sections.resetInterrupted();
-    // Clé TMDB ajoutée ou remplacée (premier lancement…) : catalogue importé sans attendre.
+    // Clé TMDB ajoutée ou remplacée (premier lancement…), ou catalogue agrandi : catalogue
+    // importé sans attendre.
     let tmdbKey = settings.getTmdbApiKey();
-    settings.onChange(() => {
+    settings.onChange((next, previous) => {
       const key = settings.getTmdbApiKey();
-      if (key === tmdbKey) return;
+      const keyChanged = key !== tmdbKey;
       tmdbKey = key;
-      if (key) for (const kind of KINDS) this.refreshInBackground(kind);
+      if (key && (keyChanged || next.catalogSize > previous.catalogSize))
+        for (const kind of KINDS) this.refreshInBackground(kind);
     });
   }
 

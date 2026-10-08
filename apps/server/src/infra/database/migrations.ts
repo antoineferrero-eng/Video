@@ -199,4 +199,13 @@ export const MIGRATIONS: Migration[] = [
       UPDATE catalog_sections SET last_refresh_at = NULL WHERE mode <> 'addon';
     `,
   },
+  {
+    id: 7,
+    name: 'catalogue-decouvrir',
+    sql: /* sql */ `
+      -- Le catalogue ne venait que de quelques listes TMDB (environ 250 titres par section) ;
+      -- il est complété par « Découvrir » jusqu'à la taille choisie : réimporté au démarrage.
+      UPDATE catalog_sections SET last_refresh_at = NULL;
+    `,
+  },
 ];

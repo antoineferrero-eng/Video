@@ -26,6 +26,11 @@ export interface AppSettings {
   /** Compte OpenSubtitles.com (facultatif : plus de téléchargements par jour). */
   openSubtitlesUsername: string;
   catalogRefreshHours: number;
+  /**
+   * Titres visés par section (films, séries) : les listes TMDB, complétées par « Découvrir »
+   * dans l'ordre de popularité. Les titres déjà importés restent si la taille diminue.
+   */
+  catalogSize: number;
   transcodePreset: TranscodePreset;
   maxTranscodeHeight: number;
 }

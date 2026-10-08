@@ -23,6 +23,7 @@ export function defaultSettings(config: AppConfig): AppSettings {
     subtitleAddonUrls: validAddonUrls(config.defaults.subtitleAddonUrls),
     openSubtitlesUsername: '',
     catalogRefreshHours: 12,
+    catalogSize: 5000,
     transcodePreset: 'balanced',
     maxTranscodeHeight: 1080,
   };
@@ -136,6 +137,7 @@ export class SettingsService {
       'preferredAudioLanguage',
       'preferredSubtitleLanguage',
       'catalogRefreshHours',
+      'catalogSize',
       'transcodePreset',
       'maxTranscodeHeight',
     ] as const) {

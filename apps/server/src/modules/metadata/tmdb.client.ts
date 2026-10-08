@@ -132,9 +132,17 @@ export class TmdbClient {
     });
   }
 
-  /** Liste TMDB : `/trending/movie/week`, `/movie/popular`, `/tv/top_rated`… */
-  list(path: string, language: string, page = 1): Promise<TmdbListResponse> {
-    return this.get(path, { language, page });
+  /**
+   * Liste TMDB : `/trending/movie/week`, `/movie/popular`, `/tv/top_rated`…, ou
+   * `/discover/movie` avec ses filtres (`sort_by`, `vote_count.gte`…).
+   */
+  list(
+    path: string,
+    language: string,
+    page = 1,
+    filters: Record<string, string | number> = {},
+  ): Promise<TmdbListResponse> {
+    return this.get(path, { ...filters, language, page });
   }
 
   genres(kind: 'movie' | 'tv', language: string): Promise<{ genres: TmdbGenre[] }> {
