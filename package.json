@@ -7,7 +7,8 @@
   "license": "UNLICENSED",
   "workspaces": [
     "packages/*",
-    "apps/*",
+    "apps/server",
+    "apps/web",
     "tools/*"
   ],
   "engines": {

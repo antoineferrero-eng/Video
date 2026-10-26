@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:"
+    />
+    <title>Lumière — prototype de bureau</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <header>
+      <h1>Lumière <span>prototype de bureau · étape 1</span></h1>
+      <p>
+        Vérifie le parcours loadix → vérification Cloudflare → 1fichier premium avant de l’intégrer
+        à Lumière.
+      </p>
+    </header>
+
+    <main>
+      <section>
+        <h2>1. Loadix</h2>
+        <label>
+          Adresse du site
+          <input id="loadix-url" type="url" placeholder="https://loadix.fun" />
+        </label>
+        <label>
+          Adresse de l’API <small>(vide : <span id="api-effective"></span>)</small>
+          <input id="loadix-api" type="url" placeholder="automatique" />
+        </label>
+        <div class="row">
+          <button id="save-loadix">Enregistrer</button>
+          <button id="login" class="primary">Se connecter</button>
+          <button id="check">Vérifier la connexion</button>
+          <button id="logout">Se déconnecter</button>
+        </div>
+        <p id="account" class="status">État de la connexion inconnu.</p>
+      </section>
+
+      <section>
+        <h2>2. 1fichier premium</h2>
+        <label>
+          Clé API <small>(1fichier.com → Mon compte → Paramètres → API)</small>
+          <input id="onefichier-key" type="password" autocomplete="off" />
+        </label>
+        <div class="row">
+          <button id="save-key">Enregistrer la clé</button>
+          <button id="test-key">Tester la clé</button>
+          <button id="clear-key">Effacer la clé</button>
+        </div>
+        <p id="key-status" class="status"></p>
+      </section>
+
+      <section>
+        <h2>3. Essai de téléchargement</h2>
+        <label>
+          Fiche loadix d’un film <small>(adresse …/media/&lt;id&gt; copiée depuis loadix)</small>
+          <input id="media" type="text" placeholder="https://loadix.fun/media/…" />
+        </label>
+        <div class="row">
+          <button id="load-links" class="primary">Afficher les versions</button>
+        </div>
+        <p id="media-title" class="status"></p>
+        <table id="links" hidden>
+          <thead>
+            <tr>
+              <th>Qualité</th>
+              <th>Langue</th>
+              <th>Taille</th>
+              <th>Hébergeur</th>
+              <th>Fichier</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </section>
+
+      <section>
+        <h2>Journal</h2>
+        <pre id="log"></pre>
+      </section>
+
+      <section>
+        <h2>Rapport du dernier essai <small>(liens et mot de passe masqués)</small></h2>
+        <div class="row">
+          <button id="copy-report" disabled>Copier le rapport</button>
+          <button id="open-reports">Ouvrir le dossier des rapports</button>
+        </div>
+        <pre id="report">Aucun essai pour l’instant.</pre>
+      </section>
+    </main>
+
+    <script type="module" src="app.js"></script>
+  </body>
+</html>

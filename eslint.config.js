@@ -23,6 +23,19 @@ export default defineConfig(
     languageOptions: { globals: globals.node },
   },
   {
+    files: ['apps/desktop/src/*.mjs'],
+    languageOptions: { globals: globals.node },
+  },
+  {
+    files: ['apps/desktop/src/*.cjs'],
+    languageOptions: { globals: globals.node, sourceType: 'commonjs' },
+    rules: { '@typescript-eslint/no-require-imports': 'off' },
+  },
+  {
+    files: ['apps/desktop/src/ui/**/*.js'],
+    languageOptions: { globals: globals.browser },
+  },
+  {
     files: ['apps/web/**/*.{ts,tsx}'],
     languageOptions: { globals: globals.browser },
     extends: [reactHooks.configs.flat.recommended, reactRefresh.configs.vite],
