@@ -4,7 +4,7 @@
 // s'y connecte et qui passe la vérification Cloudflare Turnstile. Aucun débogueur n'est
 // attaché (c'est ce qui faisait boucler la vérification dans l'ancienne version) : Lumière
 // observe seulement les codes de réponse des requêtes et lit la page une fois le lien affiché.
-import { BrowserWindow, clipboard, session, shell } from 'electron';
+import { BrowserWindow, app, clipboard, session, shell } from 'electron';
 import { apiOrigin } from './config.mjs';
 
 const PARTITION = 'persist:loadix';
@@ -52,8 +52,21 @@ export function setupLoadixSession(log) {
       for (const observer of requestObservers) observer(details);
     },
   );
-  ses.webRequest.onErrorOccurred({ urls: CAPTCHA_HOSTS }, (details) => {
+  // Échecs réseau des pages loadix (requêtes annulées exceptées) : un échec vers Cloudflare ou
+  // un certificat refusé suffit à faire échouer la vérification.
+  ses.webRequest.onErrorOccurred({ urls: ['*://*/*'] }, (details) => {
+    if (details.error === 'net::ERR_ABORTED') return;
     note(details.webContents, `échec réseau ${details.error} ${shortUrl(details.url)}`);
+    if (isCaptchaRequest(details.url) || /CERT/.test(details.error)) {
+      log(`Échec réseau ${details.error} vers ${new URL(details.url).host}.`);
+    }
+  });
+  // Certificat HTTPS refusé : l'émetteur dit qui s'intercale (antivirus qui inspecte le HTTPS,
+  // proxy d'entreprise…). Le refus par défaut est conservé.
+  app.on('certificate-error', (_event, contents, url, error, certificate) => {
+    const message = `certificat refusé (${error}) pour ${new URL(url).host}, émis par « ${certificate.issuerName} »`;
+    note(contents, message);
+    log(`Attention : ${message}.`);
   });
 }
 
