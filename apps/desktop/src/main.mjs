@@ -11,12 +11,14 @@ import path from 'node:path';
 import { BrowserWindow, app, clipboard, ipcMain, shell } from 'electron';
 import { apiOrigin, loadConfig, saveConfig } from './config.mjs';
 import {
+  cancelReveal,
   checkAccount,
   listLinks,
   loadixSession,
   logout,
   openLogin,
   parseMediaId,
+  revealInBrowser,
   revealLink,
   setupLoadixSession,
 } from './loadix.mjs';
@@ -98,6 +100,7 @@ function registerHandlers() {
     return result;
   });
   handle('loadix:reveal-test', revealAndTest);
+  handle('loadix:reveal-cancel', () => cancelReveal());
 
   handle('onefichier:test', async () => {
     const info = await accountInfo(loadConfig().onefichierKey);
@@ -129,8 +132,12 @@ async function account() {
   return result;
 }
 
-/** Le parcours complet sur un lien : révélation, puis 1fichier. Produit toujours un rapport. */
-async function revealAndTest(mediaInput, linkId, linkSummary) {
+/**
+ * Le parcours complet sur un lien : révélation, puis 1fichier. Produit toujours un rapport.
+ * mode « fenetre » : fiche ouverte dans une fenêtre du prototype ; « navigateur » : dans le
+ * navigateur habituel, lien repris dans le presse-papiers.
+ */
+async function revealAndTest(mediaInput, linkId, linkSummary, mode = 'fenetre') {
   const config = loadConfig();
   const mediaId = parseMediaId(mediaInput);
   const report = {
@@ -138,6 +145,7 @@ async function revealAndTest(mediaInput, linkId, linkSummary) {
     electron: process.versions.electron,
     chromium: process.versions.chrome,
     userAgent: loadixSession().getUserAgent(),
+    mode,
     loadix: { site: config.loadixUrl, api: apiOrigin(config), mediaId, linkId, linkSummary },
     etapes: [],
   };
@@ -146,7 +154,10 @@ async function revealAndTest(mediaInput, linkId, linkSummary) {
   try {
     log('Ouverture du lien sur loadix…');
     const started = Date.now();
-    const revealed = await revealLink(control, config, mediaId, linkId, log);
+    const revealed =
+      mode === 'navigateur'
+        ? await revealInBrowser(config, mediaId, linkId, log)
+        : await revealLink(control, config, mediaId, linkId, log);
     step('révélation', { dureeSecondes: Math.round((Date.now() - started) / 1000), ...revealed });
     log(`Lien révélé : ${mask(revealed.url)}${revealed.password ? ' (avec mot de passe)' : ''}.`);
 
@@ -191,7 +202,11 @@ async function revealAndTest(mediaInput, linkId, linkSummary) {
     }
     log('Parcours complet réussi.');
   } catch (error) {
-    step('erreur', { message: error.message });
+    step('erreur', {
+      message: error.message,
+      captchaConfig: error.captchaConfig,
+      diagnostics: error.diagnostics,
+    });
     log(`Échec : ${error.message}`);
   }
   return finishReport(report);

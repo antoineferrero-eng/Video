@@ -155,3 +155,15 @@ pre {
   border-radius: 8px;
   padding: 10px;
 }
+
+.hint {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+td.actions {
+  display: grid;
+  gap: 6px;
+  white-space: nowrap;
+}
