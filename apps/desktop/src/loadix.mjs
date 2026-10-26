@@ -4,7 +4,7 @@
 // s'y connecte et qui passe la vérification Cloudflare Turnstile. Aucun débogueur n'est
 // attaché (c'est ce qui faisait boucler la vérification dans l'ancienne version) : Lumière
 // observe seulement les codes de réponse des requêtes et lit la page une fois le lien affiché.
-import { BrowserWindow, session } from 'electron';
+import { BrowserWindow, app, clipboard, session, shell } from 'electron';
 import { apiOrigin } from './config.mjs';
 
 const PARTITION = 'persist:loadix';
@@ -12,11 +12,20 @@ const PARTITION = 'persist:loadix';
 const ISOLATED_WORLD = 1717;
 const UUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
 const REVEAL_TIMEOUT_MS = 5 * 60_000;
+/** Services de vérification anti-robot dont on note les échanges pour le diagnostic. */
+const CAPTCHA_HOSTS = ['*://challenges.cloudflare.com/*', '*://*.hcaptcha.com/*'];
+const CAPTCHA_MESSAGE = /turnstile|cloudflare|captcha|challenge/i;
 
 /** Jeton d'accès obtenu au dernier contrôle de la connexion (gardé en mémoire seulement). */
 let accessToken = null;
 const requestObservers = new Set();
 const openWindows = new Set();
+/** Annule l'attente de révélation en cours (bouton « Annuler » de la fenêtre de contrôle). */
+let cancelCurrent = null;
+
+export function cancelReveal() {
+  cancelCurrent?.();
+}
 
 export function loadixSession() {
   return session.fromPartition(PARTITION);
@@ -24,8 +33,9 @@ export function loadixSession() {
 
 export function setupLoadixSession(log) {
   const ses = loadixSession();
-  ses.setPermissionRequestHandler((_contents, permission, callback) => {
+  ses.setPermissionRequestHandler((contents, permission, callback) => {
     log(`Permission refusée à la page : ${permission}`);
+    note(contents, `permission refusée : ${permission}`);
     callback(false);
   });
   ses.on('will-download', (event, item) => {
@@ -33,9 +43,52 @@ export function setupLoadixSession(log) {
     log(`Téléchargement lancé par la page, bloqué : ${item.getURL()}`);
   });
   // Un seul observateur par session : il redistribue aux attentes en cours.
-  ses.webRequest.onCompleted({ urls: ['*://*/api/links/*', '*://*/api/auth/*'] }, (details) => {
-    for (const observer of requestObservers) observer(details);
+  ses.webRequest.onCompleted(
+    { urls: ['*://*/api/links/*', '*://*/api/auth/*', '*://*/api/captcha/*', ...CAPTCHA_HOSTS] },
+    (details) => {
+      if (isCaptchaRequest(details.url) && details.statusCode >= 400) {
+        note(details.webContents, `HTTP ${details.statusCode} ${shortUrl(details.url)}`);
+      }
+      for (const observer of requestObservers) observer(details);
+    },
+  );
+  // Échecs réseau des pages loadix (requêtes annulées exceptées) : un échec vers Cloudflare ou
+  // un certificat refusé suffit à faire échouer la vérification.
+  ses.webRequest.onErrorOccurred({ urls: ['*://*/*'] }, (details) => {
+    if (details.error === 'net::ERR_ABORTED') return;
+    note(details.webContents, `échec réseau ${details.error} ${shortUrl(details.url)}`);
+    if (isCaptchaRequest(details.url) || /CERT/.test(details.error)) {
+      log(`Échec réseau ${details.error} vers ${new URL(details.url).host}.`);
+    }
   });
+  // Certificat HTTPS refusé : l'émetteur dit qui s'intercale (antivirus qui inspecte le HTTPS,
+  // proxy d'entreprise…). Le refus par défaut est conservé.
+  app.on('certificate-error', (_event, contents, url, error, certificate) => {
+    const message = `certificat refusé (${error}) pour ${new URL(url).host}, émis par « ${certificate.issuerName} »`;
+    note(contents, message);
+    log(`Attention : ${message}.`);
+  });
+}
+
+/**
+ * Notes de diagnostic d'une fenêtre loadix : messages de la console liés à la vérification
+ * (Turnstile y écrit son code d'erreur), refus de permission, échecs vers Cloudflare.
+ */
+const diagnostics = new WeakMap();
+
+function note(contents, message) {
+  const notes = contents && diagnostics.get(contents);
+  if (!notes || notes.length >= 50) return;
+  notes.push(`${new Date().toISOString().slice(11, 19)} ${message}`);
+}
+
+function isCaptchaRequest(url) {
+  return /^https?:\/\/(challenges\.cloudflare\.com|[^/]*hcaptcha\.com)\//i.test(url);
+}
+
+function shortUrl(url) {
+  const { host, pathname } = new URL(url);
+  return `${host}${pathname.slice(0, 60)}`;
 }
 
 function observeRequests(observer) {
@@ -55,6 +108,14 @@ function loadixWindow(parent, url, title, log) {
   });
   openWindows.add(win);
   win.on('closed', () => openWindows.delete(win));
+  const notes = [];
+  diagnostics.set(win.webContents, notes);
+  win.diagnostics = notes;
+  win.webContents.on('console-message', ({ message, level }) => {
+    if (level === 'debug' || !CAPTCHA_MESSAGE.test(message)) return;
+    note(win.webContents, `console (${level}) : ${message.slice(0, 300)}`);
+    log(`Console de la page (${level}) : ${message.slice(0, 200)}`);
+  });
   win.webContents.setWindowOpenHandler(({ url: target }) => {
     let host = '';
     try {
@@ -192,6 +253,8 @@ export function revealLink(parent, config, mediaId, linkId, log) {
     let settled = false;
     let timer = null;
     let timeout = null;
+    let captchaConfig = null;
+    captchaProvider(config).then((value) => (captchaConfig = value));
 
     const stop = observeRequests(({ url: requestUrl, method, statusCode }) => {
       const { pathname } = new URL(requestUrl);
@@ -213,10 +276,13 @@ export function revealLink(parent, config, mediaId, linkId, log) {
       clearInterval(timer);
       clearTimeout(timeout);
       stop();
+      cancelCurrent = null;
       if (!win.isDestroyed()) win.close();
-      if (error) reject(error);
-      else resolve(value);
+      const extra = { captchaConfig, diagnostics: [...win.diagnostics] };
+      if (error) reject(Object.assign(error, extra));
+      else resolve({ ...value, ...extra });
     };
+    cancelCurrent = () => finish(new Error('Essai annulé.'));
 
     timeout = setTimeout(
       () => finish(new Error('Aucun lien révélé au bout de 5 minutes.')),
@@ -272,6 +338,66 @@ export function revealLink(parent, config, mediaId, linkId, log) {
       }
     }
   });
+}
+
+/**
+ * Variante sans fenêtre Lumière : la fiche s'ouvre dans le navigateur habituel (Edge,
+ * Chrome…), où l'utilisateur révèle le lien comme d'habitude puis clique « Copier » ; le
+ * lien 1fichier est repris dans le presse-papiers dès qu'il y apparaît.
+ */
+export async function revealInBrowser(config, mediaId, linkId, log) {
+  const url = `${config.loadixUrl}/media/${mediaId}?link=${encodeURIComponent(linkId)}`;
+  // Le presse-papiers d'Electron est asynchrone : on ne reprend que ce qui est copié ensuite.
+  const previous = (await clipboard.readText()).trim();
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    let reading = false;
+    const finish = (error, value) => {
+      if (settled) return;
+      settled = true;
+      clearInterval(timer);
+      clearTimeout(timeout);
+      cancelCurrent = null;
+      if (error) reject(error);
+      else resolve(value);
+    };
+    const timer = setInterval(async () => {
+      if (reading || settled) return;
+      reading = true;
+      try {
+        const text = (await clipboard.readText()).trim();
+        if (text === previous) return;
+        const match = text.match(/https?:\/\/(?:[a-z0-9-]+\.)?1fichier\.com\/\S+/i);
+        if (match) finish(null, { url: match[0], password: null, source: 'presse-papiers' });
+      } catch {
+        // Presse-papiers momentanément indisponible : nouvel essai au tour suivant.
+      } finally {
+        reading = false;
+      }
+    }, 500);
+    const timeout = setTimeout(
+      () => finish(new Error('Aucun lien 1fichier copié au bout de 5 minutes.')),
+      REVEAL_TIMEOUT_MS,
+    );
+    cancelCurrent = () => finish(new Error('Essai annulé.'));
+    shell.openExternal(url).then(
+      () =>
+        log(
+          'Fiche ouverte dans votre navigateur : révélez le lien, puis cliquez « Copier » (ou copiez le lien 1fichier).',
+        ),
+      (error) => finish(new Error(`Navigateur impossible à ouvrir : ${error.message}`)),
+    );
+  });
+}
+
+/** Service de vérification choisi par loadix pour les révélations (Turnstile ou hCaptcha). */
+async function captchaProvider(config) {
+  try {
+    const json = await getJson(`${apiOrigin(config)}/api/captcha/config`);
+    return { provider: json.provider ?? '(non précisé)', champs: Object.keys(json) };
+  } catch (error) {
+    return { erreur: error.message };
+  }
 }
 
 const ONEFICHIER = /^https?:\/\/(?:[a-z0-9-]+\.)?1fichier\.com\//i;

@@ -8,8 +8,9 @@ contextBridge.exposeInMainWorld('lumiere', {
   account: () => ipcRenderer.invoke('loadix:account'),
   logout: () => ipcRenderer.invoke('loadix:logout'),
   links: (media) => ipcRenderer.invoke('loadix:links', media),
-  revealAndTest: (media, linkId, summary) =>
-    ipcRenderer.invoke('loadix:reveal-test', media, linkId, summary),
+  revealAndTest: (media, linkId, summary, mode) =>
+    ipcRenderer.invoke('loadix:reveal-test', media, linkId, summary, mode),
+  cancelReveal: () => ipcRenderer.invoke('loadix:reveal-cancel'),
   testOnefichier: () => ipcRenderer.invoke('onefichier:test'),
   openReports: () => ipcRenderer.invoke('report:open-folder'),
   copy: (text) => ipcRenderer.invoke('clipboard:write', text),

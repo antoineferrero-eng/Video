@@ -131,10 +131,16 @@ function renderLinks(media, links) {
         row.append(cell);
       }
       const action = document.createElement('td');
-      const button = document.createElement('button');
-      button.textContent = 'Télécharger (essai)';
-      button.addEventListener('click', () => test(button, media, link));
-      action.append(button);
+      action.className = 'actions';
+      for (const [label, mode] of [
+        ['Essai : fenêtre Lumière', 'fenetre'],
+        ['Essai : mon navigateur', 'navigateur'],
+      ]) {
+        const button = document.createElement('button');
+        button.textContent = label;
+        button.addEventListener('click', () => test(button, media, link, mode));
+        action.append(button);
+      }
       row.append(action);
       return row;
     }),
@@ -142,7 +148,7 @@ function renderLinks(media, links) {
   $('links').hidden = links.length === 0;
 }
 
-async function test(button, media, link) {
+async function test(button, media, link, mode) {
   const summary = {
     provider: link.provider,
     quality: link.quality,
@@ -151,8 +157,9 @@ async function test(button, media, link) {
     releaseName: link.releaseName,
   };
   for (const other of document.querySelectorAll('#links button')) other.disabled = true;
+  $('cancel').hidden = false;
   try {
-    const result = await api.revealAndTest(media, link.id, summary);
+    const result = await api.revealAndTest(media, link.id, summary, mode);
     lastReport = result.shareable;
     $('report').textContent = result.shareable;
     $('copy-report').disabled = false;
@@ -160,10 +167,12 @@ async function test(button, media, link) {
     $('report').textContent = cleanError(error);
   } finally {
     for (const other of document.querySelectorAll('#links button')) other.disabled = false;
+    $('cancel').hidden = true;
     button.blur();
   }
 }
 
+$('cancel').addEventListener('click', () => api.cancelReveal());
 $('copy-report').addEventListener('click', () => api.copy(lastReport));
 $('open-reports').addEventListener('click', () => api.openReports());
 
