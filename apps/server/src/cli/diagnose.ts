@@ -241,7 +241,7 @@ function conclusion(report: AddonReport): string {
     if (report.limited)
       return 'a atteint sa limite de liens : réessayez dans quelques minutes (chez 111477, la réserve regagne un lien toutes les 5 minutes).';
     if (report.configurationRequired)
-      return 'doit être configurée : ouvrez sa page de configuration, puis collez le lien d’installation obtenu dans Paramètres → Extensions et API.';
+      return 'doit être configurée : ouvrez sa page de configuration, puis collez le lien d’installation obtenu dans Paramètres → Sources.';
     return 'répond mais ne propose aucun fichier pour ce film : essayez un autre titre (--film=tt…) ou vérifiez sa configuration.';
   }
   return 'répond mais la demande de liens a échoué.';
@@ -265,7 +265,7 @@ async function main(): Promise<void> {
   }
   if (urls.length === 0) {
     console.log(
-      '\n— Aucune extension Stremio configurée : ajoutez-en une dans Paramètres → Extensions et API.',
+      '\n— Aucune extension Stremio configurée : ajoutez-en une dans Paramètres → Sources.',
     );
     return;
   }

@@ -170,8 +170,8 @@ describe.skipIf(!hasFfmpeg)('sous-titres en ligne', () => {
 
     await container.catalog.refresh('movie');
     const [title] = (await container.catalog.search({ kind: 'movie' })).items;
-    // Fiche ouverte : le titre est rattaché à son identifiant IMDb et à ses fichiers.
-    await container.catalog.details(title!.id);
+    // Versions demandées : le titre est rattaché à son identifiant IMDb et à ses fichiers.
+    await container.catalog.movieVersions(title!.id);
 
     const response = await app.inject({
       method: 'POST',

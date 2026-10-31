@@ -243,24 +243,28 @@ describe('catalogue TMDB et fichiers de l’extension Stremio', () => {
     await container.catalog.refresh('series');
   });
 
-  it('demande les versions d’un film à l’ouverture de sa fiche, une seule fois', async () => {
+  it('n’interroge aucune extension à l’ouverture d’une fiche, seulement pour ses versions', async () => {
     const id = await titleId('Ready Player One');
     addonRequests.length = 0;
+    expect((await container.catalog.details(id)).files).toEqual([]);
+    expect(addonRequests).toEqual([]);
+
+    const versions = await container.catalog.movieVersions(id);
+    expect(versions.notice).toBeNull();
+    expect(versions.files.map((file) => [file.name, file.size, file.label])).toEqual([
+      [MOVIE_FILE, MOVIE_BYTES.length, '111477 · 1080p · 💾 256 KB'],
+    ]);
+    await container.catalog.movieVersions(id);
+    expect(addonRequests).toEqual(['tt1677720']);
     const details = await container.catalog.details(id);
     expect(details.remotePath).toBe('/@stremio/movie/tt1677720/');
     expect(details.sourceStatus).toBe('present');
-    expect(details.sourceNotice).toBeNull();
-    expect(details.files.map((file) => [file.name, file.size, file.label])).toEqual([
-      [MOVIE_FILE, MOVIE_BYTES.length, '111477 · 1080p · 💾 256 KB'],
-    ]);
-    await container.catalog.details(id);
-    expect(addonRequests).toEqual(['tt1677720']);
   });
 
   it('marque absent un film que l’extension ne propose pas', async () => {
-    const details = await container.catalog.details(await titleId('Film introuvable'));
-    expect(details.sourceStatus).toBe('missing');
-    expect(details.files).toEqual([]);
+    const id = await titleId('Film introuvable');
+    expect((await container.catalog.movieVersions(id)).files).toEqual([]);
+    expect((await container.catalog.details(id)).sourceStatus).toBe('missing');
   });
 
   it('liste les épisodes d’une série sans demander de liens', async () => {

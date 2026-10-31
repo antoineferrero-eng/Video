@@ -156,7 +156,7 @@ export class OpenSubtitlesClient {
       const status = error instanceof UpstreamError ? error.upstreamStatus : null;
       if ((status === 401 || status === 403) && !this.options.credentials()) {
         throw new UpstreamError(
-          'OpenSubtitles demande un compte pour télécharger : renseignez identifiant et mot de passe (Paramètres → Extensions et API).',
+          'OpenSubtitles demande un compte pour télécharger : renseignez identifiant et mot de passe (Paramètres → Sous-titres et clés).',
           status,
         );
       }

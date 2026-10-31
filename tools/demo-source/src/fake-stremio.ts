@@ -82,7 +82,7 @@ function send(response: http.ServerResponse, status: number, body: unknown): voi
   response.end(JSON.stringify(body));
 }
 
-function walk(dir: string): string[] {
+export function walk(dir: string): string[] {
   if (!fs.existsSync(dir)) return [];
   return fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
     const full = path.join(dir, entry.name);
@@ -90,7 +90,7 @@ function walk(dir: string): string[] {
   });
 }
 
-function formatSize(bytes: number): string {
+export function formatSize(bytes: number): string {
   return bytes >= 1024 ** 3
     ? `${(bytes / 1024 ** 3).toFixed(2)} GB`
     : `${(bytes / 1024 ** 2).toFixed(1)} MB`;
@@ -101,7 +101,12 @@ function resolution(name: string): string {
 }
 
 /** Fichiers d'un film, ou d'un épisode (SxxEyy dans le nom). */
-function filesFor(root: string, title: DemoTitle, season?: number, episode?: number): string[] {
+export function filesFor(
+  root: string,
+  title: DemoTitle,
+  season?: number,
+  episode?: number,
+): string[] {
   if (!title.folder) return [];
   const section = title.kind === 'movie' ? 'movies' : 'tvs';
   const files = walk(path.join(root, section, title.folder)).filter((file) => VIDEO.test(file));

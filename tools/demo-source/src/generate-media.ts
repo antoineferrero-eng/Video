@@ -299,6 +299,9 @@ const jobs: Job[] = [
         '45',
         '-c:v',
         'libvpx-vp9',
+        // Sans quoi ffmpeg 9 choisit un format RGB (gbrap) que l'encodeur VP9 refuse.
+        '-pix_fmt',
+        'yuv420p',
         '-deadline',
         'realtime',
         '-cpu-used',

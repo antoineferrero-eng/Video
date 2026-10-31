@@ -12,6 +12,8 @@ services:
       # TMDB_API_KEY: votre_cle_tmdb
       # Extensions Stremio qui fournissent les fichiers (par ordre de préférence) :
       # STREMIO_ADDON_URLS: https://st.111477.xyz/manifest.json,https://autre.extension/manifest.json
+      # Clé d'API 1fichier premium (liens des sources personnalisées ; aussi dans l'interface) :
+      # ONEFICHIER_API_KEY: votre_cle_1fichier
     volumes:
       # Base de données, caches (affiches, sous-titres) et paramètres.
       - ./data:/data

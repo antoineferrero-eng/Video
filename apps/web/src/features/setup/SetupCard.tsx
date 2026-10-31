@@ -27,9 +27,9 @@ export function SetupCard({ status, className }: { status: SetupStatus; classNam
     },
     {
       done: status.addons,
-      title: 'Extension Stremio',
+      title: 'Une source de fichiers',
       description:
-        'Elle fournit les liens des films et des épisodes. Celle de 111477 se configure sur sa page.',
+        'Une extension Stremio (celle de 111477 se configure sur sa page), ou un site comme loadix.fun avec un compte 1fichier premium.',
       link: { href: 'https://st.111477.xyz/', label: 'Configurer 111477' },
     },
   ];
@@ -131,7 +131,7 @@ function StepLink({ href, children }: { href: string; children: ReactNode }) {
 export function SetupBanner({ status, className }: { status: SetupStatus; className?: string }) {
   const missing = [
     !status.tmdb && 'la clé d’API TMDB (catalogue)',
-    !status.addons && 'une extension Stremio (fichiers)',
+    !status.addons && 'une source de fichiers (extension Stremio ou site)',
   ].filter(Boolean);
   return (
     <Glass

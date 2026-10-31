@@ -63,3 +63,51 @@ export interface EnqueueResult {
    */
   pending?: number;
 }
+
+/** Lien 1fichier à télécharger (obtenu sur une source personnalisée). */
+export interface OneFichierLinkRequest {
+  /** Lien 1fichier, ou texte copié qui en contient un. */
+  url: string;
+  /** Mot de passe du fichier, s'il en a un. */
+  password?: string;
+  /** Titre du catalogue auquel rattacher le fichier. */
+  titleId?: number | null;
+  /** Saison cherchée (série) : pour les épisodes dont le nom ne la donne pas. */
+  season?: number | null;
+  /** Archive lisible directement : éléments à télécharger (toutes ses vidéos par défaut). */
+  entries?: string[];
+}
+
+/** Vidéo d'une archive zip. */
+export interface ArchiveEntryInfo {
+  /** Chemin dans Lumière (`<archive>/<fichier>`). */
+  path: string;
+  name: string;
+  size: number;
+  season: number | null;
+  episode: number | null;
+}
+
+/** Contenu d'une archive zip (une saison complète, par exemple). */
+export interface ArchiveContent {
+  /**
+   * Vidéos stockées sans compression : chacune se télécharge (ou se regarde) seule,
+   * directement dans l'archive. Sinon l'archive est téléchargée en entier puis décompressée.
+   */
+  streamable: boolean;
+  entries: ArchiveEntryInfo[];
+}
+
+/** Fichier désigné par un lien 1fichier (vérifié auprès de l'API). */
+export interface OneFichierFileInfo {
+  /** Lien normalisé (https://1fichier.com/?…). */
+  url: string;
+  fileName: string;
+  size: number | null;
+  /** Chemin du fichier dans Lumière (téléchargements, bibliothèque, lecture). */
+  path: string;
+  /** Contenu d'une archive zip, null pour un autre fichier. */
+  archive: ArchiveContent | null;
+  /** Archive zip dont le contenu n'a pas pu être lu (elle reste téléchargeable). */
+  archiveError: string | null;
+}

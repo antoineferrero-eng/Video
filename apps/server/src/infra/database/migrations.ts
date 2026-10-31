@@ -208,4 +208,55 @@ export const MIGRATIONS: Migration[] = [
       UPDATE catalog_sections SET last_refresh_at = NULL;
     `,
   },
+  {
+    id: 8,
+    name: 'liens-1fichier',
+    sql: /* sql */ `
+      -- Fichiers 1fichier ajoutés depuis une source personnalisée : leur chemin dans Lumière
+      -- (/@1fichier/<identifiant>/<fichier>) renvoie ici au lien et à son mot de passe ; le
+      -- lien direct est redemandé à l'API 1fichier à chaque lecture.
+      CREATE TABLE onefichier_files (
+        file_id    TEXT PRIMARY KEY,
+        url        TEXT NOT NULL,
+        password   TEXT,
+        file_name  TEXT NOT NULL,
+        size       INTEGER,
+        checksum   TEXT,
+        added_at   TEXT NOT NULL
+      );
+    `,
+  },
+  {
+    id: 9,
+    name: 'recherche-loadix',
+    sql: /* sql */ `
+      -- La source loadix.fun proposée par défaut ouvrait la page d'accueil du site : elle
+      -- ouvre désormais sa recherche, sur le titre et le type de la fiche.
+      UPDATE settings
+        SET value = replace(value, '"searchUrl":"https://loadix.fun/"',
+          '"searchUrl":"https://loadix.fun/search?q={titre}&type={type_en}"')
+        WHERE key = 'customSources';
+    `,
+  },
+  {
+    id: 10,
+    name: 'archives-zip',
+    sql: /* sql */ `
+      -- Éléments des archives zip distantes (une saison complète, par exemple) : chacun a son
+      -- chemin dans Lumière (<chemin de l'archive>/<fichier>) et sa place dans l'archive, pour
+      -- être lu ou téléchargé directement s'il n'est pas compressé.
+      CREATE TABLE archive_entries (
+        path             TEXT PRIMARY KEY,
+        archive_path     TEXT NOT NULL,
+        entry_name       TEXT NOT NULL,
+        method           INTEGER NOT NULL,
+        compressed_size  INTEGER NOT NULL,
+        size             INTEGER NOT NULL,
+        header_offset    INTEGER NOT NULL,
+        data_offset      INTEGER,
+        encrypted        INTEGER NOT NULL DEFAULT 0
+      );
+      CREATE INDEX idx_archive_entries_archive ON archive_entries (archive_path);
+    `,
+  },
 ];

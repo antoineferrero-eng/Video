@@ -88,7 +88,7 @@ mène directement au bon endroit des paramètres.
 ### 3. Ajouter une clé TMDB (indispensable)
 
 Créez un compte gratuit sur [themoviedb.org](https://www.themoviedb.org/settings/api), copiez
-la « clé d'API » et collez-la dans **Paramètres → Extensions et API → Clés d'API** (bouton
+la « clé d'API » et collez-la dans **Paramètres → Sous-titres et clés → Clés d'API** (bouton
 « Obtenir une clé »). C'est TMDB qui fournit le catalogue : sans clé, il reste vide ; dès la clé
 enregistrée, le catalogue est importé. La clé apporte aussi affiches, résumés et
 titres d'épisodes.
@@ -96,8 +96,8 @@ titres d'épisodes.
 ### 4. Choisir les extensions Stremio
 
 Par défaut, Lumière demande les liens des fichiers à l'extension Stremio de 111477
-(`https://st.111477.xyz/manifest.json`). Dans **Paramètres → Extensions et API → Films et
-séries**, ajoutez d'autres extensions par leur lien d'installation (`stremio://…` ou
+(`https://st.111477.xyz/manifest.json`). Dans **Paramètres → Sources → Extensions Stremio**,
+ajoutez d'autres extensions par leur lien d'installation (`stremio://…` ou
 `https://…/manifest.json`, configuration comprise), rangez-les par ordre de préférence avec les
 flèches, et vérifiez chacune avec **Tester**. Si vous avez configuré celle de 111477 sur
 [st.111477.xyz](https://st.111477.xyz/) (nombre de liens par titre, serveurs…), remplacez
@@ -110,10 +110,51 @@ Sans réglage, Lumière cherche les sous-titres manquants avec l'extension Strem
 ou d'office si la langue de sous-titres préférée manque dans le fichier. Pour des résultats
 calés sur votre fichier exact, créez une clé gratuite sur
 [opensubtitles.com](https://www.opensubtitles.com/consumers) (rubrique « API consumers ») et
-collez-la dans **Paramètres → Extensions et API**, avec votre compte pour plus de
+collez-la dans **Paramètres → Sous-titres et clés**, avec votre compte pour plus de
 téléchargements par jour. D'autres extensions de sous-titres compatibles s'ajoutent par leur lien.
 Lors d'une recherche, l'identifiant IMDb du titre, le nom et l'empreinte du fichier sont envoyés à
 ces services ; videz la liste des extensions et la clé pour n'en contacter aucun.
+
+### 6. Sites (loadix.fun…) et 1fichier premium (facultatif)
+
+Pour un site qui donne des liens 1fichier mais impose une vérification anti-robot (loadix.fun,
+par exemple), Lumière ne lit pas le site : c'est **vous** qui le consultez dans votre
+navigateur, et Lumière prend la main une fois le lien 1fichier obtenu.
+
+1. **Paramètres → Sources → Sites** : ajoutez le site (nom et adresse). Le bouton **Ajouter loadix.fun** prépare sa recherche
+   (`https://loadix.fun/search?q={titre}&type={type_en}`). Pour un autre site, faites une
+   recherche, copiez l'adresse et remplacez-y le titre cherché par `{titre}` (autres repères :
+   `{titre_original}`, `{annee}`, `{tmdb}`, `{imdb}`, `{type}` « film »/« serie », `{type_en}`
+   « movie »/« series »).
+2. Collez la **clé d'API de votre compte 1fichier premium** (1fichier.com → Mon compte →
+   Paramètres → API) et vérifiez-la avec **Tester la clé**.
+3. Glissez le bouton **« Envoyer à Lumière »** dans la barre de favoris de votre navigateur
+   (facultatif).
+
+### Sur la fiche d'un film ou d'une série
+
+- **Sur le disque** : ce que vous avez déjà (téléchargé, en cours, ou déposé dans la
+  bibliothèque), avec **Lecture**. Aucune source n'est interrogée à l'ouverture de la fiche.
+- **Télécharger** (le film, ou la saison choisie pour une série) : choisissez la source.
+  - **Extensions Stremio** : « Meilleure version » ou « Choisir une version » pour un film ;
+    « Toute la saison » ou « Épisode par épisode » pour une série (aussi pour regarder en
+    streaming).
+  - **Un site** (loadix.fun…) : **Chercher sur …** ouvre le site sur la recherche du titre, et
+    une fenêtre de Lumière vous guide : passez la vérification, choisissez la version (la
+    saison complète pour une série), copiez le lien 1fichier, revenez et faites **Ctrl+V**. Le
+    favori **« Envoyer à Lumière »** évite le copier-coller.
+
+Lumière vérifie le lien (nom, taille), le rattache au film ou à la saison d'où vous êtes parti,
+puis le télécharge sur le serveur : lien direct demandé à l'API 1fichier, plusieurs morceaux en
+parallèle, reprise. Une **saison complète en archive .zip** est rangée épisode par épisode :
+
+- archive non compressée (le cas habituel pour des vidéos) : ses épisodes se téléchargent un
+  par un, à cocher, et se **regardent directement dans l'archive** (bouton ▶), sans rien
+  télécharger ;
+- archive compressée : téléchargée en entier, puis décompressée dans le dossier de la saison.
+
+Les archives RAR ou 7z sont téléchargées telles quelles. Un lien se colle aussi depuis
+**Téléchargements → Lien 1fichier**, ou n'importe où dans Lumière.
 
 ### Avec Docker
 
@@ -136,20 +177,23 @@ un faux service TMDB et deux fausses extensions Stremio (« Lumière démo » et
 liens qui expirent, réserve de liens limitée, fichiers en partie communs), puis l'application
 sur <http://localhost:8484> avec une base dédiée (`data/demo`). `DEMO_MAX_CONNECTIONS=2 npm run
 demo` limite les connexions simultanées à un même fichier, comme un hébergeur strict (pour
-éprouver les positionnements du lecteur).
+éprouver les positionnements du lecteur). Un faux 1fichier (compte premium, clé `demo`) et un
+faux site de liens (avec des saisons complètes en .zip) servent les sites : ajoutez le site
+`http://127.0.0.1:8585/site-demo/?q={titre}`.
 
 ---
 
 ## Configuration
 
-La plupart des réglages se font dans l'interface (**Paramètres**), rangés en quatre onglets :
+La plupart des réglages se font dans l'interface (**Paramètres**), rangés en cinq onglets :
 
-| Onglet                | Contenu                                                                                                                                                                |
-| --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Général**           | Apparence du verre (propre à chaque appareil, avec aperçu), langues (audio, sous-titres, fiches), conversion vidéo, téléchargements (dossier, nombre, débit, qualité). |
-| **Extensions et API** | Extensions Stremio (liste ordonnée pour les fichiers, sous-titres en ligne) et clés d'API (TMDB, OpenSubtitles.com), chacune avec son bouton de test.                  |
-| **Catalogue**         | État des sections films et séries, actualisation (automatique ou immédiate) depuis TMDB.                                                                               |
-| **Système**           | Version, ffmpeg, espace disque, dossier des données.                                                                                                                   |
+| Onglet                  | Contenu                                                                                                                                                                |
+| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Général**             | Apparence du verre (propre à chaque appareil, avec aperçu), langues (audio, sous-titres, fiches), conversion vidéo, téléchargements (dossier, nombre, débit, qualité). |
+| **Sources**             | D'où viennent les fichiers : extensions Stremio (liste ordonnée), sites (loadix.fun…), compte 1fichier premium et favori « Envoyer à Lumière ».                        |
+| **Sous-titres et clés** | Sous-titres en ligne (extensions Stremio de sous-titres, OpenSubtitles.com) et clés d'API (TMDB), chacune avec son bouton de test.                                     |
+| **Catalogue**           | État des sections films et séries, actualisation (automatique ou immédiate) depuis TMDB.                                                                               |
+| **Système**             | Version, ffmpeg, espace disque, dossier des données.                                                                                                                   |
 
 Les variables d'environnement définissent les valeurs de départ. Elles peuvent aussi être
 placées dans un fichier `.env` à la racine du dépôt (copiez [`.env.example`](.env.example)) :
@@ -164,6 +208,7 @@ placées dans un fichier `.env` à la racine du dépôt (copiez [`.env.example`]
 | `STREMIO_ADDON_URLS`           | `https://st.111477.xyz/manifest.json`             | Extensions Stremio qui fournissent les fichiers, par ordre de préférence, séparées par des virgules (`STREMIO_ADDON_URL` : ancien nom, une seule adresse). |
 | `SUBTITLE_ADDON_URLS`          | `https://opensubtitles-v3.strem.io/manifest.json` | Extensions Stremio de sous-titres, séparées par des virgules (vide : aucune).                                                                              |
 | `OPENSUBTITLES_API_KEY`        | —                                                 | Clé d'API OpenSubtitles.com (sous-titres faits pour le fichier exact).                                                                                     |
+| `ONEFICHIER_API_KEY`           | —                                                 | Clé d'API d'un compte 1fichier premium (liens des sources personnalisées).                                                                                 |
 | `FFMPEG_PATH` / `FFPROBE_PATH` | `ffmpeg` / `ffprobe`                              | Chemins des binaires s'ils ne sont pas dans le PATH.                                                                                                       |
 | `LOG_LEVEL`                    | `info`                                            | `debug` pour diagnostiquer.                                                                                                                                |
 
@@ -171,8 +216,8 @@ placées dans un fichier `.env` à la racine du dépôt (copiez [`.env.example`]
 > que seul un vrai navigateur passe : Lumière ne le lit plus. Son extension Stremio
 > (st.111477.xyz), comme les autres extensions, donne au contraire des liens faits pour les
 > lecteurs vidéo. Lumière demande les liens à toutes les extensions configurées **au moment
-> d'agir** : à l'ouverture d'un film (ses versions), à la lecture ou au téléchargement d'un
-> épisode (la liste des saisons vient de TMDB). Les réponses de chaque extension sont gardées en
+> d'agir** : quand vous affichez les versions d'un film, à la lecture ou au téléchargement
+> d'un épisode (la fiche et la liste des saisons viennent de TMDB). Les réponses de chaque extension sont gardées en
 > base et réutilisées tant que l'hôte accepte le lien ; un fichier proposé par plusieurs
 > extensions garde un seul chemin (reprise, bibliothèque), et l'extension suivante prend le
 > relais si le lien de la première est refusé. Chez 111477, **chaque lien consomme un jeton**
@@ -248,11 +293,11 @@ Liquid Glass dans **[docs/DESIGN.md](docs/DESIGN.md)**.
 
 | Symptôme                                                       | Piste                                                                                                                                                                                                                                                                          |
 | -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Le catalogue reste vide                                        | Le catalogue vient de TMDB : ajoutez une clé TMDB (**Paramètres → Extensions et API**), puis **Catalogue → Actualiser maintenant**.                                                                                                                                            |
+| Le catalogue reste vide                                        | Le catalogue vient de TMDB : ajoutez une clé TMDB (**Paramètres → Sous-titres et clés**), puis **Catalogue → Actualiser maintenant**.                                                                                                                                          |
 | « Lien de l'extension injoignable » / lien refusé (403)        | Lancez `npm run diagnose` pour vérifier chaque extension depuis votre machine (manifeste, liens, lecture) et joignez le rapport à votre signalement. Ajouter une seconde extension donne un lien de secours pour les fichiers qu'elles ont en commun.                          |
 | « L'extension a atteint sa limite de liens »                   | La réserve de liens de votre adresse IP est vide (chez 111477 : un lien regagné toutes les 5 minutes). Patientez, et réglez l'extension sur [st.111477.xyz](https://st.111477.xyz/) pour qu'elle propose moins de liens par titre. Les liens déjà obtenus restent utilisables. |
-| « Extension Stremio injoignable » / « manifest.json invalide » | Vérifiez l'adresse dans **Paramètres → Extensions et API** (bouton « Tester » de l'extension) : collez le lien d'installation complet, configuration comprise.                                                                                                                 |
-| « Aucun fichier proposé » sur une fiche                        | Aucune extension ne propose de fichier pour ce titre pour l'instant (nouvel essai à la prochaine ouverture) : ajoutez-en une autre dans **Paramètres → Extensions et API**.                                                                                                    |
+| « Extension Stremio injoignable » / « manifest.json invalide » | Vérifiez l'adresse dans **Paramètres → Sources** (bouton « Tester » de l'extension) : collez le lien d'installation complet, configuration comprise.                                                                                                                           |
+| « Aucune extension ne propose ce film »                        | Aucune extension ne propose de fichier pour ce titre pour l'instant (nouvel essai au prochain affichage des versions) : ajoutez-en une autre, ou un site, dans **Paramètres → Sources**.                                                                                       |
 | Un ancien téléchargement en file affiche « ancienne source »   | Il visait un fichier du site, qui n'est plus lu : supprimez-le et relancez le téléchargement depuis la fiche du titre (les fichiers déjà téléchargés restent dans la bibliothèque).                                                                                            |
 | Une vidéo ne se lance pas                                      | Vérifiez que ffmpeg est détecté (**Paramètres → Système**). Le lecteur bascule automatiquement en conversion en cas d'échec.                                                                                                                                                   |
 | Pas d'affiches                                                 | Ajoutez/testez la clé TMDB dans les paramètres.                                                                                                                                                                                                                                |

@@ -61,3 +61,22 @@ describe('migration vers les extensions Stremio seules', () => {
     db.close();
   });
 });
+
+describe('migration de la source loadix.fun', () => {
+  it('ouvre la recherche de loadix au lieu de sa page d’accueil', () => {
+    const sources = [
+      { id: 'a', name: 'loadix.fun', searchUrl: 'https://loadix.fun/', host: '1fichier' },
+      { id: 'b', name: 'Autre', searchUrl: 'https://autre.site/?q={titre}', host: '1fichier' },
+    ];
+    const db = migrateFrom(9, (old) => {
+      old
+        .prepare('INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?)')
+        .run('customSources', JSON.stringify(sources), 'x');
+    });
+    expect(new SettingsService(db, loadConfig({})).get().customSources).toEqual([
+      { ...sources[0], searchUrl: 'https://loadix.fun/search?q={titre}&type={type_en}' },
+      sources[1],
+    ]);
+    db.close();
+  });
+});

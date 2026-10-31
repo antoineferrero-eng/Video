@@ -58,6 +58,14 @@ export const router = createBrowserRouter([
           })),
       },
       {
+        // Page ouverte par le favori « Envoyer à Lumière » (lien 1fichier dans le fragment).
+        path: 'envoi-1fichier',
+        lazy: () =>
+          import('./features/onefichier/SendPage').then((module) => ({
+            Component: module.SendPage,
+          })),
+      },
+      {
         path: 'parametres',
         lazy: () =>
           import('./features/settings/SettingsPage').then((module) => ({
