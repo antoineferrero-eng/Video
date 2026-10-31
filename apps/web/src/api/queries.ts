@@ -7,6 +7,7 @@ import {
 } from '@tanstack/react-query';
 import type {
   AddonTestResult,
+  ApiKeyTestResult,
   CatalogQuery,
   CatalogSectionStatus,
   ContinueWatchingItem,
@@ -20,6 +21,8 @@ import type {
   LibraryItem,
   LibraryScanResult,
   MediaRef,
+  OneFichierFileInfo,
+  OneFichierLinkRequest,
   Page,
   SettingsResponse,
   SettingsUpdate,
@@ -96,6 +99,19 @@ export function useEpisodeFiles(
   return useQuery({
     queryKey: ['title', titleId, 'episode', season, episode] as const,
     queryFn: () => api<EpisodeFiles>(`/titles/${titleId}/episodes/${season}/${episode}`),
+    enabled,
+    staleTime: 10 * 60_000,
+  });
+}
+
+/**
+ * Versions d'un film proposées par les extensions Stremio : demandées seulement quand on
+ * choisit de les afficher (chaque demande peut consommer des liens).
+ */
+export function useMovieVersions(titleId: number, enabled: boolean) {
+  return useQuery({
+    queryKey: ['title', titleId, 'versions'] as const,
+    queryFn: () => api<EpisodeFiles>(`/titles/${titleId}/versions`),
     enabled,
     staleTime: 10 * 60_000,
   });
@@ -193,6 +209,28 @@ export function useEnqueueTitle() {
   return useMutation({
     mutationFn: (input: { titleId: number; season?: number | null; episode?: number | null }) =>
       api<EnqueueResult>('/downloads/title', { method: 'POST', body: input }),
+    onSuccess: (result) => {
+      reportEnqueue(result);
+      invalidate();
+    },
+    onError: (error) => toast.error('Ajout impossible', { description: errorMessage(error) }),
+  });
+}
+
+/** Vérifie un lien 1fichier (nom, taille) avant de le télécharger. */
+export function useOneFichierInfo() {
+  return useMutation({
+    mutationFn: (input: Pick<OneFichierLinkRequest, 'url' | 'password'>) =>
+      api<OneFichierFileInfo>('/downloads/1fichier/info', { method: 'POST', body: input }),
+  });
+}
+
+/** Télécharge un lien 1fichier (compte premium), rattaché au titre choisi. */
+export function useEnqueueOneFichier() {
+  const invalidate = useInvalidateAfterDownload();
+  return useMutation({
+    mutationFn: (input: OneFichierLinkRequest) =>
+      api<EnqueueResult>('/downloads/1fichier', { method: 'POST', body: input }),
     onSuccess: (result) => {
       reportEnqueue(result);
       invalidate();
@@ -373,6 +411,16 @@ export function useTestTmdb() {
   return useMutation({
     mutationFn: (apiKey?: string) =>
       api<{ ok: boolean; message: string }>('/settings/test-tmdb', {
+        method: 'POST',
+        body: apiKey ? { apiKey } : {},
+      }),
+  });
+}
+
+export function useTestOneFichier() {
+  return useMutation({
+    mutationFn: (apiKey?: string) =>
+      api<ApiKeyTestResult>('/settings/test-onefichier', {
         method: 'POST',
         body: apiKey ? { apiKey } : {},
       }),

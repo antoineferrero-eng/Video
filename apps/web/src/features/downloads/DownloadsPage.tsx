@@ -3,6 +3,7 @@ import {
   CheckCircle2,
   Clock,
   Download,
+  Link2,
   Loader2,
   Pause,
   Play,
@@ -26,6 +27,7 @@ import { ProgressBar } from '../../components/ui/ProgressBar';
 import { PageLoader } from '../../components/ui/Spinner';
 import { EmptyState, ErrorState } from '../../components/ui/States';
 import { Glass } from '../../design/glass/Glass';
+import { openOneFichierDialog } from '../onefichier/open-dialog';
 import { cn } from '../../lib/cn';
 import {
   episodeCode,
@@ -70,6 +72,15 @@ export function DownloadsPage() {
           aria-label="Actions sur tous les téléchargements"
           className="flex max-w-full items-center gap-0.5 self-start overflow-x-auto rounded-full p-1 lg:self-auto"
         >
+          <Button
+            variant="ghost"
+            icon={<Link2 className="size-4" />}
+            onClick={() => openOneFichierDialog()}
+            aria-label="Ajouter un lien 1fichier"
+            title="Ajouter un lien 1fichier (ou Ctrl+V n’importe où dans Lumière)"
+          >
+            <span className="hidden sm:inline">Lien 1fichier</span>
+          </Button>
           <Button
             variant="ghost"
             icon={<Pause className="size-4" />}

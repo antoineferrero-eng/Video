@@ -249,11 +249,11 @@ describe('catalogue TMDB', () => {
     ]);
   });
 
-  it('signale sur la fiche d’un film qu’aucune extension n’est configurée', async () => {
+  it('signale, à la demande des versions d’un film, qu’aucune extension n’est configurée', async () => {
     const [cosmos] = (await container.catalog.search({ q: 'cosmos' })).items;
-    const details = await container.catalog.details(cosmos!.id);
-    expect(details.files).toEqual([]);
-    expect(details.sourceNotice).toMatch(/Aucune extension Stremio configurée/);
+    const versions = await container.catalog.movieVersions(cosmos!.id);
+    expect(versions.files).toEqual([]);
+    expect(versions.notice).toMatch(/Aucune extension Stremio configurée/);
   });
 
   it('liste les saisons et épisodes d’une série d’après TMDB', async () => {

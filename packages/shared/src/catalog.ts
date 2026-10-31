@@ -113,6 +113,8 @@ export interface TitleDetails extends TitleSummary {
   runtime: number | null;
   releaseDate: string | null;
   tmdbId: number | null;
+  /** Identifiant IMDb (« tt… »), une fois demandé à TMDB. */
+  imdbId: string | null;
   metadataStatus: MetadataStatus;
   /** Versions proposées par les extensions (films). */
   files: RemoteFile[];

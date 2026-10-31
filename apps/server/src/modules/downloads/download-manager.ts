@@ -11,21 +11,32 @@ import type {
 import { RateLimiter, sleep } from '../../core/async';
 import { ConflictError, NotFoundError, errorMessage } from '../../core/errors';
 import type { EventBus } from '../../core/event-bus';
-import { ensureDir, fileSize, getDiskSpace, pathExists, uniquePath } from '../../core/fs';
+import {
+  ensureDir,
+  fileSize,
+  getDiskSpace,
+  pathExists,
+  sanitizeFileName,
+  uniquePath,
+} from '../../core/fs';
 import type { Logger } from '../../core/logger';
 import { formatBytes, formatEpisodeCode, prettifyTitle } from '../../core/text';
 import { parseEpisode, parseSeasonFolder } from '../../domain/episode-parser';
 import { pickPreferredFile } from '../../domain/file-selection';
+import { classifyFile, isSampleFile } from '../../domain/media-files';
 import { parseRelease } from '../../domain/release-parser';
+import { isArchiveName } from '../archives/archive-entries';
+import { entryDataOffset, extractEntry, fileReader, readZipEntries } from '../archives/zip';
 import type { CatalogService } from '../catalog/catalog.service';
 import { displayTitle, posterUrlFor } from '../catalog/presenters';
 import type { TitleRow, TitlesRepository } from '../catalog/titles.repository';
+import type { LibraryRow } from '../library/library.repository';
 import type { LibraryService } from '../library/library.service';
 import type { MetadataService } from '../metadata/metadata.service';
 import type { SettingsService } from '../settings/settings.service';
 import { normalizeRemotePath, remoteBaseName, remoteParent } from '../source/remote-path';
 import type { SourceClient } from '../source/source-client';
-import { parseVirtualPath } from '../source/stremio/virtual-path';
+import { parseVirtualPath, safeFileName } from '../source/stremio/virtual-path';
 import type { DownloadRow, DownloadsRepository, NewDownload } from './downloads.repository';
 import {
   EpisodeQueue,
@@ -61,6 +72,8 @@ export interface EnqueueFile {
   path: string;
   titleId?: number | null;
   size?: number | null;
+  /** Saison d'un épisode dont le nom ne la donne pas (saison cherchée sur un site). */
+  season?: number | null;
 }
 
 /**
@@ -224,7 +237,11 @@ export class DownloadManager {
         const title = file.titleId
           ? this.titles.findById(file.titleId)
           : this.titles.findContaining(remotePath);
-        created.push(this.repository.insert(this.describe(remotePath, file.size ?? null, title)));
+        created.push(
+          this.repository.insert(
+            this.describe(remotePath, file.size ?? null, title, file.season ?? null),
+          ),
+        );
       } catch (error) {
         skipped.push({ path: file.path, reason: errorMessage(error) });
       }
@@ -378,13 +395,15 @@ export class DownloadManager {
     remotePath: string,
     size: number | null,
     title: TitleRow | undefined,
+    seasonHint: number | null = null,
   ): NewDownload {
     const fileName = remoteBaseName(remotePath);
     const release = parseRelease(fileName);
     const kind: DownloadKind =
       title?.kind === 'series' ? 'episode' : title?.kind === 'movie' ? 'movie' : 'file';
     const parentFolder = remoteBaseName(remoteParent(remotePath) ?? '');
-    let ref = parseEpisode(fileName, parseSeasonFolder(parentFolder));
+    let ref = parseEpisode(fileName, parseSeasonFolder(parentFolder) ?? seasonHint);
+    if (ref.season === null && seasonHint !== null) ref = { ...ref, season: seasonHint };
     const virtual = parseVirtualPath(remotePath);
     if (virtual?.season != null && virtual.episode != null) {
       // Fichier d'extension : l'épisode demandé fait foi (le nom du fichier peut être muet).
@@ -713,6 +732,34 @@ export class DownloadManager {
     await fsp.rename(partPath, finalPath);
     const size = (await fileSize(finalPath)) ?? state.downloaded;
 
+    // Archive zip (saison complète…) : ses vidéos rejoignent la bibliothèque, l'archive part.
+    let archiveError: string | null = null;
+    if (isArchiveName(finalPath)) {
+      try {
+        const extracted = await this.extractArchive(row, finalPath, state.controller.signal);
+        if (extracted.length > 0) {
+          this.repository.update(state.id, {
+            status: 'completed',
+            completed_at: new Date().toISOString(),
+            downloaded_bytes: size,
+            total_bytes: size,
+            target_path: extracted[0]?.file_path ?? finalPath,
+            error: null,
+            library_item_id: extracted[0]?.id ?? null,
+          });
+          state.downloaded = size;
+          state.total = size;
+          state.speed = 0;
+          return;
+        }
+        archiveError = 'Archive sans vidéo : gardée telle quelle.';
+      } catch (error) {
+        if (state.controller.signal.aborted) throw error;
+        archiveError = `Archive gardée telle quelle : ${errorMessage(error)}`;
+        this.logger.warn({ id: state.id, err: errorMessage(error) }, 'Décompression impossible');
+      }
+    }
+
     const libraryRow = this.library.add({
       kind: row.kind === 'file' ? 'other' : row.kind,
       title_id: row.title_id,
@@ -731,7 +778,7 @@ export class DownloadManager {
       downloaded_bytes: size,
       total_bytes: size,
       target_path: finalPath,
-      error: null,
+      error: archiveError,
       library_item_id: libraryRow.id,
     });
     state.downloaded = size;
@@ -741,6 +788,66 @@ export class DownloadManager {
       { id: state.id, file: path.basename(finalPath), size },
       'Téléchargement terminé',
     );
+  }
+
+  /**
+   * Décompresse une archive zip téléchargée à côté d'elle : vidéos ajoutées à la bibliothèque
+   * (épisode lu dans leur nom, saison du téléchargement à défaut), sous-titres gardés à côté.
+   * L'archive est supprimée une fois ses vidéos extraites.
+   */
+  private async extractArchive(
+    row: DownloadRow,
+    archive: string,
+    signal: AbortSignal,
+  ): Promise<LibraryRow[]> {
+    const handle = await fsp.open(archive, 'r');
+    const read = fileReader(handle);
+    let entries: Array<{ entry: Awaited<ReturnType<typeof readZipEntries>>[number]; data: number }>;
+    try {
+      const listed = (await readZipEntries(read, (await handle.stat()).size)).filter(
+        (entry) => classifyFile(entry.name) !== 'other' && !isSampleFile(entry.name),
+      );
+      entries = [];
+      for (const entry of listed) entries.push({ entry, data: await entryDataOffset(read, entry) });
+    } finally {
+      await handle.close();
+    }
+
+    const folder = path.dirname(archive);
+    const added: LibraryRow[] = [];
+    for (const { entry, data } of entries) {
+      const base = path.posix.basename(entry.name);
+      const target = await uniquePath(path.join(folder, sanitizeFileName(base, 'video')));
+      await extractEntry(archive, entry, data, target, signal);
+      if (classifyFile(base) !== 'video') continue;
+      const ref = parseEpisode(base, row.season);
+      const isEpisode = row.kind === 'episode';
+      added.push(
+        this.library.add({
+          kind: row.kind === 'file' ? 'other' : row.kind,
+          title_id: row.title_id,
+          title: row.title,
+          season: isEpisode ? (ref.season ?? row.season) : null,
+          episode: isEpisode ? ref.episode : null,
+          year: row.year,
+          file_path: target,
+          file_name: path.basename(target),
+          size_bytes: entry.size,
+          remote_path: `${row.remote_path}/${safeFileName(base)}`,
+        }),
+      );
+    }
+    if (added.length > 0) {
+      await fsp.rm(archive, { force: true });
+      this.events.publish({
+        type: 'downloads.notice',
+        level: 'success',
+        message: `${row.title} : ${added.length} vidéo${added.length > 1 ? 's' : ''} décompressée${added.length > 1 ? 's' : ''}`,
+        description: row.file_name,
+      });
+    }
+    this.logger.info({ id: row.id, videos: added.length }, 'Archive décompressée');
+    return added;
   }
 
   // -------------------------------------------------------------------------

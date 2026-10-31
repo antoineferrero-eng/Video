@@ -36,6 +36,9 @@ createDemoServer({
   maxConnections: Number(process.env.DEMO_MAX_CONNECTIONS ?? 0),
 }).listen(port, '127.0.0.1', () => {
   console.log(`Services de démonstration : http://127.0.0.1:${port}/`);
+  console.log(
+    `Source personnalisée de démonstration (Paramètres → Sources → Sites) : http://127.0.0.1:${port}/site-demo/?q={titre}`,
+  );
   const server = spawn(
     process.execPath,
     ['--import', 'tsx', path.join(repoRoot, 'apps/server/src/main.ts')],
@@ -58,6 +61,9 @@ createDemoServer({
         OPENSUBTITLES_API_KEY: process.env.OPENSUBTITLES_API_KEY ?? 'demo',
         OPENSUBTITLES_API_URL: `http://127.0.0.1:${port}/opensubtitles/api/v1`,
         SUBTITLE_ADDON_URLS: `http://127.0.0.1:${port}/subtitles-addon/manifest.json`,
+        // Faux 1fichier (compte premium, clé « demo ») pour les sources personnalisées.
+        ONEFICHIER_API_KEY: process.env.ONEFICHIER_API_KEY ?? 'demo',
+        ONEFICHIER_API_URL: `http://127.0.0.1:${port}/1fichier/api/v1`,
       },
     },
   );

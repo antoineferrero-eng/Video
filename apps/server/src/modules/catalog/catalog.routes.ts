@@ -38,6 +38,13 @@ export function registerCatalogRoutes(
     catalog.details(request.params.id),
   );
 
+  /** Versions d'un film proposées par les extensions Stremio (une demande de liens). */
+  app.get(
+    '/titles/:id/versions',
+    { schema: { params: IdParams } },
+    async (request): Promise<EpisodeFiles> => catalog.movieVersions(request.params.id),
+  );
+
   /** Versions d'un épisode proposées par l'extension Stremio (une demande de liens). */
   app.get(
     '/titles/:id/episodes/:season/:episode',

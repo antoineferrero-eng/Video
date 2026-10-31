@@ -10,6 +10,21 @@ export function mediaKeyForFile(filePath: string): string {
   return `file:${filePath}`;
 }
 
+/** Préfixe des fichiers déposés à la main dans la bibliothèque (sans chemin distant). */
+export const LOCAL_ROOT = '/@bibliotheque/';
+
+/** Copie d'un titre : téléchargée, en cours de téléchargement, ou déposée à la main. */
+export interface TitleCopy {
+  path: string;
+  name: string;
+  size: number | null;
+  season: number | null;
+  episode: number | null;
+  /** Fichier local d'une copie déposée à la main (null : copie d'un fichier distant). */
+  localFile: string | null;
+  libraryItemId: number | null;
+}
+
 export function emptyAvailability(): MediaAvailability {
   return { download: null, libraryItemId: null, watch: null };
 }
@@ -107,6 +122,59 @@ export class AvailabilityService {
       )
       .all({ like }) as Array<{ remote_path: string }>;
     return rows.map((row) => row.remote_path);
+  }
+
+  /**
+   * Copies d'un titre sur le disque ou en cours de téléchargement, quelle que soit leur
+   * origine (extension Stremio, 1fichier, fichier déposé dans la bibliothèque) : c'est le
+   * rattachement au titre qui fait foi, pas le chemin. Un fichier déposé à la main, sans
+   * chemin distant, est désigné par `/@bibliotheque/<id>`.
+   */
+  titleCopies(titleId: number): TitleCopy[] {
+    const rows = this.db
+      .prepare(
+        `SELECT remote_path, NULL AS library_id, NULL AS file_path, file_name, total_bytes AS size,
+                season, episode
+           FROM downloads WHERE title_id = @titleId AND status != 'canceled'
+         UNION ALL
+         SELECT remote_path, id, file_path, file_name, size_bytes, season, episode
+           FROM library_items WHERE title_id = @titleId`,
+      )
+      .all({ titleId }) as Array<{
+      remote_path: string | null;
+      library_id: number | null;
+      file_path: string | null;
+      file_name: string;
+      size: number | null;
+      season: number | null;
+      episode: number | null;
+    }>;
+    // Une copie téléchargée apparaît dans les deux tables : la bibliothèque passe en premier.
+    const copies = new Map<string, TitleCopy>();
+    rows.sort((a, b) => Number(a.library_id === null) - Number(b.library_id === null));
+    for (const row of rows) {
+      const path = row.remote_path ?? `${LOCAL_ROOT}${row.library_id}`;
+      if (copies.has(path)) continue;
+      copies.set(path, {
+        path,
+        name: row.file_name,
+        size: row.size,
+        season: row.season,
+        episode: row.episode,
+        localFile: row.remote_path === null ? row.file_path : null,
+        libraryItemId: row.library_id,
+      });
+    }
+    return [...copies.values()];
+  }
+
+  /** État d'une copie déposée à la main (sans chemin distant). */
+  localAvailability(copy: TitleCopy): MediaAvailability {
+    return {
+      download: null,
+      libraryItemId: copy.libraryItemId,
+      watch: copy.localFile ? this.progressFor(mediaKeyForFile(copy.localFile)) : null,
+    };
   }
 
   progressFor(mediaKey: string): WatchState | null {

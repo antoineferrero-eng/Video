@@ -1,4 +1,23 @@
 export type PreferredQuality = '2160p' | '1080p' | '720p' | 'smallest';
+
+/** Hébergeur des liens qu'une source personnalisée fournit. */
+export type CustomSourceHost = '1fichier';
+
+/**
+ * Site que l'on consulte soi-même dans son navigateur (vérification anti-robot comprise) : la
+ * fiche d'un titre propose « Voir sur … », puis le lien obtenu sur le site est repris par
+ * Lumière (Ctrl+V, ou favori « Envoyer à Lumière »).
+ */
+export interface CustomSource {
+  id: string;
+  name: string;
+  /**
+   * Adresse ouverte depuis la fiche d'un titre. Repères remplacés : {titre}, {titre_original},
+   * {annee}, {tmdb}, {imdb}, {type} (« film » ou « serie »).
+   */
+  searchUrl: string;
+  host: CustomSourceHost;
+}
 export type TranscodePreset = 'quality' | 'balanced' | 'fast';
 
 export interface AppSettings {
@@ -25,6 +44,8 @@ export interface AppSettings {
   subtitleAddonUrls: string[];
   /** Compte OpenSubtitles.com (facultatif : plus de téléchargements par jour). */
   openSubtitlesUsername: string;
+  /** Sites consultés soi-même, proposés sur la fiche des titres (« Voir sur … »). */
+  customSources: CustomSource[];
   catalogRefreshHours: number;
   /**
    * Titres visés par section (films, séries) : les listes TMDB, complétées par « Découvrir »
@@ -43,6 +64,8 @@ export interface SettingsResponse {
   openSubtitlesApiKeyConfigured: boolean;
   openSubtitlesApiKeyFromEnv: boolean;
   openSubtitlesPasswordConfigured: boolean;
+  oneFichierApiKeyConfigured: boolean;
+  oneFichierApiKeyFromEnv: boolean;
 }
 
 export type SettingsUpdate = Partial<AppSettings> & {
@@ -52,7 +75,15 @@ export type SettingsUpdate = Partial<AppSettings> & {
   openSubtitlesApiKey?: string;
   /** Nouveau mot de passe du compte OpenSubtitles.com (chaîne vide pour le supprimer). */
   openSubtitlesPassword?: string;
+  /** Nouvelle clé d'API 1fichier (chaîne vide pour la supprimer). */
+  oneFichierApiKey?: string;
 };
+
+/** Test d'une clé d'API (TMDB, 1fichier…). */
+export interface ApiKeyTestResult {
+  ok: boolean;
+  message: string;
+}
 
 /** Test des services de sous-titres en ligne (paramètres). */
 export interface SubtitleProvidersTestResult {

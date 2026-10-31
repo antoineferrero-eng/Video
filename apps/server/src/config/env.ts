@@ -26,6 +26,9 @@ const EnvSchema = z.object({
   OPENSUBTITLES_API_URL: z.url().default('https://api.opensubtitles.com/api/v1'),
   // Extensions Stremio de sous-titres (adresses séparées par des virgules, vide : aucune).
   SUBTITLE_ADDON_URLS: z.string().default('https://opensubtitles-v3.strem.io/manifest.json'),
+  // Clé d'API d'un compte 1fichier premium (liens des sources personnalisées).
+  ONEFICHIER_API_KEY: optionalString,
+  ONEFICHIER_API_URL: z.url().default('https://api.1fichier.com/v1'),
   FFMPEG_PATH: z.string().default('ffmpeg'),
   FFPROBE_PATH: z.string().default('ffprobe'),
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']).default('info'),
@@ -51,6 +54,10 @@ export interface AppConfig {
     imageBaseUrl: string;
   };
   openSubtitles: {
+    envApiKey: string | null;
+    apiBaseUrl: string;
+  };
+  oneFichier: {
     envApiKey: string | null;
     apiBaseUrl: string;
   };
@@ -130,6 +137,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     openSubtitles: {
       envApiKey: e.OPENSUBTITLES_API_KEY ?? null,
       apiBaseUrl: e.OPENSUBTITLES_API_URL.replace(/\/+$/, ''),
+    },
+    oneFichier: {
+      envApiKey: e.ONEFICHIER_API_KEY ?? null,
+      apiBaseUrl: e.ONEFICHIER_API_URL.replace(/\/+$/, ''),
     },
     ffmpegPath: e.FFMPEG_PATH,
     ffprobePath: e.FFPROBE_PATH,

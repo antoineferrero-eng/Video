@@ -3,6 +3,7 @@ import type { DownloadKind } from '@lumiere/shared';
 import { isPathInside, sanitizeFileName } from '../../core/fs';
 import { pad2 } from '../../core/text';
 import { MOVIES_DIR, OTHER_DIR, SERIES_DIR } from '../library/library.service';
+import { isOneFichierPath } from '../source/onefichier/onefichier-link';
 
 export interface TargetPathInput {
   kind: DownloadKind;
@@ -17,7 +18,8 @@ export interface TargetPathInput {
  * Emplacement local d'un téléchargement :
  * - films  : `<racine>/Films/<Titre (Année)>/<fichier>`
  * - séries : `<racine>/Séries/<Série>/Saison 01/<fichier>`
- * - autres : `<racine>/Autres/<arborescence distante>`
+ * - autres : `<racine>/Autres/<arborescence distante>` (`<racine>/Autres/<fichier>` pour un
+ *   fichier 1fichier, dont le chemin n'a pas d'arborescence parlante)
  */
 export function buildTargetPath(root: string, input: TargetPathInput): string {
   const file = sanitizeFileName(input.fileName, 'video');
@@ -32,6 +34,8 @@ export function buildTargetPath(root: string, input: TargetPathInput): string {
           ? 'Spéciaux'
           : `Saison ${pad2(input.season)}`;
     target = path.join(root, SERIES_DIR, sanitizeFileName(input.titleFolder), seasonFolder, file);
+  } else if (isOneFichierPath(input.remotePath)) {
+    target = path.join(root, OTHER_DIR, file);
   } else {
     const segments = input.remotePath
       .split('/')

@@ -4,6 +4,7 @@ import { Link, NavLink, Outlet, useLocation, useNavigate, useSearchParams } from
 import { useDownloads } from '../../api/queries';
 import { AmbientBackground } from '../../design/ambient/AmbientBackground';
 import { Glass } from '../../design/glass/Glass';
+import { OneFichierInbox } from '../../features/onefichier/OneFichierInbox';
 import { useLiquidIndicator } from '../../design/glass/useLiquidIndicator';
 import { cn } from '../../lib/cn';
 import { formatSpeed } from '../../lib/format';
@@ -36,6 +37,7 @@ export function AppLayout({ connected }: { connected: boolean }) {
       <Sidebar connected={connected} />
       <Toolbar />
       <TabBar minimized={minimized} onExpand={expand} />
+      <OneFichierInbox />
     </div>
   );
 }

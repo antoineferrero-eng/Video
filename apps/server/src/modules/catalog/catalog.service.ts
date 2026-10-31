@@ -19,7 +19,11 @@ import { searchTokens } from '../../core/text';
 import type { EpisodeRef } from '../../domain/episode-parser';
 import { compareByQuality } from '../../domain/file-selection';
 import { parseRelease } from '../../domain/release-parser';
-import { emptyAvailability, type AvailabilityService } from '../availability/availability.service';
+import {
+  emptyAvailability,
+  type AvailabilityService,
+  type TitleCopy,
+} from '../availability/availability.service';
 import type { MetadataService } from '../metadata/metadata.service';
 import type { SettingsService } from '../settings/settings.service';
 import { remoteBaseName } from '../source/remote-path';
@@ -150,7 +154,7 @@ export class CatalogService {
     try {
       if (!this.metadata.isEnabled()) {
         throw new Error(
-          'Le catalogue vient de TMDB : ajoutez une clé TMDB (Paramètres → Extensions et API), gratuite.',
+          'Le catalogue vient de TMDB : ajoutez une clé TMDB (Paramètres → Sous-titres et clés), gratuite.',
         );
       }
       const seen = await this.tmdbCatalog.importLists(kind);
@@ -243,6 +247,7 @@ export class CatalogService {
       runtime: row.runtime,
       releaseDate: row.release_date,
       tmdbId: row.tmdb_id,
+      imdbId: row.imdb_id,
       metadataStatus: this.metadata.isEnabled() ? row.metadata_status : 'disabled',
       files: [],
       seasons: [],
@@ -251,25 +256,15 @@ export class CatalogService {
   }
 
   /**
-   * Fiche d'un titre : les versions d'un film sont demandées aux extensions à l'ouverture ;
-   * les épisodes d'une série viennent de TMDB, et leurs fichiers ne sont demandés qu'à la
-   * lecture ou au téléchargement (pour ménager la limite de liens des extensions).
+   * Fiche d'un titre : ce qui est sur le disque (ou en cours de téléchargement). Aucune source
+   * n'est interrogée à l'ouverture : les versions d'un film sont demandées aux extensions par
+   * `movieVersions`, celles d'un épisode par `episodeFiles`, quand on choisit de télécharger.
    */
   async details(id: number): Promise<TitleDetails> {
     const row = await this.metadata.ensure(this.getRow(id));
     if (row.kind === 'movie') {
-      let result: AddonResult = { files: [], notice: null, limited: false };
-      try {
-        result = await this.addon.movieFiles(row);
-      } catch (error) {
-        result = { ...result, notice: errorMessage(error) };
-      }
       const fresh = this.titles.findById(id) ?? row;
-      return {
-        ...this.baseDetails(fresh),
-        files: this.presentFiles(result.files, this.addon.knownFolder(fresh)),
-        sourceNotice: result.notice,
-      };
+      return { ...this.baseDetails(fresh), files: this.copyFiles(this.movieCopies(fresh)) };
     }
     let notice: string | null = null;
     try {
@@ -288,40 +283,75 @@ export class CatalogService {
     return { ...this.baseDetails(fresh), seasons, sourceNotice: notice };
   }
 
-  /** Fichiers proposés par les extensions, complétés des copies déjà téléchargées. */
-  private presentFiles(files: AddonFile[], folder: string | null, ref?: EpisodeRef): RemoteFile[] {
-    const offered = new Set(files.map((file) => file.path));
-    const known = folder
-      ? this.availability
-          .knownPathsUnder(folder)
-          .filter((path) => !offered.has(path) && parseVirtualPath(path)?.fileName)
-      : [];
-    const entries: FileEntry[] = [
-      ...files.map((file) => ({
-        name: file.fileName,
-        path: file.path,
-        size: file.size,
-        label: file.label,
-      })),
-      ...known.map((path) => ({ name: remoteBaseName(path), path, size: null, label: null })),
-    ].sort(compareByQuality);
+  /** Versions proposées par les extensions, avec leur état (téléchargée, en cours…). */
+  private offeredFiles(files: AddonFile[], ref?: EpisodeRef): RemoteFile[] {
+    const entries: FileEntry[] = files
+      .map((file) => ({ name: file.fileName, path: file.path, size: file.size, label: file.label }))
+      .sort(compareByQuality);
     const availability = this.availability.forRemotePaths(entries.map((entry) => entry.path));
     return entries.map((entry) => toRemoteFile(entry, availability.get(entry.path), ref));
+  }
+
+  /** Copies d'un titre présentées comme des fichiers (meilleure qualité d'abord). */
+  private copyFiles(copies: TitleCopy[], ref?: EpisodeRef): RemoteFile[] {
+    const entries = copies.map((copy) => ({ ...copy, label: null })).sort(compareByQuality);
+    const availability = this.availability.forRemotePaths(
+      entries.filter((copy) => !copy.localFile).map((copy) => copy.path),
+    );
+    return entries.map((copy) =>
+      toRemoteFile(
+        copy,
+        copy.localFile ? this.availability.localAvailability(copy) : availability.get(copy.path),
+        ref ??
+          (copy.season !== null && copy.episode !== null
+            ? { season: copy.season, episode: copy.episode, episodeEnd: null }
+            : undefined),
+      ),
+    );
+  }
+
+  /**
+   * Copies d'un film : celles rattachées au titre, et celles de son dossier d'extension
+   * (téléchargements plus anciens que le rattachement par titre).
+   */
+  private movieCopies(row: TitleRow): TitleCopy[] {
+    const copies = this.availability.titleCopies(row.id);
+    const folder = this.addon.knownFolder(row);
+    const known = new Set(copies.map((copy) => copy.path));
+    for (const path of folder ? this.availability.knownPathsUnder(folder) : []) {
+      if (known.has(path) || !parseVirtualPath(path)?.fileName) continue;
+      copies.push(remoteCopy(path));
+    }
+    return copies;
+  }
+
+  /**
+   * Copies des épisodes d'une série : rattachées au titre, ou dans son dossier d'extension
+   * (y compris les épisodes regardés en streaming, pour leur état « vu »).
+   */
+  private seriesCopies(row: TitleRow): TitleCopy[] {
+    const copies = this.availability
+      .titleCopies(row.id)
+      .filter((copy) => copy.season !== null && copy.episode !== null);
+    const folder = this.addon.knownFolder(row);
+    const known = new Set(copies.map((copy) => copy.path));
+    for (const path of folder ? this.availability.knownPathsUnder(folder, { watched: true }) : []) {
+      const ref = parseVirtualPath(path);
+      if (known.has(path) || !ref?.fileName || ref.season === null || ref.episode === null)
+        continue;
+      copies.push({ ...remoteCopy(path), season: ref.season, episode: ref.episode });
+    }
+    return copies;
   }
 
   /** Saisons TMDB ; les fichiers d'un épisode sont ses copies connues (téléchargées, regardées). */
   private async seasons(row: TitleRow): Promise<SeasonEntry[]> {
     const outlines = await this.addon.seasons(row);
-    const folder = this.addon.knownFolder(row);
-    const known = folder ? this.availability.knownPathsUnder(folder, { watched: true }) : [];
-    const byEpisode = new Map<string, string[]>();
-    for (const path of known) {
-      const ref = parseVirtualPath(path);
-      if (!ref?.fileName || ref.season === null || ref.episode === null) continue;
-      const key = `${ref.season}x${ref.episode}`;
-      byEpisode.set(key, [...(byEpisode.get(key) ?? []), path]);
+    const byEpisode = new Map<string, TitleCopy[]>();
+    for (const copy of this.seriesCopies(row)) {
+      const key = `${copy.season}x${copy.episode}`;
+      byEpisode.set(key, [...(byEpisode.get(key) ?? []), copy]);
     }
-    const availability = this.availability.forRemotePaths(known);
     return outlines.map((season) => ({
       key: `s${season.number}`,
       number: season.number,
@@ -338,10 +368,7 @@ export class CatalogService {
           stillUrl: imageUrl(episode.stillPath, 'w300'),
           airDate: episode.airDate,
           runtime: episode.runtime,
-          files: (byEpisode.get(`${episode.season}x${episode.episode}`) ?? [])
-            .map((path) => ({ name: remoteBaseName(path), path, size: null, label: null }))
-            .sort(compareByQuality)
-            .map((entry) => toRemoteFile(entry, availability.get(entry.path), ref)),
+          files: this.copyFiles(byEpisode.get(`${episode.season}x${episode.episode}`) ?? [], ref),
         };
       }),
     }));
@@ -351,6 +378,19 @@ export class CatalogService {
     const row = this.getRow(id);
     if (row.kind !== 'series') throw new BadRequestError('Ce titre n’est pas une série.');
     return row;
+  }
+
+  /** Versions d'un film proposées par les extensions, avec leur état (une demande de liens). */
+  async movieVersions(id: number): Promise<EpisodeFiles> {
+    const row = this.getRow(id);
+    if (row.kind !== 'movie') throw new BadRequestError('Ce titre n’est pas un film.');
+    let result: AddonResult = { files: [], notice: null, limited: false };
+    try {
+      result = await this.addon.movieFiles(row);
+    } catch (error) {
+      result = { ...result, notice: errorMessage(error) };
+    }
+    return { files: this.offeredFiles(result.files), notice: result.notice };
   }
 
   /** Versions d'un film proposées par les extensions (une demande de liens). */
@@ -372,9 +412,8 @@ export class CatalogService {
   ): Promise<EpisodeFiles & { limited: boolean }> {
     const row = this.requireSeries(id);
     const result = await this.addon.episodeFiles(row, season, episode);
-    const folder = await this.addon.episodeFolder(this.titles.findById(id) ?? row, season, episode);
     return {
-      files: this.presentFiles(result.files, folder, { season, episode, episodeEnd: null }),
+      files: this.offeredFiles(result.files, { season, episode, episodeEnd: null }),
       notice: result.notice,
       limited: result.limited,
     };
@@ -384,7 +423,11 @@ export class CatalogService {
   async episodeCopies(id: number, season: number, episode: number): Promise<string[]> {
     const row = this.requireSeries(id);
     const folder = await this.addon.episodeFolder(row, season, episode);
-    return folder ? this.availability.knownPathsUnder(folder) : [];
+    const copies = this.availability
+      .titleCopies(id)
+      .filter((copy) => copy.season === season && copy.episode === episode)
+      .map((copy) => copy.path);
+    return [...(folder ? this.availability.knownPathsUnder(folder) : []), ...copies];
   }
 
   /** Saisons et épisodes (TMDB) d'une série. */
@@ -399,6 +442,19 @@ export class CatalogService {
   ): Promise<{ season: number; episode: number } | null> {
     return this.addon.nextEpisode(row, season, episode);
   }
+}
+
+/** Copie connue par son seul chemin distant (dossier d'extension). */
+function remoteCopy(path: string): TitleCopy {
+  return {
+    path,
+    name: remoteBaseName(path),
+    size: null,
+    season: null,
+    episode: null,
+    localFile: null,
+    libraryItemId: null,
+  };
 }
 
 function toRemoteFile(

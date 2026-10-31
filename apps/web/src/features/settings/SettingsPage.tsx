@@ -1,11 +1,14 @@
 import {
   ArrowDown,
   ArrowUp,
+  Bookmark,
   CheckCircle2,
+  Copy,
   Cpu,
   Database,
   Download,
   ExternalLink,
+  Globe,
   KeyRound,
   Languages,
   Play,
@@ -19,15 +22,16 @@ import {
   Trash2,
   XCircle,
 } from 'lucide-react';
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useLocation, useSearchParams } from 'react-router';
-import type { AppSettings, SettingsResponse, SettingsUpdate } from '@lumiere/shared';
+import type { AppSettings, CustomSource, SettingsResponse, SettingsUpdate } from '@lumiere/shared';
 import { errorMessage } from '../../api/client';
 import {
   useRefreshCatalog,
   useSettings,
   useSystemInfo,
   useTestAddon,
+  useTestOneFichier,
   useTestSubtitles,
   useTestTmdb,
   useUpdateSettings,
@@ -43,6 +47,7 @@ import { setAppearance, useAppearance, type GlassMaterial } from '../../design/g
 import { Glass } from '../../design/glass/Glass';
 import { cn } from '../../lib/cn';
 import { formatBytes, formatRelativeDate, plural } from '../../lib/format';
+import { LOADIX_SEARCH_URL, bookmarkletCode, hasMarkers } from '../onefichier/links';
 
 const LANGUAGES = [
   { value: 'fr', label: 'Français' },
@@ -62,11 +67,12 @@ export function SettingsPage() {
   return <SettingsForm key={JSON.stringify(settings.data)} response={settings.data} />;
 }
 
-type SettingsTab = 'general' | 'services' | 'catalog' | 'system';
+type SettingsTab = 'general' | 'sources' | 'services' | 'catalog' | 'system';
 
 const TABS: Array<{ value: SettingsTab; label: string }> = [
   { value: 'general', label: 'Général' },
-  { value: 'services', label: 'Extensions et API' },
+  { value: 'sources', label: 'Sources' },
+  { value: 'services', label: 'Sous-titres et clés' },
   { value: 'catalog', label: 'Catalogue' },
   { value: 'system', label: 'Système' },
 ];
@@ -84,8 +90,8 @@ const TAB_FIELDS: Record<SettingsTab, Array<keyof SettingsUpdate>> = {
     'maxDownloadSpeedKbps',
     'preferredQuality',
   ],
+  sources: ['stremioAddonUrls', 'customSources', 'oneFichierApiKey'],
   services: [
-    'stremioAddonUrls',
     'subtitleAddonUrls',
     'tmdbApiKey',
     'openSubtitlesApiKey',
@@ -125,6 +131,7 @@ function SettingsForm({ response }: { response: SettingsResponse }) {
   const [tmdbKey, setTmdbKey] = useState('');
   const [openSubtitlesKey, setOpenSubtitlesKey] = useState('');
   const [openSubtitlesPassword, setOpenSubtitlesPassword] = useState('');
+  const [oneFichierKey, setOneFichierKey] = useState('');
 
   const changes = useMemo(() => {
     const patch: SettingsUpdate = {};
@@ -136,8 +143,9 @@ function SettingsForm({ response }: { response: SettingsResponse }) {
     if (tmdbKey.trim()) patch.tmdbApiKey = tmdbKey.trim();
     if (openSubtitlesKey.trim()) patch.openSubtitlesApiKey = openSubtitlesKey.trim();
     if (openSubtitlesPassword) patch.openSubtitlesPassword = openSubtitlesPassword;
+    if (oneFichierKey.trim()) patch.oneFichierApiKey = oneFichierKey.trim();
     return patch;
-  }, [draft, response.settings, tmdbKey, openSubtitlesKey, openSubtitlesPassword]);
+  }, [draft, response.settings, tmdbKey, openSubtitlesKey, openSubtitlesPassword, oneFichierKey]);
   const dirty = Object.keys(changes).length > 0;
   const pending = (value: SettingsTab) => TAB_FIELDS[value].filter((key) => key in changes).length;
 
@@ -149,6 +157,7 @@ function SettingsForm({ response }: { response: SettingsResponse }) {
     setTmdbKey('');
     setOpenSubtitlesKey('');
     setOpenSubtitlesPassword('');
+    setOneFichierKey('');
   };
 
   return (
@@ -157,7 +166,7 @@ function SettingsForm({ response }: { response: SettingsResponse }) {
         <div>
           <h1 className="large-title">Paramètres</h1>
           <p className="mt-1 text-sm text-zinc-400">
-            Préférences de lecture et d’apparence, extensions Stremio et services connectés.
+            Préférences de lecture et d’apparence, sources des fichiers et services connectés.
           </p>
         </div>
         <Tabs<SettingsTab>
@@ -318,18 +327,50 @@ function SettingsForm({ response }: { response: SettingsResponse }) {
         </div>
       )}
 
-      {tab === 'services' && (
-        <div role="tabpanel" aria-label="Extensions et API" className="flex flex-col gap-6">
+      {tab === 'sources' && (
+        <div role="tabpanel" aria-label="Sources" className="flex flex-col gap-6">
+          <SourcesIntro />
+
           <Section
             tone="violet"
             icon={<Puzzle />}
             title="Extensions Stremio"
-            description="Services au protocole des extensions Stremio : liens des fichiers et sous-titres en ligne."
+            description="Lumière leur demande directement les versions d’un film ou d’un épisode, quand vous choisissez « Extensions Stremio » dans « Télécharger »."
           >
             <StreamAddonsGroup
               urls={draft.stremioAddonUrls}
               onChange={(urls) => set('stremioAddonUrls', urls)}
             />
+          </Section>
+
+          <Section
+            tone="orange"
+            icon={<Globe />}
+            title="Sites (liens 1fichier)"
+            description="Sites que vous consultez vous-même, vérification anti-robot comprise. Lumière ouvre la recherche du titre, vous copiez le lien 1fichier, et Lumière le télécharge avec votre compte premium."
+          >
+            <CustomSourcesGroup
+              sources={draft.customSources}
+              onChange={(sources) => set('customSources', sources)}
+            />
+            <OneFichierGroup
+              response={response}
+              apiKey={oneFichierKey}
+              onApiKeyChange={setOneFichierKey}
+            />
+            <BookmarkletGroup />
+          </Section>
+        </div>
+      )}
+
+      {tab === 'services' && (
+        <div role="tabpanel" aria-label="Sous-titres et clés" className="flex flex-col gap-6">
+          <Section
+            tone="violet"
+            icon={<Languages />}
+            title="Sous-titres en ligne"
+            description="Cherchés pendant la lecture quand le fichier n’a pas la langue voulue."
+          >
             <SubtitleAddonsGroup
               urls={draft.subtitleAddonUrls}
               onChange={(urls) => set('subtitleAddonUrls', urls)}
@@ -1236,5 +1277,297 @@ function SystemSection() {
         ))}
       </dl>
     </Section>
+  );
+}
+
+/** Identifiant provisoire d'une source (le serveur en attribue un s'il manque). */
+function newSourceId(): string {
+  return Math.random().toString(36).slice(2, 10);
+}
+
+/** Sites proposés sur la fiche des titres (« Voir sur … »), dans l'ordre de la liste. */
+function CustomSourcesGroup({
+  sources,
+  onChange,
+}: {
+  sources: CustomSource[];
+  onChange: (sources: CustomSource[]) => void;
+}) {
+  const [name, setName] = useState('');
+  const [searchUrl, setSearchUrl] = useState('');
+  const update = (index: number, patch: Partial<CustomSource>) =>
+    onChange(sources.map((source, i) => (i === index ? { ...source, ...patch } : source)));
+  const add = (source: Pick<CustomSource, 'name' | 'searchUrl'>) => {
+    onChange([...sources, { id: newSourceId(), host: '1fichier', ...source }]);
+    setName('');
+    setSearchUrl('');
+  };
+  return (
+    <Group
+      id="sources"
+      title="Sites"
+      badge={
+        <Badge tone={sources.length > 0 ? 'success' : 'info'}>
+          {sources.length > 0 ? plural(sources.length, 'source') : 'Aucune'}
+        </Badge>
+      }
+      description={
+        <>
+          L’adresse s’ouvre dans un nouvel onglet depuis la fiche d’un film ou d’une série. Pour
+          arriver directement sur la recherche du titre, faites une recherche sur le site, copiez
+          l’adresse obtenue et remplacez-y le titre cherché par <code>{'{titre}'}</code>. Autres
+          repères : <code>{'{titre_original}'}</code>, <code>{'{annee}'}</code>,{' '}
+          <code>{'{tmdb}'}</code>, <code>{'{imdb}'}</code>, <code>{'{type}'}</code> (« film » ou «
+          serie »), <code>{'{type_en}'}</code> (« movie » ou « series »).
+        </>
+      }
+    >
+      {sources.length > 0 && (
+        <ul className="flex flex-col gap-2" aria-label="Sources personnalisées">
+          {sources.map((source, index) => (
+            <li
+              key={source.id}
+              className="flex flex-col gap-2 rounded-[0.85rem] bg-white/[0.05] px-3 py-2.5"
+            >
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                <Input
+                  value={source.name}
+                  onChange={(event) => update(index, { name: event.target.value })}
+                  aria-label="Nom de la source"
+                  className="sm:w-40"
+                />
+                <Input
+                  value={source.searchUrl}
+                  onChange={(event) => update(index, { searchUrl: event.target.value })}
+                  aria-label="Adresse de la source"
+                  spellCheck={false}
+                  className="min-w-0 flex-1 font-mono text-xs"
+                />
+                <div className="flex shrink-0 items-center gap-2">
+                  <Badge tone="neutral">1fichier</Badge>
+                  <Button
+                    size="icon-sm"
+                    variant="ghost"
+                    aria-label={`Retirer ${source.name}`}
+                    onClick={() => onChange(sources.filter((_, i) => i !== index))}
+                    icon={<Trash2 className="size-4" />}
+                  />
+                </div>
+              </div>
+              {!hasMarkers(source.searchUrl) && (
+                <p className="text-xs text-amber-300">
+                  Sans repère comme <code>{'{titre}'}</code>, le site s’ouvre sur cette page, sans
+                  recherche.
+                  {/loadix\.fun/i.test(source.searchUrl) && (
+                    <>
+                      {' '}
+                      <button
+                        type="button"
+                        className="font-medium underline underline-offset-2"
+                        onClick={() => update(index, { searchUrl: LOADIX_SEARCH_URL })}
+                      >
+                        Utiliser la recherche de loadix
+                      </button>
+                    </>
+                  )}
+                </p>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+      <form
+        className="flex flex-col gap-2 sm:flex-row"
+        onSubmit={(event) => {
+          event.preventDefault();
+          add({ name: name.trim(), searchUrl: searchUrl.trim() });
+        }}
+      >
+        <Input
+          value={name}
+          onChange={(event) => setName(event.target.value)}
+          placeholder="Nom (ex. loadix.fun)"
+          aria-label="Nom de la source à ajouter"
+          className="sm:w-40"
+        />
+        <Input
+          value={searchUrl}
+          onChange={(event) => setSearchUrl(event.target.value)}
+          placeholder="https://…?q={titre}"
+          aria-label="Adresse de la source à ajouter"
+          spellCheck={false}
+          className="min-w-0 flex-1 font-mono text-xs"
+        />
+        <Button
+          type="submit"
+          variant="glass"
+          className="h-11"
+          icon={<Plus className="size-4" />}
+          disabled={!name.trim() || !/^https?:\/\//i.test(searchUrl.trim())}
+        >
+          Ajouter
+        </Button>
+      </form>
+      {!sources.some((source) => source.searchUrl.includes('loadix.fun')) && (
+        <div>
+          <Button
+            size="sm"
+            variant="glass"
+            onClick={() => add({ name: 'loadix.fun', searchUrl: LOADIX_SEARCH_URL })}
+          >
+            Ajouter loadix.fun
+          </Button>
+        </div>
+      )}
+    </Group>
+  );
+}
+
+function OneFichierGroup({
+  response,
+  apiKey,
+  onApiKeyChange,
+}: {
+  response: SettingsResponse;
+  apiKey: string;
+  onApiKeyChange: (value: string) => void;
+}) {
+  const test = useTestOneFichier();
+  return (
+    <Group
+      id="1fichier"
+      title="1fichier premium"
+      attention={!response.oneFichierApiKeyConfigured}
+      action={
+        <ServiceLink href="https://1fichier.com/console/params.pl">Obtenir la clé</ServiceLink>
+      }
+      badge={
+        response.oneFichierApiKeyConfigured ? (
+          <Badge tone="success" icon={<CheckCircle2 className="size-3" />}>
+            Clé configurée{response.oneFichierApiKeyFromEnv ? ' (variable d’environnement)' : ''}
+          </Badge>
+        ) : (
+          <Badge tone="warning">Indispensable pour les liens 1fichier</Badge>
+        )
+      }
+      description="Le serveur demande à 1fichier le lien direct de chaque fichier (compte premium), puis le télécharge en plusieurs morceaux, avec reprise. La clé se trouve sur 1fichier.com, Mon compte → Paramètres → API."
+    >
+      <Field label={response.oneFichierApiKeyConfigured ? 'Remplacer la clé' : 'Clé d’API'}>
+        <Input
+          type="password"
+          value={apiKey}
+          onChange={(event) => onApiKeyChange(event.target.value)}
+          placeholder="••••••••••••"
+          autoComplete="off"
+        />
+      </Field>
+      <div className="flex flex-wrap items-center gap-3">
+        <Button
+          size="sm"
+          variant="glass"
+          loading={test.isPending}
+          disabled={!response.oneFichierApiKeyConfigured && !apiKey.trim()}
+          onClick={() => test.mutate(apiKey.trim() || undefined)}
+        >
+          Tester la clé
+        </Button>
+        {test.data && (
+          <span
+            className={cn(
+              'flex items-center gap-1.5 text-sm',
+              test.data.ok ? 'text-emerald-300' : 'text-red-300',
+            )}
+          >
+            {test.data.ok ? <CheckCircle2 className="size-4" /> : <XCircle className="size-4" />}
+            {test.data.message}
+          </span>
+        )}
+        {test.isError && <span className="text-sm text-red-300">{errorMessage(test.error)}</span>}
+      </div>
+    </Group>
+  );
+}
+
+/** Favori « Envoyer à Lumière » : à glisser dans la barre de favoris du navigateur. */
+function BookmarkletGroup() {
+  const code = bookmarkletCode(window.location.origin);
+  const link = useRef<HTMLAnchorElement>(null);
+  const [copied, setCopied] = useState(false);
+  // React refuse les adresses « javascript: » dans href : posée directement sur l'élément.
+  useEffect(() => {
+    link.current?.setAttribute('href', code);
+  }, [code]);
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(code);
+      setCopied(true);
+    } catch {
+      setCopied(false);
+    }
+  };
+  return (
+    <Group
+      id="favori"
+      title="Favori « Envoyer à Lumière »"
+      description="Glissez ce bouton dans la barre de favoris de votre navigateur (Ctrl+Maj+B pour l’afficher dans Chrome et Edge). Sur la page 1fichier, ou sur la page du site où le lien 1fichier est affiché, un clic sur le favori l’envoie à Lumière, qui propose de le télécharger. Sans favori : copiez le lien, revenez sur Lumière et faites Ctrl+V."
+    >
+      <div className="flex flex-wrap items-center gap-3">
+        <a
+          ref={link}
+          draggable
+          onClick={(event) => event.preventDefault()}
+          title="Glissez-moi dans la barre de favoris"
+          className="inline-flex h-9 cursor-grab items-center gap-2 rounded-full bg-gradient-to-b from-amber-300 to-orange-500 px-4 text-sm font-semibold text-ink-950 shadow-[inset_0_1px_0_rgb(255_255_255/0.4)] active:cursor-grabbing"
+        >
+          <Bookmark className="size-4" />
+          Envoyer à Lumière
+        </a>
+        <Button size="sm" variant="ghost" icon={<Copy className="size-4" />} onClick={copy}>
+          {copied ? 'Code copié' : 'Copier le code du favori'}
+        </Button>
+      </div>
+      <p className="text-xs leading-relaxed text-zinc-400">
+        Le favori contient l’adresse de Lumière telle que vous l’ouvrez maintenant (
+        <code>{window.location.origin}</code>) : refaites-le si elle change.
+      </p>
+    </Group>
+  );
+}
+
+/** Comment Lumière obtient les fichiers : les deux sortes de sources, côte à côte. */
+function SourcesIntro() {
+  return (
+    <section className="fill flex flex-col gap-4 rounded-card p-5 sm:p-6">
+      <div>
+        <h2 className="text-lg font-bold tracking-tight">D’où viennent les fichiers</h2>
+        <p className="text-sm text-zinc-400">
+          Sur la fiche d’un film ou d’une série, « Sur le disque » montre ce que vous avez déjà ; le
+          bloc « Télécharger » propose les sources ci-dessous (saison par saison pour une série).
+        </p>
+      </div>
+      <div className="grid gap-3 sm:grid-cols-2">
+        <div className="rounded-[1rem] bg-white/[0.05] p-4">
+          <h3 className="flex items-center gap-2 text-sm font-semibold">
+            <Puzzle className="size-4 text-violet-300" />
+            Extensions Stremio
+          </h3>
+          <p className="mt-1.5 text-xs leading-relaxed text-zinc-400">
+            Tout se fait dans Lumière : il demande les versions disponibles, vous choisissez, le
+            téléchargement démarre. Elles servent aussi à regarder en streaming.
+          </p>
+        </div>
+        <div className="rounded-[1rem] bg-white/[0.05] p-4">
+          <h3 className="flex items-center gap-2 text-sm font-semibold">
+            <Globe className="size-4 text-amber-300" />
+            Sites (loadix.fun…)
+          </h3>
+          <p className="mt-1.5 text-xs leading-relaxed text-zinc-400">
+            Lumière ouvre le site sur la recherche du titre ; vous passez sa vérification, copiez le
+            lien 1fichier et faites Ctrl+V dans Lumière, qui télécharge avec votre compte premium.
+            Une saison complète en .zip est rangée épisode par épisode.
+          </p>
+        </div>
+      </div>
+    </section>
   );
 }

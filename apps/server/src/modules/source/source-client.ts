@@ -15,12 +15,23 @@ import {
   type SourceResponse,
   type Transport,
 } from './transport';
+import type { ArchiveEntries } from '../archives/archive-entries';
+import { isOneFichierPath } from './onefichier/onefichier-link';
 import type { AddonLink, StremioAddons } from './stremio/stremio-addon';
 import { isVirtualPath } from './stremio/virtual-path';
+
+/** Fournisseur des liens réels d'un fichier désigné par son chemin dans Lumière. */
+export interface LinkSource {
+  links(path: string, options?: { refresh?: boolean }): Promise<AddonLink[]>;
+}
 
 export interface SourceClientOptions {
   /** Transport d'imitation de Chrome (impit), chargé à la première utilisation. */
   loadImpersonation?: (cookies: CookieJar) => Promise<Transport | null>;
+  /** Fichiers 1fichier ajoutés depuis une source personnalisée (chemins /@1fichier/…). */
+  oneFichier?: LinkSource;
+  /** Éléments des archives zip distantes (chemins <archive>/<fichier>). */
+  archives?: ArchiveEntries;
 }
 
 export interface OpenFileOptions {
@@ -49,12 +60,15 @@ const LINK_REFRESH_COOLDOWN_MS = 60_000;
 
 /**
  * Lecture des fichiers distants, désignés par leur chemin virtuel : leurs liens sont demandés
- * aux extensions Stremio, puis lus comme le ferait un lecteur vidéo (plages d'octets).
+ * aux extensions Stremio (ou à l'API 1fichier), puis lus comme le ferait un lecteur vidéo
+ * (plages d'octets).
  */
 export class SourceClient {
   private readonly cookies = new CookieJar();
   private impersonation: Promise<Transport | null> | null = null;
   private readonly loadImpersonation: () => Promise<Transport | null>;
+  private readonly oneFichier: LinkSource | null;
+  private readonly archives: ArchiveEntries | null;
   /** Dernier renouvellement des liens de chaque fichier. */
   private readonly linkRefreshes = new Map<string, number>();
 
@@ -65,6 +79,8 @@ export class SourceClient {
   ) {
     const load = options.loadImpersonation ?? BrowserTransport.load;
     this.loadImpersonation = () => load(this.cookies);
+    this.oneFichier = options.oneFichier ?? null;
+    this.archives = options.archives ?? null;
   }
 
   /** Identité HTTP présentée aux hôtes des liens (et par ffmpeg). */
@@ -85,14 +101,13 @@ export class SourceClient {
    * lu aussi longtemps que nécessaire.
    */
   async openFile(remotePath: string, options: OpenFileOptions = {}): Promise<SourceResponse> {
-    if (!isVirtualPath(remotePath)) {
-      throw new NotFoundError(
-        `Fichier de l’ancienne source, plus accessible : ${remotePath}. Cherchez le titre dans le catalogue pour l’obtenir par une extension Stremio.`,
-      );
+    // Élément d'une archive : lu par plages dans l'archive elle-même.
+    const { archives } = this;
+    const entry = archives?.find(remotePath);
+    if (archives && entry) {
+      return archives.open(entry, options, (inner) => this.openFile(entry.archive_path, inner));
     }
-    if (!this.addons.enabled) {
-      throw new UpstreamError('Aucune extension Stremio configurée pour lire ce fichier.');
-    }
+    const provider = this.linkSource(remotePath);
     let range = options.range;
     if (!range && (options.start !== undefined || options.end !== undefined)) {
       range = `bytes=${options.start ?? 0}-${options.end ?? ''}`;
@@ -107,7 +122,7 @@ export class SourceClient {
       : timeout.signal;
     const request = { method: options.method ?? 'GET', range, signal } as const;
     try {
-      const links = await this.addons.links(remotePath);
+      const links = await provider.links(remotePath);
       const response = await this.tryLinks(links, request, options.signal);
       if (
         !REFUSED.includes(response.status) ||
@@ -115,17 +130,35 @@ export class SourceClient {
         !this.mayRefreshLink(remotePath)
       )
         return response;
-      // Liens expirés ou refusés : on en demande de nouveaux aux extensions.
+      // Liens expirés ou refusés : on en demande de nouveaux (extensions, API 1fichier).
       await response.body?.cancel().catch(() => undefined);
-      const fresh = await this.addons.links(remotePath, { refresh: true });
+      const fresh = await provider.links(remotePath, { refresh: true });
       return await this.tryLinks(fresh, request, options.signal);
     } catch (error) {
       if (options.signal?.aborted && isAbortError(error)) throw error;
       if (error instanceof AppError) throw error;
-      throw new UpstreamError(`Lien de l’extension injoignable : ${errorMessage(error)}`);
+      const origin = isOneFichierPath(remotePath) ? '1fichier' : 'de l’extension';
+      throw new UpstreamError(`Lien ${origin} injoignable : ${errorMessage(error)}`);
     } finally {
       clearTimeout(timer);
     }
+  }
+
+  /** Fournisseur des liens d'un chemin : extensions Stremio ou fichiers 1fichier. */
+  private linkSource(remotePath: string): LinkSource {
+    if (isOneFichierPath(remotePath)) {
+      if (!this.oneFichier) throw new UpstreamError('Fichiers 1fichier indisponibles.');
+      return this.oneFichier;
+    }
+    if (!isVirtualPath(remotePath)) {
+      throw new NotFoundError(
+        `Fichier de l’ancienne source, plus accessible : ${remotePath}. Cherchez le titre dans le catalogue pour l’obtenir par une extension Stremio.`,
+      );
+    }
+    if (!this.addons.enabled) {
+      throw new UpstreamError('Aucune extension Stremio configurée pour lire ce fichier.');
+    }
+    return this.addons;
   }
 
   /**

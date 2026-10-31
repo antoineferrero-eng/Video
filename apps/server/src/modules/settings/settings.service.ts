@@ -1,5 +1,6 @@
+import { randomUUID } from 'node:crypto';
 import path from 'node:path';
-import type { AppSettings, SettingsResponse, SettingsUpdate } from '@lumiere/shared';
+import type { AppSettings, CustomSource, SettingsResponse, SettingsUpdate } from '@lumiere/shared';
 import type { AppConfig } from '../../config/env';
 import { BadRequestError, errorMessage } from '../../core/errors';
 import { assertWritableDir } from '../../core/fs';
@@ -9,6 +10,7 @@ import { normalizeAddonUrl, normalizeAddonUrls } from '../source/stremio/stremio
 const TMDB_KEY = 'tmdbApiKey';
 const OPENSUBTITLES_KEY = 'openSubtitlesApiKey';
 const OPENSUBTITLES_PASSWORD = 'openSubtitlesPassword';
+const ONEFICHIER_KEY = 'oneFichierApiKey';
 
 export function defaultSettings(config: AppConfig): AppSettings {
   return {
@@ -22,6 +24,7 @@ export function defaultSettings(config: AppConfig): AppSettings {
     preferredSubtitleLanguage: '',
     subtitleAddonUrls: validAddonUrls(config.defaults.subtitleAddonUrls),
     openSubtitlesUsername: '',
+    customSources: [],
     catalogRefreshHours: 12,
     catalogSize: 5000,
     transcodePreset: 'balanced',
@@ -37,6 +40,33 @@ function defaultAddonUrl(value: string): string {
   }
 }
 
+/**
+ * Sources personnalisées : nom et adresse obligatoires, adresse web (http ou https) dont les
+ * repères ({titre}…) sont remplacés à l'ouverture.
+ */
+export function normalizeCustomSources(sources: CustomSource[]): CustomSource[] {
+  const ids = new Set<string>();
+  return sources.map((source) => {
+    const name = source.name.trim();
+    const searchUrl = source.searchUrl.trim();
+    if (!name) throw new BadRequestError('Donnez un nom à chaque source personnalisée.');
+    let url: URL;
+    try {
+      // Les repères ({titre}…) ne gênent pas la lecture de l'adresse.
+      url = new URL(searchUrl.replace(/\{[a-z_]+\}/g, 'x'));
+    } catch {
+      throw new BadRequestError(`Adresse invalide pour la source « ${name} » : ${searchUrl}`);
+    }
+    if (url.protocol !== 'https:' && url.protocol !== 'http:') {
+      throw new BadRequestError(`La source « ${name} » doit avoir une adresse http(s).`);
+    }
+    let id = source.id.trim();
+    if (!id || ids.has(id)) id = randomUUID();
+    ids.add(id);
+    return { id, name, searchUrl, host: source.host };
+  });
+}
+
 /** Adresses d'extensions valides et sans doublon (les adresses invalides sont ignorées). */
 function validAddonUrls(values: string[]): string[] {
   return [...new Set(values.map(defaultAddonUrl).filter(Boolean))];
@@ -50,6 +80,7 @@ export class SettingsService {
   private storedTmdbKey: string | null;
   private storedOpenSubtitlesKey: string | null;
   private storedOpenSubtitlesPassword: string | null;
+  private storedOneFichierKey: string | null;
   private readonly listeners = new Set<SettingsListener>();
 
   constructor(
@@ -68,6 +99,7 @@ export class SettingsService {
     this.storedTmdbKey = secret(TMDB_KEY);
     this.storedOpenSubtitlesKey = secret(OPENSUBTITLES_KEY);
     this.storedOpenSubtitlesPassword = secret(OPENSUBTITLES_PASSWORD);
+    this.storedOneFichierKey = secret(ONEFICHIER_KEY);
   }
 
   get(): AppSettings {
@@ -81,6 +113,12 @@ export class SettingsService {
 
   getOpenSubtitlesApiKey(): string | null {
     const key = this.storedOpenSubtitlesKey ?? this.config.openSubtitles.envApiKey;
+    return key && key.trim() ? key.trim() : null;
+  }
+
+  /** Clé d'API d'un compte 1fichier premium (liens des sources personnalisées). */
+  getOneFichierApiKey(): string | null {
+    const key = this.storedOneFichierKey ?? this.config.oneFichier.envApiKey;
     return key && key.trim() ? key.trim() : null;
   }
 
@@ -100,6 +138,9 @@ export class SettingsService {
       openSubtitlesApiKeyFromEnv:
         this.storedOpenSubtitlesKey === null && this.config.openSubtitles.envApiKey !== null,
       openSubtitlesPasswordConfigured: Boolean(this.storedOpenSubtitlesPassword),
+      oneFichierApiKeyConfigured: this.getOneFichierApiKey() !== null,
+      oneFichierApiKeyFromEnv:
+        this.storedOneFichierKey === null && this.config.oneFichier.envApiKey !== null,
     };
   }
 
@@ -116,6 +157,8 @@ export class SettingsService {
       next.stremioAddonUrls = normalizeAddonUrls(patch.stremioAddonUrls);
     if (patch.subtitleAddonUrls !== undefined)
       next.subtitleAddonUrls = normalizeAddonUrls(patch.subtitleAddonUrls);
+    if (patch.customSources !== undefined)
+      next.customSources = normalizeCustomSources(patch.customSources);
     if (patch.openSubtitlesUsername !== undefined)
       next.openSubtitlesUsername = patch.openSubtitlesUsername.trim();
     if (patch.downloadDir !== undefined) {
@@ -152,6 +195,7 @@ export class SettingsService {
     const tmdbChanged = patch.tmdbApiKey !== undefined;
     const openSubtitlesKeyChanged = patch.openSubtitlesApiKey !== undefined;
     const openSubtitlesPasswordChanged = patch.openSubtitlesPassword !== undefined;
+    const oneFichierKeyChanged = patch.oneFichierApiKey !== undefined;
     const writeSecret = (name: string, raw: string | undefined, trim = true) => {
       const value = (trim ? raw?.trim() : raw) ?? '';
       if (value) write.run(name, JSON.stringify(value), now);
@@ -165,6 +209,7 @@ export class SettingsService {
       if (openSubtitlesKeyChanged) writeSecret(OPENSUBTITLES_KEY, patch.openSubtitlesApiKey);
       if (openSubtitlesPasswordChanged)
         writeSecret(OPENSUBTITLES_PASSWORD, patch.openSubtitlesPassword, false);
+      if (oneFichierKeyChanged) writeSecret(ONEFICHIER_KEY, patch.oneFichierApiKey);
     });
 
     if (tmdbChanged) this.storedTmdbKey = patch.tmdbApiKey?.trim() || null;
@@ -172,6 +217,7 @@ export class SettingsService {
       this.storedOpenSubtitlesKey = patch.openSubtitlesApiKey?.trim() || null;
     if (openSubtitlesPasswordChanged)
       this.storedOpenSubtitlesPassword = patch.openSubtitlesPassword || null;
+    if (oneFichierKeyChanged) this.storedOneFichierKey = patch.oneFichierApiKey?.trim() || null;
     this.current = next;
     for (const listener of this.listeners) listener(next, previous);
     return next;

@@ -1,36 +1,30 @@
-import { AlertTriangle, Clock, Download, Info, Play, SearchX, Star } from 'lucide-react';
+import { AlertTriangle, Clock, Download, HardDrive, Info, Play, Star } from 'lucide-react';
+import { useEffect } from 'react';
 import { Link, useNavigate, useParams } from 'react-router';
 import type { MediaRef, TitleDetails } from '@lumiere/shared';
-import { useEnqueueTitle, useTitle } from '../../api/queries';
+import { useTitle } from '../../api/queries';
 import { Backdrop, Poster } from '../../components/media/Poster';
 import { Badge } from '../../components/ui/Badge';
 import { Button } from '../../components/ui/Button';
-import { EmptyState, ErrorState, Skeleton } from '../../components/ui/States';
+import { ErrorState, Skeleton } from '../../components/ui/States';
 import { useAmbient } from '../../design/ambient/ambient';
 import { formatClock, formatDuration, formatRating, episodeCode } from '../../lib/format';
 import { playerUrl } from '../../lib/routes';
+import { setPageTitle } from '../onefichier/pending-title';
 import { mediaRefFor } from './file-utils';
 import { MovieVersions } from './MovieVersions';
 import { SeriesSeasons } from './SeriesSeasons';
 
-/** Épisode dont le fichier sera choisi à la lecture, parmi ceux des extensions Stremio. */
-function onDemand(
-  title: TitleDetails,
-  episode: { season: number | null; episode: number | null },
-): MediaRef | null {
-  if (episode.season === null || episode.episode === null) return null;
-  return { type: 'episode', titleId: title.id, season: episode.season, episode: episode.episode };
-}
-
-/** Média à lancer avec le bouton principal : film téléchargé ou 1080p, prochain épisode non vu. */
+/**
+ * Média à lancer avec le bouton principal, parmi ce qui est sur le disque : film téléchargé
+ * (ou en cours), prochain épisode non vu. Rien sur le disque : pas de bouton.
+ */
 function primaryAction(
   title: TitleDetails,
 ): { media: MediaRef; label: string; seasonKey?: string } | null {
   if (title.kind === 'movie') {
     const file =
-      title.files.find((item) => item.availability.libraryItemId !== null) ??
-      title.files.find((item) => item.release.resolution === '1080p') ??
-      title.files[0];
+      title.files.find((item) => item.availability.libraryItemId !== null) ?? title.files[0];
     if (!file) return null;
     const watch = file.availability.watch;
     const resume = watch && !watch.completed && watch.position > 30;
@@ -42,34 +36,45 @@ function primaryAction(
   const seasons = [...title.seasons].sort(
     (a, b) => (a.number === 0 ? 1 : 0) - (b.number === 0 ? 1 : 0),
   );
+  let first: { media: MediaRef; seasonKey: string } | null = null;
   for (const season of seasons) {
     for (const episode of season.episodes) {
       const file =
         episode.files.find((item) => item.availability.libraryItemId !== null) ?? episode.files[0];
-      if (file?.availability.watch?.completed) continue;
+      if (!file) continue;
+      first ??= { media: mediaRefFor(file), seasonKey: season.key };
+      if (file.availability.watch?.completed) continue;
       const code = episodeCode(episode.season, episode.episode) ?? episode.title;
-      const media = file ? mediaRefFor(file) : onDemand(title, episode);
-      if (!media) continue;
-      const watch = file?.availability.watch;
+      const watch = file.availability.watch;
       const resume = watch && watch.position > 30;
       return {
-        media,
+        media: mediaRefFor(file),
         label: resume ? `Reprendre ${code}` : `Lecture ${code}`,
         seasonKey: season.key,
       };
     }
   }
-  const first = title.seasons[0]?.episodes[0];
-  const media = first?.files[0] ? mediaRefFor(first.files[0]) : first && onDemand(title, first);
-  return media ? { media, label: 'Revoir depuis le début' } : null;
+  return first ? { ...first, label: 'Revoir depuis le début' } : null;
+}
+
+/** Amène le bloc « Télécharger » à l'écran. */
+function scrollToDownload(): void {
+  document.getElementById('telecharger')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
 export function TitlePage() {
   const { id } = useParams();
   const navigate = useNavigate();
   const query = useTitle(Number(id));
-  const enqueue = useEnqueueTitle();
   useAmbient(query.data?.backdropUrl ?? query.data?.posterUrl, query.data?.title);
+  // Un lien 1fichier collé sur cette page revient à ce titre.
+  const loaded = query.data;
+  useEffect(() => {
+    if (!loaded) return;
+    const { id: titleId, title, year, kind } = loaded;
+    setPageTitle({ id: titleId, title, year, kind, season: null });
+    return () => setPageTitle(null);
+  }, [loaded]);
 
   if (query.isPending) return <TitleSkeleton />;
   if (query.isError) return <ErrorState error={query.error} onRetry={() => void query.refetch()} />;
@@ -147,35 +152,32 @@ export function TitlePage() {
             {title.overview && (
               <p className="max-w-3xl leading-relaxed text-zinc-200">{title.overview}</p>
             )}
-            {/* Rien à lire ni à télécharger quand aucune extension ne propose le titre. */}
-            {title.sourceStatus !== 'missing' && (
-              <div className="mt-1 flex flex-wrap gap-3">
-                {primary && (
-                  <Button
-                    variant="primary"
-                    size="lg"
-                    icon={<Play className="size-5 fill-current" />}
-                    onClick={() => navigate(playerUrl(primary.media))}
-                  >
-                    {primary.label}
-                  </Button>
-                )}
+            <div className="mt-1 flex flex-wrap items-center gap-3">
+              {primary && (
                 <Button
-                  variant="glass"
+                  variant="primary"
                   size="lg"
-                  icon={<Download className="size-5" />}
-                  loading={enqueue.isPending}
-                  onClick={() => enqueue.mutate({ titleId: title.id })}
-                  title={
-                    title.kind === 'series'
-                      ? 'Chaque épisode est demandé aux extensions Stremio, un par un'
-                      : undefined
-                  }
+                  icon={<Play className="size-5 fill-current" />}
+                  onClick={() => navigate(playerUrl(primary.media))}
                 >
-                  {title.kind === 'movie' ? 'Télécharger' : 'Tout télécharger'}
+                  {primary.label}
                 </Button>
-              </div>
-            )}
+              )}
+              <Button
+                variant="glass"
+                size="lg"
+                icon={<Download className="size-5" />}
+                onClick={scrollToDownload}
+              >
+                Télécharger
+              </Button>
+              {!primary && (
+                <span className="flex items-center gap-1.5 text-sm text-zinc-300">
+                  <HardDrive className="size-4" />
+                  Pas encore sur le disque
+                </span>
+              )}
+            </div>
           </div>
         </div>
       </section>
@@ -186,7 +188,7 @@ export function TitlePage() {
           <p>
             Ajoutez une clé TMDB (gratuite) dans les{' '}
             <Link
-              to="/parametres?onglet=services"
+              to="/parametres?onglet=services#tmdb"
               className="font-medium text-brand-300 underline-offset-2 hover:underline"
             >
               paramètres
@@ -203,44 +205,18 @@ export function TitlePage() {
         >
           <AlertTriangle className="mt-0.5 size-4 shrink-0 text-amber-300" />
           <p>
-            <span className="font-semibold">Extensions Stremio : </span>
+            <span className="font-semibold">Saisons : </span>
             {title.sourceNotice}
           </p>
         </div>
       )}
 
-      {title.sourceStatus === 'missing' ? (
-        <SourceMissing title={title} />
-      ) : title.kind === 'movie' ? (
+      {title.kind === 'movie' ? (
         <MovieVersions title={title} />
       ) : (
         <SeriesSeasons title={title} initialSeason={primary?.seasonKey} />
       )}
     </div>
-  );
-}
-
-/** Titre qu'aucune extension Stremio ne propose (pour l'instant). */
-function SourceMissing({ title }: { title: TitleDetails }) {
-  return (
-    <EmptyState
-      icon={<SearchX />}
-      title="Aucun fichier proposé"
-      description={
-        <>
-          Aucune extension Stremio ne propose de fichier pour{' '}
-          {title.kind === 'movie' ? 'ce film' : 'cette série'} pour l’instant. Réessayez plus tard
-          (leur offre évolue), ou ajoutez une autre extension dans les{' '}
-          <Link
-            to="/parametres?onglet=services"
-            className="font-medium text-brand-300 underline-offset-2 hover:underline"
-          >
-            paramètres
-          </Link>
-          .
-        </>
-      }
-    />
   );
 }
 

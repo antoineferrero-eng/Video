@@ -1,6 +1,10 @@
 import type { FastifyInstance } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
-import type { AddonTestResult, SubtitleProvidersTestResult } from '@lumiere/shared';
+import type {
+  AddonTestResult,
+  ApiKeyTestResult,
+  SubtitleProvidersTestResult,
+} from '@lumiere/shared';
 import { z } from 'zod';
 import type { Container } from '../../container';
 import { errorMessage } from '../../core/errors';
@@ -43,6 +47,16 @@ const SettingsUpdateSchema = z
     preferredSubtitleLanguage: LanguageCode,
     subtitleAddonUrls: z.array(z.string().max(2000)).max(10),
     openSubtitlesUsername: z.string().max(200),
+    customSources: z
+      .array(
+        z.object({
+          id: z.string().max(100),
+          name: z.string().max(100),
+          searchUrl: z.string().max(2000),
+          host: z.enum(['1fichier']),
+        }),
+      )
+      .max(20),
     catalogRefreshHours: z.number().int().min(0).max(720),
     // TMDB ne sert pas plus de 500 pages de 20 titres.
     catalogSize: z.number().int().min(100).max(10_000),
@@ -57,12 +71,13 @@ const SettingsUpdateSchema = z
     tmdbApiKey: z.string().max(500),
     openSubtitlesApiKey: z.string().max(500),
     openSubtitlesPassword: z.string().max(500),
+    oneFichierApiKey: z.string().max(500),
   })
   .partial()
   .strict();
 
 export function registerSettingsRoutes(server: FastifyInstance, container: Container): void {
-  const { settings, config, addons, subtitleAddons, logger } = container;
+  const { settings, config, addons, subtitleAddons, oneFichier, logger } = container;
   const app = server.withTypeProvider<ZodTypeProvider>();
 
   app.get('/settings', async () => settings.toResponse());
@@ -202,6 +217,33 @@ export function registerSettingsRoutes(server: FastifyInstance, container: Conta
       try {
         const ok = await new TmdbClient(() => key, config.tmdb.apiBaseUrl).validateKey();
         return { ok, message: ok ? 'Clé valide.' : 'Clé refusée par TMDB.' };
+      } catch (error) {
+        return { ok: false, message: errorMessage(error) };
+      }
+    },
+  );
+
+  // Test de la clé 1fichier (saisie, ou enregistrée) : le lien direct exige un compte premium.
+  app.post(
+    '/settings/test-onefichier',
+    { schema: { body: z.object({ apiKey: z.string().max(500).optional() }).optional() } },
+    async (request): Promise<ApiKeyTestResult> => {
+      const key = request.body?.apiKey?.trim() || settings.getOneFichierApiKey();
+      if (!key) return { ok: false, message: 'Aucune clé fournie.' };
+      try {
+        const account = await oneFichier.account(key);
+        if (!account.offer) {
+          // Valeurs reçues affichées : une offre que Lumière ne connaît pas se repère ainsi.
+          const received = `offre : ${JSON.stringify(account.rawOffer ?? null)}, fin d’abonnement : ${account.subscriptionEnd ?? 'aucune'}`;
+          return {
+            ok: false,
+            message: `Clé valide, mais 1fichier n’indique pas d’abonnement premium pour ce compte (${received}). Si votre compte est premium, essayez un téléchargement : c’est lui qui fait foi.`,
+          };
+        }
+        const until = account.subscriptionEnd
+          ? `, jusqu’au ${account.subscriptionEnd.slice(0, 10)}`
+          : '';
+        return { ok: true, message: `Compte ${account.offer}${until}.` };
       } catch (error) {
         return { ok: false, message: errorMessage(error) };
       }

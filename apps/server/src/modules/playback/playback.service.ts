@@ -917,7 +917,7 @@ export class PlaybackService {
         tracks: [],
         providers: [],
         notices: [
-          'Aucun service de sous-titres en ligne configuré (Paramètres → Extensions et API).',
+          'Aucun service de sous-titres en ligne configuré (Paramètres → Sous-titres et clés).',
         ],
       };
     }

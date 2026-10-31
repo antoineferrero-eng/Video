@@ -4,7 +4,18 @@ import { z } from 'zod';
 import type { Container } from '../../container';
 import { IdParams, booleanQuery } from '../shared-schemas';
 
-export function registerDownloadRoutes(server: FastifyInstance, { downloads }: Container): void {
+const OneFichierLinkBody = z.object({
+  url: z.string().min(1).max(4000),
+  password: z.string().max(200).optional(),
+  titleId: z.number().int().positive().nullable().optional(),
+  season: z.number().int().min(0).nullable().optional(),
+  entries: z.array(z.string().min(1).max(2000)).max(500).optional(),
+});
+
+export function registerDownloadRoutes(
+  server: FastifyInstance,
+  { downloads, linkImports }: Container,
+): void {
   const app = server.withTypeProvider<ZodTypeProvider>();
 
   app.get('/downloads', async () => downloads.list());
@@ -44,6 +55,17 @@ export function registerDownloadRoutes(server: FastifyInstance, { downloads }: C
       const { titleId, season, episode } = request.body;
       return reply.code(201).send(await downloads.enqueueTitle(titleId, season, episode));
     },
+  );
+
+  // Lien 1fichier obtenu sur une source personnalisée : vérifié (nom, taille, contenu d'une
+  // archive zip), puis ajouté.
+  app.post('/downloads/1fichier/info', { schema: { body: OneFichierLinkBody } }, async (request) =>
+    linkImports.inspect(request.body.url, request.body.password),
+  );
+  app.post(
+    '/downloads/1fichier',
+    { schema: { body: OneFichierLinkBody } },
+    async (request, reply) => reply.code(201).send(await linkImports.enqueue(request.body)),
   );
 
   app.post('/downloads/:id/pause', { schema: { params: IdParams } }, async (request) =>

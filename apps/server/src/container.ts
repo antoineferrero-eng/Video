@@ -6,6 +6,7 @@ import { errorMessage } from './core/errors';
 import { EventBus } from './core/event-bus';
 import type { Logger } from './core/logger';
 import { KeyValueCache, openDatabase, type Db } from './infra/database/database';
+import { ArchiveEntries } from './modules/archives/archive-entries';
 import { AvailabilityService } from './modules/availability/availability.service';
 import { AddonCatalog } from './modules/catalog/addon-catalog';
 import { CatalogService } from './modules/catalog/catalog.service';
@@ -13,6 +14,7 @@ import { TmdbCatalog } from './modules/catalog/tmdb-catalog';
 import { CatalogSectionsRepository, TitlesRepository } from './modules/catalog/titles.repository';
 import { DownloadManager } from './modules/downloads/download-manager';
 import { DownloadsRepository } from './modules/downloads/downloads.repository';
+import { LinkImports } from './modules/downloads/link-imports';
 import { LibraryRepository } from './modules/library/library.repository';
 import { LibraryService } from './modules/library/library.service';
 import { ImageCache } from './modules/metadata/image-cache';
@@ -28,6 +30,8 @@ import { PlaybackSessions } from './modules/playback/sessions';
 import { SubtitleSyncService } from './modules/playback/subtitle-sync.service';
 import { SettingsService } from './modules/settings/settings.service';
 import { SourceClient } from './modules/source/source-client';
+import { OneFichierFiles } from './modules/source/onefichier/onefichier-files';
+import { OneFichierClient } from './modules/source/onefichier/onefichier.client';
 import { SourceRelay } from './modules/source/source-relay';
 import { StremioAddons } from './modules/source/stremio/stremio-addon';
 import { virtualFolder } from './modules/source/stremio/virtual-path';
@@ -41,6 +45,10 @@ export interface Container {
   settings: SettingsService;
   addons: StremioAddons;
   source: SourceClient;
+  oneFichier: OneFichierClient;
+  oneFichierFiles: OneFichierFiles;
+  archives: ArchiveEntries;
+  linkImports: LinkImports;
   relay: SourceRelay;
   titles: TitlesRepository;
   availability: AvailabilityService;
@@ -68,7 +76,16 @@ export function createContainer(config: AppConfig, logger: Logger): Container {
   const addons = new StremioAddons(settings, kvCache, logger.child({ module: 'stremio' }), {
     tmdbIdOf: (kind, id) => titles.findByRemotePath(virtualFolder(kind, id))?.tmdb_id ?? null,
   });
-  const source = new SourceClient(addons, logger.child({ module: 'source' }));
+  const oneFichier = new OneFichierClient({
+    baseUrl: config.oneFichier.apiBaseUrl,
+    apiKey: () => settings.getOneFichierApiKey(),
+  });
+  const oneFichierFiles = new OneFichierFiles(db, oneFichier, logger.child({ module: '1fichier' }));
+  const archives = new ArchiveEntries(db, logger.child({ module: 'archives' }));
+  const source = new SourceClient(addons, logger.child({ module: 'source' }), {
+    oneFichier: oneFichierFiles,
+    archives,
+  });
   const relay = new SourceRelay(config);
   const availability = new AvailabilityService(db);
   const tmdb = new TmdbClient(() => settings.getTmdbApiKey(), config.tmdb.apiBaseUrl);
@@ -113,6 +130,7 @@ export function createContainer(config: AppConfig, logger: Logger): Container {
     events,
     logger.child({ module: 'downloads' }),
   );
+  const linkImports = new LinkImports(oneFichierFiles, archives, source, downloads);
   const ffmpeg = new Ffmpeg(
     config.ffmpegPath,
     config.ffprobePath,
@@ -167,6 +185,10 @@ export function createContainer(config: AppConfig, logger: Logger): Container {
     settings,
     addons,
     source,
+    oneFichier,
+    oneFichierFiles,
+    archives,
+    linkImports,
     relay,
     titles,
     availability,

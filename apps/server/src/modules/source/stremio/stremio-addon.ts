@@ -345,9 +345,7 @@ export class StremioAddons {
     query: AddonQuery,
   ): Promise<{ providers: Provider[]; failures: string[] }> {
     if (!this.enabled) {
-      throw new UpstreamError(
-        'Aucune extension Stremio configurée (Paramètres → Extensions et API).',
-      );
+      throw new UpstreamError('Aucune extension Stremio configurée (Paramètres → Sources).');
     }
     const urls = this.manifestUrls;
     const tmdb = /^tmdb:(\d+)$/.exec(query.id);

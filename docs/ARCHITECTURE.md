@@ -67,11 +67,16 @@ modules/
                      imitation de Chrome en secours), relais local pour ffmpeg
     stremio/         client des extensions Stremio (manifestes, liens d'un film ou d'un
                      épisode réunis et gardés en base) et chemins virtuels /@stremio/… des fichiers
+    onefichier/      liens 1fichier des sites : client de l'API (compte premium), liens gardés
+                     en base, chemins /@1fichier/<identifiant>/<fichier>
+  archives/          archives zip distantes ou locales (ZIP64 compris) : contenu, lecture d'un
+                     élément stocké par plages, décompression d'une archive téléchargée
   catalog/           catalogue TMDB (listes, recherche, popularité), fiches ;
                      addon-catalog.ts : titres TMDB ↔ extensions (identifiant IMDb, saisons)
   metadata/          client TMDB, rapprochement des titres, cache des images
   downloads/         file d'attente, moteur de transfert, rangement des fichiers ;
-                     episode-queue.ts : épisodes demandés un par un aux extensions
+                     episode-queue.ts : épisodes demandés un par un aux extensions ;
+                     link-imports.ts : liens 1fichier collés (fichier, ou archive zip)
   library/           fichiers locaux, analyse du dossier
   playback/          ffprobe, plan de lecture, sessions, flux ffmpeg, sous-titres, progression
   subtitles/         sous-titres en ligne : API OpenSubtitles.com, extensions Stremio de
@@ -146,6 +151,48 @@ sequenceDiagram
 Pause, annulation et arrêt du serveur interrompent proprement le transfert (AbortController) ;
 au redémarrage, les téléchargements interrompus repartent de l'octet où ils s'étaient arrêtés.
 
+### Fiche d'un titre : le disque, puis « Télécharger »
+
+`GET /api/titles/:id` n'interroge aucune source : les fichiers d'un film (et ceux de chaque
+épisode) sont ses **copies** — téléchargements et bibliothèque rattachés au titre
+(`AvailabilityService.titleCopies`, quelle que soit leur origine ; un fichier déposé à la main
+y figure sous `/@bibliotheque/<id>`), plus celles de son dossier d'extension. Le bloc
+« Télécharger » (`DownloadCard`) propose ensuite les sources configurées : extensions Stremio
+(`GET /api/titles/:id/versions` pour un film, versions d'un épisode à la demande) ou sites.
+Une série se télécharge saison par saison.
+
+### Sites et liens 1fichier
+
+Certains sites donnent des liens 1fichier derrière une vérification anti-robot : Lumière ne les
+lit pas. L'utilisateur les consulte dans son propre navigateur, et Lumière reprend la main une
+fois le lien 1fichier obtenu.
+
+1. Les sites (`customSources` : nom, adresse avec repères `{titre}`, `{annee}`…) s'ouvrent
+   depuis « Télécharger », dans un nouvel onglet, sur la recherche du titre. Le titre et la
+   saison cherchés sont retenus dans le navigateur (`pending-title.ts`, 3 heures), et une
+   fenêtre guide l'utilisateur jusqu'au collage du lien.
+2. Le lien revient de deux façons : **Ctrl+V** dans Lumière (`OneFichierInbox`, à l'écoute de
+   l'événement `paste` hors des champs de saisie), ou le **favori « Envoyer à Lumière »**, qui
+   ouvre `/envoi-1fichier#<lien>` (lien lu sur la page 1fichier ou sur celle du site). Il est
+   rattaché à la fiche ouverte, sinon au dernier titre cherché.
+3. `POST /api/downloads/1fichier/info` vérifie le lien auprès de l'API (`file/info.cgi` : nom,
+   taille) et le garde dans `onefichier_files`, avec son mot de passe éventuel. Le fichier reçoit
+   le chemin `/@1fichier/<identifiant>/<fichier>`. `POST /api/downloads/1fichier` l'ajoute à la
+   file, rattaché au titre choisi (`titleId`).
+4. Comme pour un fichier d'extension, `SourceClient` ne demande le lien réel qu'au moment de
+   lire. Ici, c'est un lien direct `download/get_token.cgi`, valable 5 minutes et réutilisé
+   pendant 4 minutes par tous les morceaux, puis redemandé (aussi après un refus de l'hôte). Les
+   appels à l'API sont espacés (3 par seconde au plus).
+5. Une **archive zip** (saison complète) est lue à distance : quelques requêtes Range en fin
+   de fichier donnent son répertoire (`archives/zip.ts`, ZIP64 compris), gardé dans
+   `archive_entries`. Chaque vidéo reçoit le chemin `<archive>/<fichier>`. Stockée sans
+   compression, elle occupe une plage continue de l'archive : `SourceClient` traduit les plages
+   demandées et la présente comme un fichier seul — elle se télécharge et se regarde
+   directement. Une archive compressée est téléchargée en entier, puis décompressée dans le
+   dossier de la saison (`DownloadManager.extractArchive`), ses vidéos ajoutées à la
+   bibliothèque et l'archive supprimée.
+6. Les épisodes se rangent d'après leur nom (SxxEyy), à défaut d'après la saison cherchée.
+
 ### Lecture
 
 1. Le navigateur détecte ses codecs (`capabilities.ts`) et demande une session :
@@ -178,6 +225,8 @@ au redémarrage, les téléchargements interrompus repartent de l'octet où ils 
 | `library_items`     | Fichiers présents dans la bibliothèque locale.                                   |
 | `watch_progress`    | Position de lecture par média (clé = chemin distant ou fichier local).           |
 | `settings`          | Paramètres modifiés depuis l'interface.                                          |
+| `onefichier_files`  | Liens 1fichier ajoutés (lien, mot de passe, nom, taille) : chemins /@1fichier/…. |
+| `archive_entries`   | Contenu des archives zip distantes : place de chaque élément dans l'archive.     |
 | `kv_cache`          | Cache des réponses TMDB (saisons…) et des liens de chaque extension Stremio.     |
 | `schema_migrations` | Migrations appliquées.                                                           |
 
@@ -187,13 +236,15 @@ au redémarrage, les téléchargements interrompus repartent de l'octet où ils 
 | --------- | ------------------------------------------------ | --------------------------------------------------------------------- |
 | GET       | `/api/home`                                      | Accueil (titres mis en avant, films et séries populaires).            |
 | GET       | `/api/titles?kind&q&sort&genre&page`             | Catalogue paginé.                                                     |
-| GET       | `/api/titles/:id`                                | Fiche complète (versions, saisons, épisodes, disponibilité).          |
+| GET       | `/api/titles/:id`                                | Fiche complète (copies sur le disque, saisons, épisodes).             |
+| GET       | `/api/titles/:id/versions`                       | Versions d'un film (demandées aux extensions Stremio).                |
 | GET       | `/api/titles/:id/episodes/:saison/:épisode`      | Versions d'un épisode (demandées aux extensions Stremio).             |
 | GET       | `/api/titles/:id/artwork/:type`                  | Affiche/fond (recherche TMDB à la demande).                           |
 | GET       | `/api/images/:taille/:fichier`                   | Image TMDB mise en cache.                                             |
 | POST      | `/api/catalog/refresh`                           | Réimporter les listes de TMDB.                                        |
 | GET/POST  | `/api/downloads`                                 | Liste / ajout de fichiers.                                            |
 | POST      | `/api/downloads/title`                           | Film, épisode, saison ou série.                                       |
+| POST      | `/api/downloads/1fichier` · `1fichier/info`      | Lien 1fichier : ajout à la file / vérification (nom, taille, zip).    |
 | POST      | `/api/downloads/:id/pause` · `resume` · `cancel` | Contrôle d'un téléchargement.                                         |
 | GET       | `/api/library`, `/api/library/:id/file`          | Bibliothèque, enregistrement d'un fichier.                            |
 | POST      | `/api/playback/sessions`                         | Création d'une session de lecture.                                    |
@@ -201,6 +252,7 @@ au redémarrage, les téléchargements interrompus repartent de l'octet où ils 
 | GET       | `/api/playback/continue`                         | Lectures en cours.                                                    |
 | GET/PATCH | `/api/settings`                                  | Paramètres.                                                           |
 | POST      | `/api/settings/test-addon`                       | Test d'une adresse d'extension Stremio (manifeste).                   |
+| POST      | `/api/settings/test-onefichier`                  | Test de la clé 1fichier (compte premium).                             |
 | GET       | `/api/events`                                    | Flux temps réel (Server-Sent Events).                                 |
 | GET       | `/api/system`, `/api/health`                     | État du système.                                                      |
 | GET       | `/api/internal/source?path&token`                | Relais des fichiers distants réservé à ffmpeg/ffprobe (jeton requis). |
